@@ -1,5 +1,5 @@
 plugins {
-    id("com.android.library")
+    alias(libs.plugins.android.library)
     id("kotlin-android")
     id("kotlin-kapt")
     id("kotlin-parcelize")
@@ -14,21 +14,23 @@ android {
 
 
 dependencies {
-    implementation(project(":database:entities"))
+    implementation(project(":core:data"))
     implementation(project(":core:interfaces"))
-    implementation(project(":core:main"))
+    implementation(project(":core:keys"))
+    implementation(project(":core:objects"))
     implementation(project(":core:nssdk"))
     implementation(project(":core:utils"))
     implementation(project(":core:ui"))
     implementation(project(":core:validators"))
+    implementation(project(":shared:impl"))
 
     testImplementation(project(":shared:tests"))
 
     //WorkManager
-    api(Libs.AndroidX.Work.runtimeKtx)
+    api(libs.androidx.work.runtime)
     // Maintenance
-    api(Libs.AndroidX.gridLayout)
+    api(libs.androidx.gridlayout)
 
-    kapt(Libs.Dagger.compiler)
-    kapt(Libs.Dagger.androidProcessor)
+    kapt(libs.com.google.dagger.compiler)
+    kapt(libs.com.google.dagger.android.processor)
 }

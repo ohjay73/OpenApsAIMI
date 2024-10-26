@@ -1,5 +1,5 @@
 plugins {
-    id("com.android.library")
+    alias(libs.plugins.android.library)
     id("kotlin-android")
     id("kotlin-kapt")
     id("android-module-dependencies")
@@ -21,27 +21,26 @@ android {
 }
 
 dependencies {
-    implementation(project(":database:entities"))
-    implementation(project(":database:impl"))
-    implementation(project(":core:libraries"))
+    implementation(project(":core:data"))
     implementation(project(":core:interfaces"))
-    implementation(project(":core:main"))
+    implementation(project(":core:keys"))
+    implementation(project(":core:libraries"))
     implementation(project(":core:utils"))
     implementation(project(":core:ui"))
     implementation(project(":core:validators"))
     implementation(project(":pump:pump-common"))
     implementation(project(":pump:omnipod-common"))
 
-    api(Libs.AndroidX.Room.room)
-    api(Libs.AndroidX.Room.runtime)
-    api(Libs.AndroidX.Room.rxJava3)
-    api(Libs.kulid)
+    api(libs.androidx.room)
+    api(libs.androidx.room.runtime)
+    api(libs.androidx.room.rxjava3)
+    api(libs.com.github.guepardoapps.kulid)
 
     androidTestImplementation(project(":shared:tests"))
     testImplementation(project(":shared:tests"))
-    testImplementation(Libs.commonCodecs)
+    testImplementation(libs.commons.codec)
 
-    kapt(Libs.Dagger.compiler)
-    kapt(Libs.Dagger.androidProcessor)
-    kapt(Libs.AndroidX.Room.compiler)
+    kapt(libs.com.google.dagger.compiler)
+    kapt(libs.com.google.dagger.android.processor)
+    kapt(libs.androidx.room.compiler)
 }
