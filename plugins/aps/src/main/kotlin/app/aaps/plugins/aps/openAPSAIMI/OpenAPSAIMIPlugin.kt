@@ -327,6 +327,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         // Apply smoothing with interpolation
         sensitivity = smoothSensitivityChange(sensitivity, glucose)
         sensitivity = if (glucose < 100) profileUtil.fromMgdlToUnits(isfMgdl!!, profileFunction.getUnits()) else sensitivity
+        sensitivity = if (sensitivity > 300.0) 300.0 else sensitivity
 
         if (dynIsfCache.size() > 1000) {
             dynIsfCache.clear()
@@ -599,6 +600,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
             // Apply smoothing with interpolation
             variableSensitivity = smoothSensitivityChange(variableSensitivity, bg)
             variableSensitivity = if (bg!! < 100) profileUtil.fromMgdlToUnits(isfMgdl!!, profileFunction.getUnits()) else variableSensitivity
+            variableSensitivity = if (variableSensitivity > 300) 300.0 else variableSensitivity
 
             // Compare insulin consumption of last 24h with last 7 days average
             val tddRatio = if (preferences.get(BooleanKey.ApsDynIsfAdjustSensitivity)) tdd24Hrs / tdd2Days else 1.0
