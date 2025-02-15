@@ -226,130 +226,111 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
 
         val glucose = bg ?: glucoseStatusProvider.glucoseStatusData?.glucose ?: return Pair("GLUC", null)
         val delta = glucoseStatusProvider.glucoseStatusData?.delta
-        // Round down to 30 min and use it as a key for caching
-        // Add BG to key as it affects calculation
+
+        // Cache system to optimize repeated calculations
         val key = timestamp - timestamp % T.mins(30).msecs() + glucose.toLong()
         val cached = dynIsfCache[key]
         if (cached != null && timestamp < dateUtil.now()) {
             return Pair("HIT", cached)
         }
+
+        // Minimum TDD to avoid instability in new installations
+        val minTDD = 10.0
         val tdd7P: Double = preferences.get(DoubleKey.OApsAIMITDD7)
-
-        val tdd7D =  tddCalculator.averageTDD(tddCalculator.calculate(7, allowMissingDays = false))
-        // if (tdd7D != null && tdd7D.data.totalAmount > tdd7P && tdd7D.data.totalAmount > 1.1 * tdd7P) {
-        //     tdd7D.data.totalAmount = 1.1 * tdd7P
-        //     aapsLogger.info(LTag.APS, "TDD for 7 days limited to 10% increase. New TDD7D: ${tdd7D.data.totalAmount}")
-        // }
-        if (tdd7D != null) {
-            // Vérification des augmentations excessives
-            if (tdd7D.data.totalAmount > tdd7P && tdd7D.data.totalAmount > 1.2 * tdd7P) {
-                tdd7D.data.totalAmount = 1.2 * tdd7P
-                aapsLogger.info(LTag.APS, "TDD for 7 days limited to 10% increase. New TDD7D: ${tdd7D.data.totalAmount}")
-            }
-
-            // Vérification des diminutions excessives
-            else if (tdd7D.data.totalAmount < tdd7P && tdd7P - tdd7D.data.totalAmount > 5) { // Exemple : Limite à une réduction de 10 unités
-                tdd7D.data.totalAmount = tdd7P - 5
-                aapsLogger.info(LTag.APS, "TDD for 7 days limited to a 10-unit reduction. New TDD7D: ${tdd7D.data.totalAmount}")
-            }
+        val tdd7D = tddCalculator.averageTDD(tddCalculator.calculate(7, allowMissingDays = false))
+        if (tdd7D != null && tdd7D.data.totalAmount > tdd7P && tdd7D.data.totalAmount > 1.3 * tdd7P) {
+            tdd7D.data.totalAmount = 1.2 * tdd7P
         }
+        if (tdd7D != null && tdd7D.data.totalAmount < tdd7P * 0.9) {
+            tdd7D.data.totalAmount = tdd7P * 0.9
+            aapsLogger.info(LTag.APS, "TDD for 7 days was too low. Adjusted to 90% of TDD7P: ${tdd7D.data.totalAmount}")
+        }
+
         var tdd2Days = tddCalculator.averageTDD(tddCalculator.calculate(2, allowMissingDays = false))?.data?.totalAmount ?: 0.0
         if (tdd2Days == 0.0 || tdd2Days < tdd7P) tdd2Days = tdd7P
 
         val tdd2DaysPerHour = tdd2Days / 24
-
         val tddLast4H = tdd2DaysPerHour * 4
 
         var tddDaily = tddCalculator.averageTDD(tddCalculator.calculate(1, allowMissingDays = false))?.data?.totalAmount ?: 0.0
-        if (tddDaily == 0.0 || tddDaily < tdd7P / 2) tddDaily = tdd7P
+        if (tddDaily == 0.0 || tddDaily < tdd7P / 2) tddDaily = maxOf(tdd7P, minTDD)
         if (tddDaily > tdd7P && tddDaily > 1.1 * tdd7P) {
             tddDaily = 1.1 * tdd7P
-            aapsLogger.info(LTag.APS, "TDD for 1 day limited to 10% increase. New TDDDaily: $tddDaily")
         }
+
         var tdd24Hrs = tddCalculator.calculateDaily(-24, 0)?.totalAmount ?: 0.0
         if (tdd24Hrs == 0.0) tdd24Hrs = tdd7P
         val tdd24HrsPerHour = tdd24Hrs / 24
         val tddLast8to4H = tdd24HrsPerHour * 4
 
+        // Dynamic ISF adjustments
         val dynISFadjust: Double = preferences.get(IntKey.OApsAIMIDynISFAdjustment).toDouble() / 100.0
         val dynISFadjusthyper: Double = preferences.get(IntKey.OApsAIMIDynISFAdjustmentHyper).toDouble() / 100.0
-        val mealTimeDynISFAdjFactor: Double = preferences.get(IntKey.OApsAIMImealAdjISFFact).toDouble() / 100.0
-        val bfastTimeDynISFAdjFactor: Double = (preferences.get(IntKey.OApsAIMIBFAdjISFFact).toDouble() / 100.0)
-        val lunchTimeDynISFAdjFactor: Double = preferences.get(IntKey.OApsAIMILunchAdjISFFact).toDouble() / 100.0
-        val dinnerTimeDynISFAdjFactor: Double = preferences.get(IntKey.OApsAIMIDinnerAdjISFFact).toDouble() / 100.0
-        val snackTimeDynISFAdjFactor: Double = preferences.get(IntKey.OApsAIMISnackAdjISFFact).toDouble() / 100.0
-        val sleepTimeDynISFAdjFactor: Double = preferences.get(IntKey.OApsAIMIsleepAdjISFFact).toDouble() / 100.0
-        val hcTimeDynISFAdjFactor: Double = preferences.get(IntKey.OApsAIMIHighCarbAdjISFFact).toDouble() / 100.0
-        val therapy = Therapy(persistenceLayer).also { it.updateStatesBasedOnTherapyEvents() }
 
-        val sleepTime = therapy.sleepTime
-        val snackTime = therapy.snackTime
-        val sportTime = therapy.sportTime
-        val lowCarbTime = therapy.lowCarbTime
-        val highCarbTime = therapy.highCarbTime
-        val mealTime = therapy.mealTime
-        val bfastTime = therapy.bfastTime
-        val lunchTime = therapy.lunchTime
-        val dinnerTime = therapy.dinnerTime
+        // Meal-time adjustments
+        val therapy = Therapy(persistenceLayer).also { it.updateStatesBasedOnTherapyEvents() }
+        val timeAdjustments = mapOf(
+            therapy.sleepTime to preferences.get(IntKey.OApsAIMIsleepAdjISFFact).toDouble() / 100.0,
+            therapy.snackTime to preferences.get(IntKey.OApsAIMISnackAdjISFFact).toDouble() / 100.0,
+            therapy.highCarbTime to preferences.get(IntKey.OApsAIMIHighCarbAdjISFFact).toDouble() / 100.0,
+            therapy.mealTime to preferences.get(IntKey.OApsAIMImealAdjISFFact).toDouble() / 100.0,
+            therapy.bfastTime to preferences.get(IntKey.OApsAIMIBFAdjISFFact).toDouble() / 100.0,
+            therapy.lunchTime to preferences.get(IntKey.OApsAIMILunchAdjISFFact).toDouble() / 100.0,
+            therapy.dinnerTime to preferences.get(IntKey.OApsAIMIDinnerAdjISFFact).toDouble() / 100.0
+        )
 
         val tddWeightedFromLast8H = ((0.3 * tdd2DaysPerHour) + (1.2 * tddLast4H) + (0.5 * tddLast8to4H)) * 3
         var tdd = (tddWeightedFromLast8H * 0.60) + (tdd2Days * 0.10) + (tddDaily * 0.30)
-        if (bg != null) {
-            tdd = when {
-                sportTime           -> tdd * 1.1
-                sleepTime           -> tdd * sleepTimeDynISFAdjFactor
-                lowCarbTime         -> tdd * 1.1
-                snackTime           -> tdd * snackTimeDynISFAdjFactor
-                highCarbTime        -> tdd * hcTimeDynISFAdjFactor
-                mealTime            -> tdd * mealTimeDynISFAdjFactor
-                bfastTime           -> tdd * bfastTimeDynISFAdjFactor
-                lunchTime           -> tdd * lunchTimeDynISFAdjFactor
-                dinnerTime          -> tdd * dinnerTimeDynISFAdjFactor
-                glucose > 120 -> tdd * dynISFadjusthyper
-                else -> tdd * dynISFadjust
-            }
+
+        timeAdjustments.forEach { (condition, factor) ->
+            if (condition) tdd *= factor
         }
+        if (glucose > 120) tdd *= dynISFadjusthyper else tdd *= dynISFadjust
 
         val isfMgdl = profileFunction.getProfile()?.getProfileIsfMgdl()
 
-        var  sensitivity = if (glucose != null)  Round.roundTo(1800 / (tdd * ln(glucose / 75.0 + 1)), 0.1) else isfMgdl
+        var sensitivity = if (glucose != null) Round.roundTo(1800 / (tdd * ln(glucose / 75.0 + 1)), 0.1) else isfMgdl
 
-        if (sensitivity!! < 0) {
-            if (profileFunction.getUnits() == GlucoseUnit.MMOL) {
-                aapsLogger.error(LTag.APS, "Calculated sensitivity is invalid (<= 0). Setting to minimum valid value for mmol.")
-                sensitivity = 0.2 // Set to a minimum valid value for mmol
-            } else {
-                aapsLogger.error(LTag.APS, "Calculated sensitivity is invalid (<= 0). Setting to minimum valid value for mg/dL.")
-                sensitivity = 2.0 // Set to a minimum valid value for mg/dL
-            }
-        }else if (sensitivity!! > (2 * profileUtil.fromMgdlToUnits(isfMgdl!!, profileFunction.getUnits()))){
-            sensitivity = 2 * profileUtil.fromMgdlToUnits(isfMgdl!!, profileFunction.getUnits())
-        }
-        // Apply smoothing with interpolation
-        sensitivity = smoothSensitivityChange(sensitivity, glucose, delta)
-        sensitivity = if (glucose < 120) profileUtil.fromMgdlToUnits(isfMgdl!!, profileFunction.getUnits()) else sensitivity
-        sensitivity = if (sensitivity > 300.0) 300.0 else sensitivity
+        // 🔹 ISF correction limits to avoid extreme values
+        if (sensitivity!! < 5.0) sensitivity = 5.0
+        if (sensitivity > 300.0) sensitivity = 300.0
 
-        if (dynIsfCache.size() > 1000) {
-            dynIsfCache.clear()
+        // 🔹 New dynamic ISF adjustment based on delta trend
+        val deltaCorrectionFactor = when {
+            delta == null             -> 1.0
+            delta > 8 && bg!! > 120    -> 0.5  // Réduction plus forte si delta > 10 mg/dL en 5 min
+            delta > 4 && bg!! > 120 -> 0.7  // Réduction modérée si delta > 5 mg/dL
+            delta < -6               -> 1.4 // Augmentation plus forte si delta < -10 mg/dL
+            delta < -3                -> 1.2 // Augmentation modérée si delta < -5 mg/dL
+            else                      -> 1.0
         }
-        // Add calculated sensitivity to cache
+
+
+        // 🔹 Apply smoothing function to avoid abrupt changes in ISF
+        //sensitivity = smoothSensitivityChange(sensitivity, glucose, delta)
+        val smoothedISF = smoothSensitivityChange(sensitivity, glucose, delta)
+        aapsLogger.debug(LTag.APS, "🔍 ISF avant lissage : $sensitivity, après lissage : $smoothedISF")
+        sensitivity = smoothedISF
+        // Apply ISF correction with delta factor
+        sensitivity *= deltaCorrectionFactor
+
+        // 🔹 Prevent ISF from being too low in case of large drops
+        if (sensitivity < 5.0) {
+            aapsLogger.warn(LTag.APS, "ISF trop bas ! Ajusté à 5.0 au lieu de $sensitivity")
+            sensitivity = 5.0
+        }
+        if (sensitivity > 300.0){
+            aapsLogger.warn(LTag.APS, "ISF trop haut ! Ajusté à 300.0 au lieu de $sensitivity")
+            sensitivity = 300.0
+        }
+        aapsLogger.debug(LTag.APS, "🔍 TDD ajusté : $tdd")
+        // Cache calculated ISF
+        if (dynIsfCache.size() > 1000) dynIsfCache.clear()
         dynIsfCache.put(key, sensitivity)
 
         return Pair("CALC", sensitivity)
     }
-    // Modified smoothSensitivityChange function using interpolate logic
-    // Modified smoothSensitivityChange function using interpolate logic
-    // private fun smoothSensitivityChange(sensitivity: Double, glucose: Double?): Double {
-    //     if (glucose == null) return sensitivity
-    //
-    //     // Interpolation based on glucose levels
-    //     val interpolatedISF = interpolate(glucose)
-    //
-    //     // Weighted combination of current sensitivity and interpolated ISF for smoother transitions
-    //     val smoothingFactor = 0.1
-    //     return (sensitivity * (1 - smoothingFactor)) + (interpolatedISF * smoothingFactor)
-    // }
+
     private fun smoothSensitivityChange(
         rawSensitivity: Double,
         glucose: Double?,
@@ -357,83 +338,69 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
     ): Double {
         if (glucose == null) return rawSensitivity
 
-        // 1) On récupère une valeur d’ISF interpolée selon BG
-        val interpolatedISF = interpolate(glucose)
+        // 1) On récupère une valeur d’ISF interpolée selon BG et delta
+        val interpolatedISF = interpolate(glucose,delta)
 
         // 2) On fusionne la sensibilité brute et l’interpolée pour lisser
-        val smoothingFactor = 0.1
+        val smoothingFactor = 0.2
         var newISF = rawSensitivity * (1.0 - smoothingFactor) + interpolatedISF * smoothingFactor
 
-        // 3) Si la glycémie est > 160 mg/dL et qu’on monte encore (delta > 0.5 mg/dL/5min par ex.),
-        //    on VEUT réduire l’ISF (→ plus de “résistance”), donc on force un multiplicateur < 1
-        if (glucose > 120 && (delta ?: 0.0) > 5) {
-            // Ex: on multiplie par 0.8 pour baisser l’ISF (adapter selon le besoin)
-            newISF *= 0.6
+        // 3️⃣ Correction basée sur la variation rapide de la glycémie
+        val deltaCorrectionFactor = when {
+            delta == null             -> 1.0
+            delta > 10 && glucose!! > 120    -> 0.5  // Réduction plus forte si delta > 10 mg/dL en 5 min
+            delta > 5 && glucose!! > 120 -> 0.7  // Réduction modérée si delta > 5 mg/dL
+            delta < -10               -> 1.4 // Augmentation plus forte si delta < -10 mg/dL
+            delta < -5                -> 1.2 // Augmentation modérée si delta < -5 mg/dL
+            else                      -> 1.0
         }
 
-        return newISF
+        // 4️⃣ Application de la correction et sécurisation des bornes
+        newISF *= deltaCorrectionFactor
+
+        // 5️⃣ Limites de sécurité pour éviter des valeurs absurdes
+        return newISF.coerceIn(5.0, 300.0) // L'ISF est toujours entre 15 et 300
     }
 
-    fun interpolate(xdata: Double): Double {
-        // Définir les points de référence pour l'interpolation
-        val polyX = arrayOf(50.0, 60.0, 80.0, 90.0, 100.0, 110.0, 150.0, 180.0, 200.0, 220.0, 240.0, 260.0, 280.0, 300.0)
-        val polyY = arrayOf(-0.5, -0.5, -0.3, -0.2, 0.0, 0.0, 0.5, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3) // Ajout de 300.0 et 1.0
-        // Constants for ISF adjustment weights
-        val higherISFrangeWeight: Double = 0.8 // Facteur pour les glycémies supérieures à 100 mg/dL
-        val lowerISFrangeWeight: Double = 1.3 // Facteur pour les glycémies inférieures à 100 mg/dL
+    fun interpolate(xdata: Double, delta: Double?): Double {
+        // 🔹 Points de référence pour l'interpolation (ISF ajusté selon la glycémie)
+        val polyX = arrayOf(50.0, 60.0, 80.0, 100.0, 110.0, 120.0, 140.0, 160.0, 180.0, 200.0, 220.0, 240.0, 260.0, 280.0, 300.0)
+        val polyY = arrayOf(2.0, 2.0, 2.0, 1.5, 1.1, 1.0, 0.6, 0.5, 0.4, 0.3, 0.25, 0.2, 0.15, 0.15, 0.15)
 
         val polymax = polyX.size - 1
-        var step = polyX[0]
-        var sVal = polyY[0]
-        var stepT = polyX[polymax]
-        var sValold = polyY[polymax]
-
         var newVal = 1.0
-        var lowVal = 1.0
-        val topVal: Double
-        val lowX: Double
-        val topX: Double
-        val myX: Double
-        var lowLabl = step
+        var lowVal = polyY[0]
+        var topVal = polyY[polymax]
+        var lowX = polyX[0]
+        var topX = polyX[polymax]
+        var lowLabl = lowX
 
-        // Extrapolation en arrière (pour les valeurs < 50)
-        if (step > xdata) {
-            stepT = polyX[1]
-            sValold = polyY[1]
-            lowVal = sVal
-            topVal = sValold
-            lowX = step
-            topX = stepT
-            myX = xdata
-            newVal = lowVal + (topVal - lowVal) / (topX - lowX) * (myX - lowX)
+        // 🔹 Extrapolation pour les glycémies < 50 mg/dL
+        if (xdata < lowX) {
+            val stepT = polyX[1]
+            val sValold = polyY[1]
+            newVal = lowVal + (sValold - lowVal) / (stepT - lowX) * (xdata - lowX)
         }
-        // Extrapolation en avant (pour les valeurs > 300)
-        else if (stepT < xdata) {
-            step = polyX[polymax - 1]
-            sVal = polyY[polymax - 1]
-            lowVal = sVal
-            topVal = sValold
-            lowX = step
-            topX = stepT
-            myX = xdata
-            newVal = lowVal + (topVal - lowVal) / (topX - lowX) * (myX - lowX)
-            // Limiter la valeur maximale si nécessaire
-            newVal = min(newVal, 1.2) // Limitation de l'effet maximum à 1.2
+        // 🔹 Extrapolation pour les glycémies > 300 mg/dL
+        else if (xdata > topX) {
+            val step = polyX[polymax - 1]
+            val sVal = polyY[polymax - 1]
+            newVal = sVal + (topVal - sVal) / (topX - step) * (xdata - step)
+            newVal = min(newVal, 0.15) // 🔹 Limitation max (réduction ISF maximale)
         }
-        // Interpolation normale
+        // 🔹 Interpolation normale
         else {
             for (i in 0..polymax) {
-                step = polyX[i]
-                sVal = polyY[i]
+                val step = polyX[i]
+                val sVal = polyY[i]
                 if (step == xdata) {
                     newVal = sVal
                     break
                 } else if (step > xdata) {
                     topVal = sVal
                     lowX = lowLabl
-                    myX = xdata
                     topX = step
-                    newVal = lowVal + (topVal - lowVal) / (topX - lowX) * (myX - lowX)
+                    newVal = lowVal + (topVal - lowVal) / (topX - lowX) * (xdata - lowX)
                     break
                 }
                 lowVal = sVal
@@ -441,14 +408,23 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
             }
         }
 
-        // Appliquer des pondérations supplémentaires si nécessaire
-        newVal = if (xdata > 120) {
-            newVal * higherISFrangeWeight
-        } else {
-            newVal * lowerISFrangeWeight
+        // 🔹 Facteur dynamique basé sur le delta
+        val deltaFactor = when {
+            delta == null -> 1.0
+            delta > 10 -> 0.1   // 🔹 Réduction TRÈS agressive si delta > 10 mg/dL/5min
+            delta > 5  -> 0.4   // 🔹 Réduction forte si delta > 5 mg/dL/5min
+            delta > 2  -> 0.7   // 🔹 Réduction modérée si delta > 2 mg/dL/5min
+            delta < -10 -> 1.6  // 🔹 Augmentation TRÈS forte si delta < -10 mg/dL/5min
+            delta < -5  -> 1.3  // 🔹 Augmentation forte si delta < -5 mg/dL/5min
+            delta < -2  -> 1.1  // 🔹 Augmentation modérée si delta < -2 mg/dL/5min
+            else -> 1.0
         }
 
-        return newVal
+        // 🔹 Application de la correction dynamique
+        newVal *= deltaFactor
+
+        // 🔹 Sécurisation des bornes ISF
+        return newVal.coerceIn(0.1, 1.5)
     }
 
     override fun invoke(initiator: String, tempBasalFallback: Boolean) {
@@ -529,120 +505,134 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
 
             val tdd7P: Double = preferences.get(DoubleKey.OApsAIMITDD7)
 
-            var tdd7D =  tddCalculator.averageTDD(tddCalculator.calculate(7, allowMissingDays = false))
-            // if (tdd7D != null && tdd7D.data.totalAmount > tdd7P && tdd7D.data.totalAmount > 1.1 * tdd7P) {
-            //     tdd7D.data.totalAmount = 1.1 * tdd7P
-            //     aapsLogger.info(LTag.APS, "TDD for 7 days limited to 10% increase. New TDD7D: ${tdd7D.data.totalAmount}")
-            // }
-            if (tdd7D != null) {
-                // Vérification des augmentations excessives
-                if (tdd7D.data.totalAmount > tdd7P && tdd7D.data.totalAmount > 1.2 * tdd7P) {
-                    tdd7D.data.totalAmount = 1.2 * tdd7P
-                    aapsLogger.info(LTag.APS, "TDD for 7 days limited to 10% increase. New TDD7D: ${tdd7D.data.totalAmount}")
-                }
+// Plancher pour éviter des TDD trop faibles au démarrage
+            val minTDD = 10.0
 
-                // Vérification des diminutions excessives
-                else if (tdd7D.data.totalAmount < tdd7P && tdd7P - tdd7D.data.totalAmount > 5) { // Exemple : Limite à une réduction de 10 unités
-                    tdd7D.data.totalAmount = tdd7P - 5
-                    aapsLogger.info(LTag.APS, "TDD for 7 days limited to a 10-unit reduction. New TDD7D: ${tdd7D.data.totalAmount}")
-                }
+// Récupération et ajustement du TDD sur 7 jours
+            var tdd7D = tddCalculator.averageTDD(tddCalculator.calculate(7, allowMissingDays = false))
+            if (tdd7D != null && tdd7D.data.totalAmount > tdd7P && tdd7D.data.totalAmount > 1.3 * tdd7P) {
+                tdd7D.data.totalAmount = 1.2 * tdd7P
+                aapsLogger.info(LTag.APS, "TDD for 7 days limited to 10% increase. New TDD7D: ${tdd7D.data.totalAmount}")
             }
+            if (tdd7D != null && tdd7D.data.totalAmount < tdd7P * 0.9) {
+                tdd7D.data.totalAmount = tdd7P * 0.9
+                aapsLogger.info(LTag.APS, "TDD for 7 days was too low. Adjusted to 90% of TDD7P: ${tdd7D.data.totalAmount}")
+            }
+
+// Calcul du TDD sur 2 jours
             var tdd2Days = tddCalculator.averageTDD(tddCalculator.calculate(2, allowMissingDays = false))?.data?.totalAmount ?: 0.0
             if (tdd2Days == 0.0 || tdd2Days < tdd7P) tdd2Days = tdd7P
 
             val tdd2DaysPerHour = tdd2Days / 24
-
             val tddLast4H = tdd2DaysPerHour * 4
 
+// Calcul du TDD sur 1 jour avec une limite minimale pour éviter des instabilités
             var tddDaily = tddCalculator.averageTDD(tddCalculator.calculate(1, allowMissingDays = false))?.data?.totalAmount ?: 0.0
-            if (tddDaily == 0.0 || tddDaily < tdd7P / 2) tddDaily = tdd7P
+            if (tddDaily == 0.0 || tddDaily < tdd7P / 2) tddDaily = maxOf(tdd7P, minTDD)
+
             if (tddDaily > tdd7P && tddDaily > 1.1 * tdd7P) {
                 tddDaily = 1.1 * tdd7P
                 aapsLogger.info(LTag.APS, "TDD for 1 day limited to 10% increase. New TDDDaily: $tddDaily")
             }
+
+// Calcul du TDD sur 24 heures
             var tdd24Hrs = tddCalculator.calculateDaily(-24, 0)?.totalAmount ?: 0.0
             if (tdd24Hrs == 0.0) tdd24Hrs = tdd7P
             val tdd24HrsPerHour = tdd24Hrs / 24
-            val tddLast24H = tddCalculator.calculateDaily(-24, 0)
             val tddLast8to4H = tdd24HrsPerHour * 4
+
+// Gestion du contexte glycémique et insulinique
             val bg = glucoseStatusProvider.glucoseStatusData?.glucose
-            val delta = glucoseStatusProvider.glucoseStatusData?.delta
-            val dynISFadjust: Double = (preferences.get(IntKey.OApsAIMIDynISFAdjustment).toDouble() / 100.0)
-            val dynISFadjusthyper: Double = (preferences.get(IntKey.OApsAIMIDynISFAdjustmentHyper).toDouble() / 100.0)
-            val mealTimeDynISFAdjFactor: Double = (preferences.get(IntKey.OApsAIMImealAdjISFFact).toDouble() / 100.0)
-            val bfastTimeDynISFAdjFactor: Double = (preferences.get(IntKey.OApsAIMIBFAdjISFFact).toDouble() / 100.0)
-            val lunchTimeDynISFAdjFactor: Double = (preferences.get(IntKey.OApsAIMILunchAdjISFFact).toDouble() / 100.0)
-            val dinnerTimeDynISFAdjFactor: Double = (preferences.get(IntKey.OApsAIMIDinnerAdjISFFact).toDouble() / 100.0)
-            val snackTimeDynISFAdjFactor: Double = (preferences.get(IntKey.OApsAIMISnackAdjISFFact).toDouble() / 100.0)
-            val sleepTimeDynISFAdjFactor: Double = (preferences.get(IntKey.OApsAIMIsleepAdjISFFact).toDouble() / 100.0)
-            val hcTimeDynISFAdjFactor: Double = (preferences.get(IntKey.OApsAIMIHighCarbAdjISFFact).toDouble() / 100.0)
-            val therapy = Therapy(persistenceLayer).also {
-                it.updateStatesBasedOnTherapyEvents()
-            }
-            val sleepTime = therapy.sleepTime
-            val snackTime = therapy.snackTime
-            val sportTime = therapy.sportTime
-            val lowCarbTime = therapy.lowCarbTime
-            val highCarbTime = therapy.highCarbTime
-            val mealTime = therapy.mealTime
-            val bfastTime = therapy.bfastTime
-            val lunchTime = therapy.lunchTime
-            val dinnerTime = therapy.dinnerTime
-            // val tddWeightedFromLast8H = ((1.4 * tddLast4H) + (0.6 * tddLast8to4H)) * 3
-            // tdd = (tddWeightedFromLast8H * 0.33) + (tdd2Days * 0.34) + (tddDaily * 0.33)
+            val delta = glucoseStatus?.delta
+
+// Ajustements dynamiques du facteur de sensibilité
+            val dynISFadjust: Double = preferences.get(IntKey.OApsAIMIDynISFAdjustment).toDouble() / 100.0
+            val dynISFadjusthyper: Double = preferences.get(IntKey.OApsAIMIDynISFAdjustmentHyper).toDouble() / 100.0
+
+// Ajustements liés aux repas et aux activités
+            val therapy = Therapy(persistenceLayer).also { it.updateStatesBasedOnTherapyEvents() }
+            val timeAdjustments = mapOf(
+                therapy.sleepTime to preferences.get(IntKey.OApsAIMIsleepAdjISFFact).toDouble() / 100.0,
+                therapy.snackTime to preferences.get(IntKey.OApsAIMISnackAdjISFFact).toDouble() / 100.0,
+                therapy.highCarbTime to preferences.get(IntKey.OApsAIMIHighCarbAdjISFFact).toDouble() / 100.0,
+                therapy.mealTime to preferences.get(IntKey.OApsAIMImealAdjISFFact).toDouble() / 100.0,
+                therapy.bfastTime to preferences.get(IntKey.OApsAIMIBFAdjISFFact).toDouble() / 100.0,
+                therapy.lunchTime to preferences.get(IntKey.OApsAIMILunchAdjISFFact).toDouble() / 100.0,
+                therapy.dinnerTime to preferences.get(IntKey.OApsAIMIDinnerAdjISFFact).toDouble() / 100.0
+            )
+
+// Calcul pondéré du TDD récent pour éviter les fluctuations extrêmes
             val tddWeightedFromLast8H = ((1.2 * tdd2DaysPerHour) + (0.3 * tddLast4H) + (0.5 * tddLast8to4H)) * 3
-            tdd = (tddWeightedFromLast8H * 0.20) + (tdd2Days * 0.50) + (tddDaily * 0.30)
+            var tdd = (tddWeightedFromLast8H * 0.20) + (tdd2Days * 0.50) + (tddDaily * 0.30)
+
+// Application des ajustements en fonction du contexte actuel
+            timeAdjustments.forEach { (condition, factor) ->
+                if (condition) tdd *= factor
+            }
+
             if (bg != null) {
                 tdd = when {
-                    sportTime    -> tdd * 1.1
-                    sleepTime    -> tdd * sleepTimeDynISFAdjFactor
-                    lowCarbTime  -> tdd * 1.1
-                    snackTime    -> tdd * snackTimeDynISFAdjFactor
-                    highCarbTime -> tdd * hcTimeDynISFAdjFactor
-                    mealTime     -> tdd * mealTimeDynISFAdjFactor
-                    bfastTime    -> tdd * bfastTimeDynISFAdjFactor
-                    lunchTime    -> tdd * lunchTimeDynISFAdjFactor
-                    dinnerTime   -> tdd * dinnerTimeDynISFAdjFactor
-                    bg!! > 120     -> tdd * dynISFadjusthyper
-                    else -> tdd * dynISFadjust
+                    therapy.sportTime    -> tdd * 1.1
+                    therapy.sleepTime    -> tdd * preferences.get(IntKey.OApsAIMIsleepAdjISFFact).toDouble() / 100.0
+                    therapy.lowCarbTime  -> tdd * 1.1
+                    therapy.snackTime    -> tdd * preferences.get(IntKey.OApsAIMISnackAdjISFFact).toDouble() / 100.0
+                    therapy.highCarbTime -> tdd * preferences.get(IntKey.OApsAIMIHighCarbAdjISFFact).toDouble() / 100.0
+                    therapy.mealTime     -> tdd * preferences.get(IntKey.OApsAIMImealAdjISFFact).toDouble() / 100.0
+                    therapy.bfastTime    -> tdd * preferences.get(IntKey.OApsAIMIBFAdjISFFact).toDouble() / 100.0
+                    therapy.lunchTime    -> tdd * preferences.get(IntKey.OApsAIMILunchAdjISFFact).toDouble() / 100.0
+                    therapy.dinnerTime   -> tdd * preferences.get(IntKey.OApsAIMIDinnerAdjISFFact).toDouble() / 100.0
+                    bg > 120            -> tdd * dynISFadjusthyper
+                    else                -> tdd * dynISFadjust
                 }
             }
 
+// Calcul de la sensibilité insulinique
             val isfMgdl = profileFunction.getProfile()?.getProfileIsfMgdl()
+            var variableSensitivity = if (bg != null) Round.roundTo(1800 / (tdd * ln(bg / insulinDivisor + 1)), 0.1) else isfMgdl
 
-            var  variableSensitivity = if (bg != null)  Round.roundTo(1800 / (tdd * ln(bg!! / insulinDivisor + 1)), 0.1) else isfMgdl
-
-            if (variableSensitivity!! < 0) {
-                if (profileFunction.getUnits() == GlucoseUnit.MMOL) {
-                    aapsLogger.error(LTag.APS, "Calculated sensitivity is invalid (<= 0). Setting to minimum valid value for mmol.")
-                    variableSensitivity = 0.2 // Set to a minimum valid value for mmol
-                } else {
-                    aapsLogger.error(LTag.APS, "Calculated sensitivity is invalid (<= 0). Setting to minimum valid value for mg/dL.")
-                    variableSensitivity = 2.0 // Set to a minimum valid value for mg/dL
-                }
-            }else if (variableSensitivity > 2 * profileUtil.fromMgdlToUnits(isfMgdl!!, profileFunction.getUnits())){
-                variableSensitivity = 2 * profileUtil.fromMgdlToUnits(isfMgdl!!, profileFunction.getUnits())
+// 🔹 Vérification des bornes minimales et maximales
+            variableSensitivity = when {
+                variableSensitivity!! < 5.0 -> 5.0
+                variableSensitivity > 300.0 -> 300.0
+                else -> variableSensitivity
             }
-            // Apply smoothing with interpolation
-            variableSensitivity = smoothSensitivityChange(variableSensitivity, bg, delta)
-            variableSensitivity = if (bg!! < 120) profileUtil.fromMgdlToUnits(isfMgdl!!, profileFunction.getUnits()) else variableSensitivity
-            variableSensitivity = if (variableSensitivity > 300) 300.0 else variableSensitivity
 
-            // Compare insulin consumption of last 24h with last 7 days average
-            val tddRatio = if (preferences.get(BooleanKey.ApsDynIsfAdjustSensitivity)) tdd24Hrs / tdd2Days else 1.0
-            // Because consumed carbs affects total amount of insulin compensate final ratio by consumed carbs ratio
-            // take only 60% (expecting 40% basal). We cannot use bolus/total because of SMBs
-            val carbsRatio = if (
-                preferences.get(BooleanKey.ApsDynIsfAdjustSensitivity) &&
-                tddLast24H != null && tddLast24H.carbs != 0.0 &&
-                tdd7D != null && tdd7D.data != null && tdd7D.data.carbs != 0.0 &&
-                tdd7D.allDaysHaveCarbs
-            ) ((tddLast24H.carbs / tdd7D.data.carbs - 1.0) * 0.6) + 1.0 else 1.0
+// 🔹 Ajustement dynamique basé sur la tendance glycémique
+            val deltaCorrectionFactor = when {
+                delta == null             -> 1.0
+                delta > 8 && bg!! > 120    -> 0.5  // Réduction plus forte si delta > 10 mg/dL en 5 min
+                delta > 4 && bg!! > 120 -> 0.7  // Réduction modérée si delta > 5 mg/dL
+                delta < -776               -> 1.4 // Augmentation plus forte si delta < -10 mg/dL
+                delta < -3                -> 1.2 // Augmentation modérée si delta < -5 mg/dL
+                else                      -> 1.0
+            }
 
+
+            // 🔹 5) Lissage de l'ISF pour éviter les variations brusques
+            //variableSensitivity = smoothSensitivityChange(variableSensitivity, bg, delta)
+            val smoothedISF = smoothSensitivityChange(variableSensitivity, bg, delta)
+            aapsLogger.debug(LTag.APS, "🔍 ISF avant lissage : $variableSensitivity, après lissage : $smoothedISF")
+            variableSensitivity = smoothedISF
+            // Application de la correction
+            variableSensitivity *= deltaCorrectionFactor
+
+// 🔹 6) Bornes minimales et maximales pour éviter des valeurs extrêmes
+            variableSensitivity = variableSensitivity.coerceIn(10.0, 300.0)
+            // 🔹 Prevent ISF from being too low in case of large drops
+            if (variableSensitivity < 5.0) {
+                aapsLogger.warn(LTag.APS, "ISF trop bas ! Ajusté à 5.0 au lieu de $variableSensitivity")
+                variableSensitivity = 5.0
+            }
+            if (variableSensitivity > 300.0){
+                aapsLogger.warn(LTag.APS, "ISF trop haut ! Ajusté à 300.0 au lieu de $variableSensitivity")
+                variableSensitivity = 300.0
+            }
+
+            // 🔹 Création du résultat final
             autosensResult = AutosensResult(
-                ratio = tddRatio / carbsRatio,
-                ratioFromTdd = tddRatio,
-                ratioFromCarbs = carbsRatio
+                ratio = tdd24Hrs / tdd2Days,
+                ratioFromTdd = tdd24Hrs / tdd2Days,
+                ratioFromCarbs = 1.0 // Peut être ajusté si nécessaire
             )
 
             val iobArray = iobCobCalculator.calculateIobArrayForSMB(autosensResult, SMBDefaults.exercise_mode, SMBDefaults.half_basal_exercise_target, isTempTarget)

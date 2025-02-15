@@ -10,4 +10,9 @@ object Constants {
     const val WEEK_IN_MS = DAY_IN_MS * 7
     const val MONTH_IN_MS = DAY_IN_MS * 30
     const val STALE_MS = MINUTE_IN_MS * 12
+    const val CPP_MIN_PERCENTAGE = 30
+    const val CPP_MAX_PERCENTAGE = 300
+    const val CPP_MIN_TIMESHIFT = -23
+    const val CPP_MAX_TIMESHIFT = 23
+    const val MAX_PROFILE_SWITCH_DURATION = (7 * 24 * 60).toDouble()// [min] ~ 7 days
 }
