@@ -10,7 +10,7 @@ data class TrainingConfig(
     var weightDecay: Double = 0.01,
 
     // Vous pouvez ajouter :
-    var epochs: Int = 30000,
+    var epochs: Int = 1000,
     var useBatchNorm: Boolean = true,
     var useDropout: Boolean = true,
     var dropoutRate: Double = 0.5,

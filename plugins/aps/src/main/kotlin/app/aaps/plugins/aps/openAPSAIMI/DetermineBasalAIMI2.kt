@@ -633,9 +633,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         profile: OapsProfileAimi
     ): Float {
         // 1) Configuration générale
-        val minutesToConsider = 15000.0
+        val minutesToConsider = 5760.0
         val linesToConsider = (minutesToConsider / 5).toInt()
-        val maxIterations = 10000.0
+        val maxIterations = 1000.0
         val maxGlobalIterations = 5
         var globalConvergenceReached = false
         var differenceWithinRange = false
@@ -734,7 +734,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             batchSize = 32,
             weightDecay = 0.01,
 
-            epochs = 30000,
+            epochs = 1000,
             useBatchNorm = false, // ajustez si vous voulez la batch norm
             useDropout = false,   // idem pour le dropout
             dropoutRate = 0.3,
@@ -835,7 +835,22 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             globalIterationCount++
         }
 
-        // 7) Si pas convergé globalement, fallback
+    //     // 7) Si pas convergé globalement, fallback
+    //     if (!globalConvergenceReached) {
+    //         if (daysOfData >= 4) {
+    //             // On refine (une dernière fois) avec bestNetwork sur la dernière entrée
+    //             val doubleInput = lastEnhancedInput?.toDoubleArray()
+    //             finalRefinedSMB = bestNetwork?.let {
+    //                 AimiNeuralNetwork.refineSMB(predictedSMB, it, doubleInput)
+    //             } ?: predictedSMB
+    //         } else {
+    //             // Mix 40/60
+    //             finalRefinedSMB = (predictedSMB * 0.4f) + (finalRefinedSMB * 0.6f)
+    //         }
+    //     }
+    //
+    //     return if (globalConvergenceReached) finalRefinedSMB else predictedSMB
+    // }
         if (!globalConvergenceReached) {
             if (daysOfData >= 4) {
                 // On refine (une dernière fois) avec bestNetwork sur la dernière entrée
@@ -849,7 +864,20 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             }
         }
 
-        return if (globalConvergenceReached) finalRefinedSMB else predictedSMB
+// ------------------------
+// (5) Encadrer la sortie (clamp minimum)
+        val minSMB = 0.05f
+        if (finalRefinedSMB < minSMB) {
+            finalRefinedSMB = minSMB
+        }
+
+// (6) Moyenne partielle entre predictedSMB et finalRefinedSMB
+        val alpha = 0.7f // Ajuste ce coefficient selon la pondération voulue
+        val blendedSMB = alpha * finalRefinedSMB + (1 - alpha) * predictedSMB
+
+// Au final, on renvoie la valeur "blendée"
+        return blendedSMB
+
     }
 
     /**
@@ -1532,27 +1560,27 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         if (isLunchModeCondition()){
             val pbolusLunch: Double = preferences.get(DoubleKey.OApsAIMILunchPrebolus)
                 rT.units = pbolusLunch
-                rT.reason.append("Microbolusing 1/2 Meal Mode ${pbolusLunch}U. ")
+                rT.reason.append("Microbolusing 1/2 lunch Mode ${pbolusLunch}U. ")
             return rT
         }
         if (isLunch2ModeCondition()){
             val pbolusLunch2: Double = preferences.get(DoubleKey.OApsAIMILunchPrebolus2)
             this.maxSMB = pbolusLunch2
             rT.units = pbolusLunch2
-            rT.reason.append("Microbolusing 2/2 Meal Mode ${pbolusLunch2}U. ")
+            rT.reason.append("Microbolusing 2/2 lunch Mode ${pbolusLunch2}U. ")
             return rT
         }
         if (isDinnerModeCondition()){
             val pbolusDinner: Double = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus)
             rT.units = pbolusDinner
-            rT.reason.append("Microbolusing 1/2 Meal Mode ${pbolusDinner}U. ")
+            rT.reason.append("Microbolusing 1/2 dinner Mode ${pbolusDinner}U. ")
             return rT
         }
         if (isDinner2ModeCondition()){
             val pbolusDinner2: Double = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus2)
             this.maxSMB = pbolusDinner2
             rT.units = pbolusDinner2
-            rT.reason.append("Microbolusing 2/2 Meal Mode ${pbolusDinner2}U. ")
+            rT.reason.append("Microbolusing 2/2 dinner Mode ${pbolusDinner2}U. ")
             return rT
         }
         if (isHighCarbModeCondition()){
@@ -2311,14 +2339,14 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             appendLine("╔${"═".repeat(screenWidth)}╗")
             appendLine(String.format("║ %-${screenWidth}s ║", "AAPS-MASTER-AIMI"))
             appendLine(String.format("║ %-${screenWidth}s ║", "OpenApsAIMI Settings"))
-            appendLine(String.format("║ %-${screenWidth}s ║", "22 January 2025"))
+            appendLine(String.format("║ %-${screenWidth}s ║", "01 Feb 2025"))
             appendLine("╚${"═".repeat(screenWidth)}╝")
             appendLine()
 
             appendLine("╔${"═".repeat(screenWidth)}╗")
             appendLine(String.format("║ %-${screenWidth}s ║", "Request"))
             appendLine("╠${"═".repeat(screenWidth)}╣")
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Reason", "COB: $cob, Dev: $deviation, BGI: $bgi, ISF: $variableSensitivity, CR: $ci, Target: $targetBg"))
+            appendLine(String.format("║ %-${columnWidth}s │ %s", "Reason", "COB: $cob, Dev: $deviation, BGI: $bgi, ISF: $variableSensitivity, CR: $ci, Target: $target_bg"))
             appendLine("╚${"═".repeat(screenWidth)}╝")
             appendLine()
 
@@ -2496,7 +2524,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 !enablebasal && timenow <= sixAMHour && delta > 0 -> profile_current_basal
                 !enablebasal && recentSteps5Minutes == 0 && delta  > 0 && !mealTime && !lunchTime && !dinnerTime && !highCarbTime && !bfastTime && !snackTime -> profile_current_basal
                 // Conditions avec un ajustement basé sur le facteur d'interpolation
-                !honeymoon && iob < 0.6 && bg in 90.0..120.0 && delta in 0.0..6.0 && !sportTime                                       -> profile_current_basal * basalAdjustmentFactor
+                enablebasal && !honeymoon && iob < 0.6 && bg in 90.0..120.0 && delta in 0.0..6.0 && !sportTime                                       -> profile_current_basal * basalAdjustmentFactor
                 honeymoon && iob < 0.4 && bg in 90.0..100.0 && delta in 0.0..5.0 && !sportTime                                        -> profile_current_basal
                 enablebasal && iob < 0.8 && bg in 120.0..130.0 && delta in 0.0..6.0 && !sportTime                                                    -> profile_current_basal * basalAdjustmentFactor
                 bg > 180 && delta in -5.0..5.0                                                                                        -> profile_current_basal * basalAdjustmentFactor
