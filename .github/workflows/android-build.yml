@@ -2,7 +2,7 @@ name: Android Build (Signed)
 
 on:
   push:
-    branches: !
+    branches:
       - master
     tags:
       - 'v*.*.*'  # Déclenche sur les tags de version
