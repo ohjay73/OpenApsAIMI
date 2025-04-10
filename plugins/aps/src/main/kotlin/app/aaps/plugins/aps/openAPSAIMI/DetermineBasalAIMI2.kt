@@ -155,6 +155,49 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private val MAX_ZERO_BASAL_DURATION = 60  // Durée maximale autorisée en minutes à 0 basal
 
     private fun Double.toFixed2(): String = DecimalFormat("0.00#").format(round(this, 2))
+    /**
+     * Prédit l’évolution de la glycémie sur un horizon donné (en minutes),
+     * avec des pas de 5 minutes.
+     *
+     * @param currentBG La glycémie actuelle (mg/dL)
+     * @param basalCandidate La dose basale candidate (en U/h)
+     * @param horizonMinutes L’horizon de prédiction (ex. 30 minutes)
+     * @param insulinSensitivity La sensibilité insulinique (mg/dL/U)
+     * @return Une liste de glycémies prédites pour chaque pas de 5 minutes.
+     */
+    private fun predictGlycemia(currentBG: Double, basalCandidate: Double, horizonMinutes: Int, insulinSensitivity: Double): List<Double> {
+        val predictions = mutableListOf<Double>()
+        var bgSimulated = currentBG
+        // Supposons un pas de 5 minutes, et une action linéaire de l'insuline
+        val steps = horizonMinutes / 5
+        for (i in 1..steps) {
+            // Par exemple, on soustrait une quantité proportionnelle à la dose basale et à la sensibilité
+            bgSimulated -= insulinSensitivity * basalCandidate * (5.0 / 60.0)
+            predictions.add(bgSimulated)
+        }
+        return predictions
+    }
+    /**
+     * Calcule la fonction de coût, ici la somme des carrés des écarts entre les glycémies prédites et la glycémie cible.
+     *
+     * @param basalCandidate La dose candidate de basal.
+     * @param currentBG La glycémie actuelle.
+     * @param targetBG La glycémie cible.
+     * @param horizonMinutes L’horizon de prédiction (en minutes).
+     * @param insulinSensitivity La sensibilité insulinique.
+     * @return Le coût cumulé.
+     */
+    fun costFunction(
+        basalCandidate: Double, currentBG: Double,
+        targetBG: Double, horizonMinutes: Int,
+        insulinSensitivity: Double, nnPrediction: Double
+    ): Double {
+        val predictions = predictGlycemia(currentBG, basalCandidate, horizonMinutes, insulinSensitivity)
+        val predictionCost = predictions.sumOf { (it - targetBG).pow(2) }
+        val nnPenalty = (basalCandidate - nnPrediction).pow(2)
+        return predictionCost + 0.5 * nnPenalty  // Pondération du terme de pénalité
+    }
+
 
     private fun roundBasal(value: Double): Double = value
     fun getZeroBasalDuration(persistenceLayer: PersistenceLayer, lookBackHours: Int): Int {
@@ -592,58 +635,92 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     //     }
     // }
     fun createFilteredAndSortedCopy(csvFile: File, dateToRemove: String) {
+        // Vérifier que le fichier CSV existe
         if (!csvFile.exists()) {
             println("Le fichier original n'existe pas.")
             return
         }
 
-        try {
-            // Lire toutes les lignes du fichier en mémoire
-            val lines = csvFile.readLines(Charsets.UTF_8)
-            if (lines.isEmpty()) {
-                println("Le fichier CSV est vide.")
-                return
-            }
+        // Tenter de parser la date cible (attendue au format "dd/MM/yyyy")
+        val targetDate: Date? = try {
+            SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).parse(dateToRemove)
+        } catch (e: Exception) {
+            println("Erreur de parsing de la date cible : ${e.message}")
+            null
+        }
+        if (targetDate == null) {
+            println("La date cible est invalide.")
+            return
+        }
 
-            val header = lines.first()
-            // Filtrer les lignes (à partir de la deuxième ligne)
-            val filteredLines = lines.drop(1).filter { line ->
-                val parts = line.split(",")
-                if (parts.isNotEmpty()) {
-                    // Nettoyer la date : suppression des guillemets et espaces parasites
-                    val dateStr = parts[0].replace("\"", "").trim()
-                    if (dateStr.startsWith(dateToRemove)) {
+        // Normaliser la date cible dans un format standard (ici "yyyyMMdd")
+        val normalizedTarget = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(targetDate)
+
+        // Liste des formats possibles présents dans le CSV pour la première colonne
+        val dateFormats = listOf(
+            SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()),
+            SimpleDateFormat("d/M/yy HH:mm", Locale.getDefault()),
+            SimpleDateFormat("d/M/yyyy HH:mm", Locale.getDefault())
+        )
+
+        // Lecture de toutes les lignes du fichier en mémoire (UTF-8)
+        val lines = csvFile.readLines(Charsets.UTF_8)
+        if (lines.isEmpty()) {
+            println("Le fichier CSV est vide.")
+            return
+        }
+
+        // La première ligne est l'en-tête
+        val header = lines.first()
+        val filteredLines = mutableListOf<String>()
+
+        // Traiter chaque ligne (à partir de la deuxième)
+        for (line in lines.drop(1)) {
+            val parts = line.split(",")
+            if (parts.isNotEmpty()) {
+                val rawDateStr = parts[0].trim() // Par exemple "01/01/2025 00:18" ou "4/3/25 00:44"
+                var parsedDate: Date? = null
+                // Essayer de parser la date avec chacun des formats disponibles
+                for (format in dateFormats) {
+                    try {
+                        parsedDate = format.parse(rawDateStr)
+                        if (parsedDate != null) break
+                    } catch (e: Exception) {
+                        // En cas d'erreur, on continue avec le format suivant
+                    }
+                }
+                if (parsedDate != null) {
+                    // Normaliser la date de la ligne
+                    val normalizedLineDate = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(parsedDate)
+                    if (normalizedLineDate == normalizedTarget) {
                         println("Ligne supprimée : $line")
-                        false
-                    } else {
-                        true
+                        continue  // Ne pas inclure cette ligne dans le nouveau contenu
                     }
                 } else {
-                    true
+                    // Si la date ne peut pas être parsée, on peut choisir de conserver la ligne
+                    println("Impossible de parser la date pour la ligne : $line")
                 }
             }
-
-            // Reconstituer le contenu du fichier filtré
-            val newContent = buildString {
-                append(header).append("\n")
-                filteredLines.forEach { line ->
-                    append(line).append("\n")
-                }
-            }
-
-            // Création d'une sauvegarde de l'original
-            val dateFormat = SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault())
-            val currentDateTime = dateFormat.format(Date())
-            val backupFile = File(csvFile.parentFile, "oapsaimiML2_records_$currentDateTime.csv")
-            csvFile.copyTo(backupFile, overwrite = true)
-
-            // Écriture du nouveau contenu filtré dans le fichier original
-            csvFile.writeText(newContent, Charsets.UTF_8)
-
-            println("Le fichier original a été sauvegardé sous '${backupFile.name}', et le fichier filtré a été écrit.")
-        } catch (e: Exception) {
-            println("Erreur lors de la gestion des fichiers : ${e.message}")
+            filteredLines.add(line)
         }
+
+        // Reconstituer le contenu final : en-tête + lignes filtrées
+        val newContent = buildString {
+            append(header).append("\n")
+            for (line in filteredLines) {
+                append(line).append("\n")
+            }
+        }
+
+        // Créer une sauvegarde du fichier original en y ajoutant un timestamp
+        val backupFileName = "oapsaimiML2_records_${SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault()).format(Date())}.csv"
+        val backupFile = File(csvFile.parentFile, backupFileName)
+        csvFile.copyTo(backupFile, overwrite = true)
+
+        // Écraser le fichier original avec le contenu filtré
+        csvFile.writeText(newContent, Charsets.UTF_8)
+
+        println("Fichier mis à jour. Backup créé sous '${backupFile.name}'.")
     }
 
     private fun logDataToCsv(predictedSMB: Float, smbToGive: Float) {
@@ -693,6 +770,37 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     //         println("Aucune suppression nécessaire : tir1DAYIR est supérieur ou égal à 85.")
     //     }
     // }
+    fun removeLast200Lines(csvFile: File) {
+        if (!csvFile.exists()) {
+            println("Le fichier original n'existe pas.")
+            return
+        }
+
+        // Lire toutes les lignes du fichier
+        val lines = csvFile.readLines(Charsets.UTF_8)
+
+        if (lines.size <= 200) {
+            println("Le fichier contient moins ou égal à 200 lignes, aucune suppression effectuée.")
+            return
+        }
+
+        // Conserver toutes les lignes sauf les 200 dernières
+        val newLines = lines.dropLast(200)
+
+        // Création d'un nom de sauvegarde avec timestamp
+        val dateFormat = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+        val timestamp = dateFormat.format(Date())
+        val backupFileName = "backup_$timestamp.csv"
+        val backupFile = File(csvFile.parentFile, backupFileName)
+
+        // Sauvegarder le fichier original
+        csvFile.copyTo(backupFile, overwrite = true)
+
+        // Réécrire le fichier original avec les lignes restantes
+        csvFile.writeText(newLines.joinToString("\n"), Charsets.UTF_8)
+
+        println("Les 200 dernières lignes ont été supprimées. Le fichier original a été sauvegardé sous '$backupFileName'.")
+    }
     private fun automateDeletionIfBadDay(tir1DAYIR: Int) {
         // Vérifier si le TIR est inférieur à 85%
         if (tir1DAYIR < 85) {
@@ -707,7 +815,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 val dateToRemove = yesterday.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))
 
                 // Appeler la méthode de suppression
-                createFilteredAndSortedCopy(csvfile,dateToRemove)
+                //createFilteredAndSortedCopy(csvfile,dateToRemove)
+                removeLast200Lines(csvfile)
                 println("Les données pour la date $dateToRemove ont été supprimées car TIR1DAIIR est inférieur à 85%.")
             } else {
                 println("La suppression ne peut être exécutée qu'entre 00:05 et 00:10.")
@@ -2094,7 +2203,8 @@ private fun neuralnetwork5(
         val deleteTime = therapy.deleteTime
         if (deleteTime) {
             //removeLastNLines(100)
-            createFilteredAndSortedCopy(csvfile,deleteEventDate.toString())
+            //createFilteredAndSortedCopy(csvfile,deleteEventDate.toString())
+            removeLast200Lines(csvfile)
         }
         this.sleepTime = therapy.sleepTime
         this.snackTime = therapy.snackTime
@@ -2717,7 +2827,43 @@ private fun neuralnetwork5(
         AimiInsReq = if (AimiInsReq < smbToGive) AimiInsReq else smbToGive.toDouble()
 
         val finalInsulinDose = round(AimiInsReq, 2)
+        // ===== Intégration du module MPC et du correctif PI =====
+// Exemple d’optimisation simple sur la dose basale candidate
 
+// Définition des bornes (par exemple de 0.0 à la basale courante maximale ou une valeur fixée)
+        val doseMin = 0.0
+        val doseMax = maxSMB
+// Paramètres pour le module prédictif
+        val horizon = 30  // horizon en minutes
+        val insulinSensitivity = variableSensitivity.toDouble()  // conversion si nécessaire
+
+// On utilise une recherche itérative simple pour trouver la dose qui minimise le coût
+        var optimalDose = doseMin
+        var bestCost = Double.MAX_VALUE
+        val nSteps = 20  // nombre de pas d’échantillonnage entre doseMin et doseMax
+
+        for (i in 0..nSteps) {
+            val candidate = doseMin + i * (doseMax - doseMin) / nSteps
+            val cost = costFunction(basal, bg.toDouble(), targetBg.toDouble(), horizon, insulinSensitivity, smbToGive.toDouble())
+            if (cost < bestCost) {
+                bestCost = cost
+                optimalDose = candidate
+            }
+        }
+
+// Correction en boucle fermée avec un simple contrôleur PI
+        val error = bg.toDouble() - targetBg.toDouble()  // erreur actuelle
+        val Kp = 0.1  // gain proportionnel (à calibrer)
+        val correction = -Kp * error
+
+        val optimalBasalMPC = optimalDose + correction
+
+// On loggue ces valeurs pour debug
+        consoleLog.add("Module MPC: dose candidate = ${optimalDose}, correction = ${correction}, optimalBasalMPC = ${optimalBasalMPC}")
+
+// On peut maintenant utiliser cette dose pour ajuster la décision.
+        smbToGive = optimalBasalMPC.toFloat()
+// ===== Fin de l’intégration du module MPC =====
         smbToGive = applySafetyPrecautions(mealData,finalInsulinDose.toFloat())
         smbToGive = roundToPoint05(smbToGive)
 
@@ -2958,7 +3104,7 @@ private fun neuralnetwork5(
             appendLine("╔${"═".repeat(screenWidth)}╗")
             appendLine(String.format("║ %-${screenWidth}s ║", "AAPS-MASTER-AIMI"))
             appendLine(String.format("║ %-${screenWidth}s ║", "OpenApsAIMI Settings"))
-            appendLine(String.format("║ %-${screenWidth}s ║", "05 Avril 2025"))
+            appendLine(String.format("║ %-${screenWidth}s ║", "07 Avril 2025"))
             appendLine("╚${"═".repeat(screenWidth)}╝")
             appendLine()
 
