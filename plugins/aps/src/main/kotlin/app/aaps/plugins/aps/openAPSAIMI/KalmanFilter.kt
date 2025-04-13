@@ -7,6 +7,7 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import kotlin.math.abs
 import kotlin.math.ln
+import kotlin.math.max
 
 /**
  * Classe de filtre de Kalman simple permettant de lisser les mesures d'ISF.
@@ -58,7 +59,7 @@ class KalmanISFCalculator(
     private val kalmanFilter = KalmanFilter(
         stateEstimate = 15.0,
         estimationError = 5.0,
-        processVariance = 5.0,      // Augmenté (était 0.5)
+        processVariance = 10.0,
         measurementVariance = 2.0
     )
 
@@ -81,33 +82,62 @@ class KalmanISFCalculator(
     private fun computeRawISF(glucose: Double): Double {
         val effectiveTDD = computeEffectiveTDD()
         val safeTDD = if (effectiveTDD < 1.0) 1.0 else effectiveTDD
-        // Facteur BG : si glucose > 130, on applique une réduction progressive
-        val bgFactor = if (glucose > 130.0) {
-            // On déduit une réduction linéaire jusqu’à un minimum de 0.5 pour BG >= 250
-            val factor = 1.0 - ((glucose - 130.0) / (200.0 - 130.0)) * 0.5
-            factor.coerceAtLeast(0.5)
+
+        // Apply a progressive reduction in ISF based on increasing glucose levels
+        // val bgFactor = when {
+        //     glucose >= 180.0 -> 0.3  // Maximum reduction at high glucose levels
+        //     glucose >= 160.0 -> 0.4
+        //     glucose >= 150.0 -> 0.5
+        //     glucose >= 130.0 -> 0.7
+        //     glucose >= 115.0 -> 0.8
+        //     glucose >= 100.0 -> 0.9
+        //     else -> 1.0
+        // }
+        val bgFactor = if (glucose > 100.0) {
+            // Apply exponential decay for faster reduction
+            val factor = Math.exp((glucose - 100.0)/50.0)
+            1.0 / factor.coerceAtLeast(1.0).coerceAtMost(2.0)
         } else {
             1.0
         }
-        // On applique bgFactor à la formule classique
-        val rawISF = SCALING_FACTOR / (safeTDD * ln(glucose / BASE_CONSTANT + 1)) * bgFactor
+
+
+        val rawISF = (SCALING_FACTOR / (safeTDD * ln(glucose / BASE_CONSTANT + 1))) * bgFactor
         return rawISF.coerceIn(MIN_ISF, MAX_ISF)
     }
-
 
     fun calculateISF(glucose: Double, currentDelta: Double?, predictedDelta: Double?): Double {
         val rawISF = computeRawISF(glucose)
         logger.debug(LTag.APS, "Raw ISF calculé : $rawISF pour BG = $glucose")
 
-        // Ajuster measurementVariance pour être plus réactif en cas de forte variation
-        kalmanFilter.measurementVariance = when {
-            currentDelta != null && abs(currentDelta) > 10 -> 1.0
-            currentDelta != null && abs(currentDelta) > 5 -> 1.5
-            else -> 2.0
+        // Calculate the combined influence of current and predicted deltas
+        var deltaInfluence = 0.0
+
+        if (currentDelta != null) {
+            deltaInfluence += abs(currentDelta)
         }
+
+        if (predictedDelta != null) {
+            deltaInfluence += abs(predictedDelta)
+        }
+
+        // Set new measurement variance based on combined delta influence
+        var newMeasurementVariance = when {
+            deltaInfluence > 10 -> 0.5  // High responsiveness for significant changes
+            deltaInfluence > 5 -> 1.0   // Moderate responsiveness
+            else -> 2.0                // Standard responsiveness
+        }
+
+        // Additional adjustment for high glucose to increase responsiveness
+        if (glucose >= 130.0) {
+            newMeasurementVariance = max(1.0, newMeasurementVariance * 0.8)
+        }
+
+        kalmanFilter.measurementVariance = newMeasurementVariance
 
         val filteredISF = kalmanFilter.update(rawISF).coerceIn(MIN_ISF, MAX_ISF)
         logger.debug(LTag.APS, "ISF filtré par Kalman : $filteredISF (variance de mesure = ${kalmanFilter.measurementVariance})")
         return filteredISF
     }
+
 }

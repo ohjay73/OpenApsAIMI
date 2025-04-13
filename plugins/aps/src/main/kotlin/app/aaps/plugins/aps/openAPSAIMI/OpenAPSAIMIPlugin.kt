@@ -397,10 +397,10 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         val dynamicFactor = dynamicDeltaCorrectionFactor(currentDelta,predictedDelta, bg)
         // Calcul adaptatif via filtre Kalman (la classe KalmanISFCalculator doit être instanciée préalablement)
         var adaptiveISF = kalmanISFCalculator.calculateISF(glucose, currentDelta, predictedDelta)
-        val calendarInstance = Calendar.getInstance()
-        val hourOfDay = calendarInstance[Calendar.HOUR_OF_DAY]
-        val smoothedISF =if (hourOfDay in 0..11 || hourOfDay in 15..19 || hourOfDay >= 22) smoothSensitivityChange(adaptiveISF, glucose, predictedDelta) else smoothSensitivityChange(adaptiveISF, glucose, currentDelta)
-        aapsLogger.debug(LTag.APS, "🔍 ISF avant lissage : $adaptiveISF, après lissage : $smoothedISF")
+        // val calendarInstance = Calendar.getInstance()
+        // val hourOfDay = calendarInstance[Calendar.HOUR_OF_DAY]
+        // val smoothedISF =if (hourOfDay in 0..11 || hourOfDay in 15..19 || hourOfDay >= 22) smoothSensitivityChange(adaptiveISF, glucose, predictedDelta) else smoothSensitivityChange(adaptiveISF, glucose, currentDelta)
+        // aapsLogger.debug(LTag.APS, "🔍 ISF avant lissage : $adaptiveISF, après lissage : $smoothedISF")
         aapsLogger.debug(LTag.APS, "Adaptive ISF computed via Kalman: $adaptiveISF for BG: $glucose")
         var sensitivity = adaptiveISF * dynamicFactor
         // Imposer une valeur minimale de 5 et maximale de 300
@@ -416,103 +416,102 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
     }
 
 
-    private fun smoothSensitivityChange(
-        rawSensitivity: Double,
-        glucose: Double?,
-        delta: Double?
-    ): Double {
-        val recentDeltas = getRecentDeltas()
-        val predicted = predictedDelta(recentDeltas)
-        if (glucose == null) return rawSensitivity
-
-        // 1) récupère une valeur d’ISF interpolée selon BG et delta
-        val interpolatedISF = interpolate(glucose,predicted)
-
-        // 2) On fusionne la sensibilité brute et l’interpolée pour lisser
-        val smoothingFactor = 0.2
-        var newISF = rawSensitivity * (1.0 - smoothingFactor) + interpolatedISF * smoothingFactor
-
-        // 3️⃣ Correction basée sur la variation rapide de la glycémie
-        val deltaCorrectionFactor = when {
-            delta == null             -> 1.0
-            predicted > 10 && glucose!! > 120    -> 0.5  // Réduction plus forte si delta > 10 mg/dL en 5 min
-            predicted > 5 && glucose!! > 120 -> 0.7  // Réduction modérée si delta > 5 mg/dL
-            predicted < -10               -> 1.4 // Augmentation plus forte si delta < -10 mg/dL
-            predicted < -5                -> 1.2 // Augmentation modérée si delta < -5 mg/dL
-            else                      -> 1.0
-        }
-
-        // 4️⃣ Application de la correction et sécurisation des bornes
-        newISF *= deltaCorrectionFactor
-
-        // 5️⃣ Limites de sécurité pour éviter des valeurs absurdes
-        return newISF.coerceIn(10.0, 300.0) // L'ISF est toujours entre 15 et 300
-    }
-
-    fun interpolate(xdata: Double, delta: Double?): Double {
-        // 🔹 Points de référence pour l'interpolation (ISF ajusté selon la glycémie)
-        val polyX = arrayOf(50.0, 60.0, 80.0, 100.0, 110.0, 120.0, 140.0, 160.0, 180.0, 200.0, 220.0, 240.0, 260.0, 280.0, 300.0)
-        val polyY = arrayOf(2.0, 2.0, 2.0, 1.5, 1.1, 1.0, 0.6, 0.5, 0.4, 0.3, 0.25, 0.2, 0.15, 0.15, 0.15)
-
-        val polymax = polyX.size - 1
-        var newVal = 1.0
-        var lowVal = polyY[0]
-        var topVal = polyY[polymax]
-        var lowX = polyX[0]
-        var topX = polyX[polymax]
-        var lowLabl = lowX
-
-        // 🔹 Extrapolation pour les glycémies < 50 mg/dL
-        if (xdata < lowX) {
-            val stepT = polyX[1]
-            val sValold = polyY[1]
-            newVal = lowVal + (sValold - lowVal) / (stepT - lowX) * (xdata - lowX)
-        }
-        // 🔹 Extrapolation pour les glycémies > 300 mg/dL
-        else if (xdata > topX) {
-            val step = polyX[polymax - 1]
-            val sVal = polyY[polymax - 1]
-            newVal = sVal + (topVal - sVal) / (topX - step) * (xdata - step)
-            newVal = min(newVal, 0.15) // 🔹 Limitation max (réduction ISF maximale)
-        }
-        // 🔹 Interpolation normale
-        else {
-            for (i in 0..polymax) {
-                val step = polyX[i]
-                val sVal = polyY[i]
-                if (step == xdata) {
-                    newVal = sVal
-                    break
-                } else if (step > xdata) {
-                    topVal = sVal
-                    lowX = lowLabl
-                    topX = step
-                    newVal = lowVal + (topVal - lowVal) / (topX - lowX) * (xdata - lowX)
-                    break
-                }
-                lowVal = sVal
-                lowLabl = step
-            }
-        }
-
-        // 🔹 Facteur dynamique basé sur le delta
-        val deltaFactor = when {
-            delta == null -> 1.0
-            delta > 10 -> 0.1   // 🔹 Réduction TRÈS agressive si delta > 10 mg/dL/5min
-            delta > 5  -> 0.4   // 🔹 Réduction forte si delta > 5 mg/dL/5min
-            delta > 2  -> 0.7   // 🔹 Réduction modérée si delta > 2 mg/dL/5min
-            delta < -10 -> 1.6  // 🔹 Augmentation TRÈS forte si delta < -10 mg/dL/5min
-            delta < -5  -> 1.3  // 🔹 Augmentation forte si delta < -5 mg/dL/5min
-            delta < -2  -> 1.1  // 🔹 Augmentation modérée si delta < -2 mg/dL/5min
-            else -> 1.0
-        }
-
-        // 🔹 Application de la correction dynamique
-        newVal *= deltaFactor
-
-        // 🔹 Sécurisation des bornes ISF
-        return newVal.coerceIn(0.1, 1.5)
-    }
+    // private fun smoothSensitivityChange(
+    //     rawSensitivity: Double,
+    //     glucose: Double?,
+    //     delta: Double?
+    // ): Double {
+    //     val recentDeltas = getRecentDeltas()
+    //     val predicted = predictedDelta(recentDeltas)
+    //     if (glucose == null) return rawSensitivity
+    //
+    //     // 1) récupère une valeur d’ISF interpolée selon BG et delta
+    //     val interpolatedISF = interpolate(glucose,predicted)
+    //
+    //     // 2) On fusionne la sensibilité brute et l’interpolée pour lisser
+    //     val smoothingFactor = 0.3
+    //     var newISF = rawSensitivity * (1.0 - smoothingFactor) + interpolatedISF * smoothingFactor
+    //
+    //     // 3️⃣ Correction basée sur la variation rapide de la glycémie
+    //     val deltaCorrectionFactor = when {
+    //         delta == null             -> 1.0
+    //         predicted > 8 && glucose!! > 120    -> 0.3  // Réduction plus forte si delta > 10 mg/dL en 5 min
+    //         predicted > 5 && glucose!! > 120 -> 0.6  // Réduction modérée si delta > 5 mg/dL
+    //         predicted < -5                -> 1.4 // Augmentation modérée si delta < -5 mg/dL
+    //         else                      -> 1.0
+    //     }
+    //
+    //     // 4️⃣ Application de la correction et sécurisation des bornes
+    //     newISF *= deltaCorrectionFactor
+    //
+    //     // 5️⃣ Limites de sécurité pour éviter des valeurs absurdes
+    //     return newISF.coerceIn(10.0, 300.0) // L'ISF est toujours entre 15 et 300
+    // }
+    //
+    // fun interpolate(xdata: Double, delta: Double?): Double {
+    //     // 🔹 Points de référence pour l'interpolation (ISF ajusté selon la glycémie)
+    //     val polyX = arrayOf(50.0, 60.0, 80.0, 100.0, 110.0, 120.0, 140.0, 160.0, 180.0, 200.0, 220.0, 240.0, 260.0, 280.0, 300.0)
+    //     val polyY = arrayOf(2.0, 2.0, 2.0, 1.5, 1.1, 1.0, 0.6, 0.5, 0.4, 0.3, 0.25, 0.2, 0.15, 0.15, 0.15)
+    //
+    //     val polymax = polyX.size - 1
+    //     var newVal = 1.0
+    //     var lowVal = polyY[0]
+    //     var topVal = polyY[polymax]
+    //     var lowX = polyX[0]
+    //     var topX = polyX[polymax]
+    //     var lowLabl = lowX
+    //
+    //     // 🔹 Extrapolation pour les glycémies < 50 mg/dL
+    //     if (xdata < lowX) {
+    //         val stepT = polyX[1]
+    //         val sValold = polyY[1]
+    //         newVal = lowVal + (sValold - lowVal) / (stepT - lowX) * (xdata - lowX)
+    //     }
+    //     // 🔹 Extrapolation pour les glycémies > 300 mg/dL
+    //     else if (xdata > topX) {
+    //         val step = polyX[polymax - 1]
+    //         val sVal = polyY[polymax - 1]
+    //         newVal = sVal + (topVal - sVal) / (topX - step) * (xdata - step)
+    //         newVal = min(newVal, 0.15) // 🔹 Limitation max (réduction ISF maximale)
+    //     }
+    //     // 🔹 Interpolation normale
+    //     else {
+    //         for (i in 0..polymax) {
+    //             val step = polyX[i]
+    //             val sVal = polyY[i]
+    //             if (step == xdata) {
+    //                 newVal = sVal
+    //                 break
+    //             } else if (step > xdata) {
+    //                 topVal = sVal
+    //                 lowX = lowLabl
+    //                 topX = step
+    //                 newVal = lowVal + (topVal - lowVal) / (topX - lowX) * (xdata - lowX)
+    //                 break
+    //             }
+    //             lowVal = sVal
+    //             lowLabl = step
+    //         }
+    //     }
+    //
+    //     // 🔹 Facteur dynamique basé sur le delta
+    //     val deltaFactor = when {
+    //         delta == null -> 1.0
+    //         delta > 10 -> 0.1   // 🔹 Réduction TRÈS agressive si delta > 10 mg/dL/5min
+    //         delta > 5  -> 0.4   // 🔹 Réduction forte si delta > 5 mg/dL/5min
+    //         delta > 2  -> 0.7   // 🔹 Réduction modérée si delta > 2 mg/dL/5min
+    //         delta < -10 -> 1.6  // 🔹 Augmentation TRÈS forte si delta < -10 mg/dL/5min
+    //         delta < -5  -> 1.3  // 🔹 Augmentation forte si delta < -5 mg/dL/5min
+    //         delta < -2  -> 1.1  // 🔹 Augmentation modérée si delta < -2 mg/dL/5min
+    //         else -> 1.0
+    //     }
+    //
+    //     // 🔹 Application de la correction dynamique
+    //     newVal *= deltaFactor
+    //
+    //     // 🔹 Sécurisation des bornes ISF
+    //     return newVal.coerceIn(0.1, 1.5)
+    // }
 
 
     override fun invoke(initiator: String, tempBasalFallback: Boolean) {
@@ -687,14 +686,14 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
             aapsLogger.debug(LTag.APS, "Adaptive ISF computed: $variableSensitivity for BG: $currentBG, currentDelta: $currentDelta, predictedDelta: $predictedDelta")
 
             // Optionnel : application d'un lissage supplémentaire en fonction de l'heure de la journée
-            val calendarInstance = Calendar.getInstance()
-            val hourOfDay = calendarInstance[Calendar.HOUR_OF_DAY]
-            variableSensitivity = if (hourOfDay in 0..11 || hourOfDay in 15..19 || hourOfDay >= 22) {
-                smoothSensitivityChange(variableSensitivity, currentBG, predictedDelta)
-            } else {
-                smoothSensitivityChange(variableSensitivity, currentBG, currentDelta)
-            }
-            aapsLogger.debug(LTag.APS, "Adaptive ISF after additional smoothing: $variableSensitivity")
+            // val calendarInstance = Calendar.getInstance()
+            // val hourOfDay = calendarInstance[Calendar.HOUR_OF_DAY]
+            // variableSensitivity = if (hourOfDay in 0..11 || hourOfDay in 15..19 || hourOfDay >= 22) {
+            //     smoothSensitivityChange(variableSensitivity, currentBG, predictedDelta)
+            // } else {
+            //     smoothSensitivityChange(variableSensitivity, currentBG, currentDelta)
+            // }
+            // aapsLogger.debug(LTag.APS, "Adaptive ISF after additional smoothing: $variableSensitivity")
 
             // Imposition des bornes pour que l'ISF soit toujours compris entre 5 et 300
             variableSensitivity = variableSensitivity.coerceIn(5.0, 300.0)
