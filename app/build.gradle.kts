@@ -22,79 +22,66 @@ repositories {
 // Fonctions personnalisées
 // -----------------------------------------------------------------------------
 fun generateGitBuild(): String {
-    val stringBuilder = StringBuilder()
     try {
-        val stdout = ByteArrayOutputStream()
-        exec {
-            commandLine("git", "describe", "--always")
-            standardOutput = stdout
-        }
-        val commitObject = stdout.toString().trim()
-        stringBuilder.append(commitObject)
-    } catch (ignored: Exception) {
-        stringBuilder.append("NoGitSystemAvailable")
+        val processBuilder = ProcessBuilder("git", "describe", "--always")
+        val output = File.createTempFile("git-build", "")
+        processBuilder.redirectOutput(output)
+        val process = processBuilder.start()
+        process.waitFor()
+        return output.readText().trim()
+    } catch (_: Exception) {
+        return "NoGitSystemAvailable"
     }
-    return stringBuilder.toString()
 }
 
 fun generateGitRemote(): String {
-    val stringBuilder = StringBuilder()
     try {
-        val stdout = ByteArrayOutputStream()
-        exec {
-            commandLine("git", "remote", "get-url", "origin")
-            standardOutput = stdout
-        }
-        val commitObject = stdout.toString().trim()
-        stringBuilder.append(commitObject)
-    } catch (ignored: Exception) {
-        stringBuilder.append("NoGitSystemAvailable")
+        val processBuilder = ProcessBuilder("git", "remote", "get-url", "origin")
+        val output = File.createTempFile("git-remote", "")
+        processBuilder.redirectOutput(output)
+        val process = processBuilder.start()
+        process.waitFor()
+        return output.readText().trim()
+    } catch (_: Exception) {
+        return "NoGitSystemAvailable"
     }
-    return stringBuilder.toString()
 }
 
 fun generateDate(): String {
-    // showing only date prevents app from rebuilding every time
-    return SimpleDateFormat("yyyy.MM.dd").format(Date())
+    val stringBuilder: StringBuilder = StringBuilder()
+    // showing only date prevents app to rebuild everytime
+    stringBuilder.append(SimpleDateFormat("yyyy.MM.dd").format(Date()))
+    return stringBuilder.toString()
 }
 
 fun isMaster(): Boolean = !Versions.appVersion.contains("-")
 
 fun gitAvailable(): Boolean {
-    val stringBuilder = StringBuilder()
     try {
-        val stdout = ByteArrayOutputStream()
-        exec {
-            commandLine("git", "--version")
-            standardOutput = stdout
-        }
-        val commitObject = stdout.toString().trim()
-        stringBuilder.append(commitObject)
-    } catch (ignored: Exception) {
-        return false // NoGitSystemAvailable
+        val processBuilder = ProcessBuilder("git", "--version")
+        val output = File.createTempFile("git-version", "")
+        processBuilder.redirectOutput(output)
+        val process = processBuilder.start()
+        process.waitFor()
+        return output.readText().isNotEmpty()
+    } catch (_: Exception) {
+        return false
     }
-    return stringBuilder.toString().isNotEmpty()
 }
 
 fun allCommitted(): Boolean {
-    val stringBuilder = StringBuilder()
     try {
-        val stdout = ByteArrayOutputStream()
-        exec {
-            commandLine("git", "status", "-s")
-            standardOutput = stdout
-        }
-        // ignore all changes done in .idea/codeStyles
-        val cleanedList = stdout.toString()
-            .replace(Regex("""(?m)^\s*(M|A|D|\?\?)\s*.*?\.idea\/codeStyles\/.*?\s*$"""), "")
+        val processBuilder = ProcessBuilder("git", "status", "-s")
+        val output = File.createTempFile("git-comited", "")
+        processBuilder.redirectOutput(output)
+        val process = processBuilder.start()
+        process.waitFor()
+        return output.readText().replace(Regex("""(?m)^\s*(M|A|D|\?\?)\s*.*?\.idea\/codeStyles\/.*?\s*$"""), "")
             // ignore all files added to project dir but not staged/known to GIT
-            .replace(Regex("""(?m)^\s*(\?\?)\s*.*?\s*$"""), "")
-
-        stringBuilder.append(cleanedList.trim())
-    } catch (ignored: Exception) {
-        return false // NoGitSystemAvailable
+            .replace(Regex("""(?m)^\s*(\?\?)\s*.*?\s*$"""), "").trim().isEmpty()
+    } catch (_: Exception) {
+        return false
     }
-    return stringBuilder.toString().isEmpty()
 }
 
 // -----------------------------------------------------------------------------
@@ -118,11 +105,10 @@ android {
         buildConfigField("String", "HEAD", "\"${generateGitBuild()}\"")
         buildConfigField("String", "COMMITTED", "\"${allCommitted()}\"")
 
-        // Dagger injected instrumentation tests in app module
+        // For Dagger injected instrumentation tests in app module
         testInstrumentationRunner = "app.aaps.runners.InjectedTestRunner"
     }
 
-    // Dimensions et flavors
     flavorDimensions.add("standard")
     productFlavors {
         create("full") {
@@ -194,7 +180,7 @@ android {
 
     useLibrary("org.apache.http.legacy")
 
-    // Data Binding & Build Config
+    //Deleting it causes a binding error
     buildFeatures {
         dataBinding = true
         buildConfig = true
@@ -215,9 +201,9 @@ allprojects {
 // Dependencies
 // -----------------------------------------------------------------------------
 dependencies {
-    // in order to use internet"s versions you'd need to enable Jetifier again
-    // ex: implementation("...")
-
+    // in order to use internet"s versions you"d need to enable Jetifier again
+    // https://github.com/nightscout/graphview.git
+    // https://github.com/nightscout/iconify.git
     implementation(project(":shared:impl"))
     implementation(project(":core:data"))
     implementation(project(":core:objects"))
@@ -269,11 +255,16 @@ dependencies {
 
     kspAndroidTest(libs.com.google.dagger.android.processor)
 
-    // Dagger2
+    /* Dagger2 - We are going to use dagger.android which includes
+     * support for Activity and fragment injection so we need to include
+     * the following dependencies */
     ksp(libs.com.google.dagger.android.processor)
     ksp(libs.com.google.dagger.compiler)
 
+    // MainApp
     api(libs.com.uber.rxdogtag2.rxdogtag)
+    // Remote config
+    api(libs.com.google.firebase.config)
 }
 
 // -----------------------------------------------------------------------------
@@ -284,12 +275,8 @@ println("isMaster: ${isMaster()}")
 println("gitAvailable: ${gitAvailable()}")
 println("allCommitted: ${allCommitted()}")
 println("-------------------")
-
-if (isMaster() && !gitAvailable()) {
-    throw GradleException(
-        "GIT system is not available. On Windows try to run Android Studio as Administrator. " +
-            "Check if GIT is installed and that Studio has permissions to use it."
-    )
+if (!gitAvailable()) {
+    throw GradleException("GIT system is not available. On Windows try to run Android Studio as an Administrator. Check if GIT is installed and Studio have permissions to use it")
 }
 
 /*if (isMaster() && !allCommitted()) {

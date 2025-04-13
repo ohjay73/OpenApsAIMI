@@ -1,9 +1,13 @@
 package app.aaps.core.interfaces.aps
 
 
+import android.annotation.SuppressLint
+import kotlinx.serialization.InternalSerializationApi
 import kotlinx.serialization.Serializable
 
 
+//@SuppressLint("UnsafeOptInUsageError")
+@OptIn(InternalSerializationApi::class)
 @Serializable
 data class OapsProfileAimi(
     var dia: Double, // AMA only

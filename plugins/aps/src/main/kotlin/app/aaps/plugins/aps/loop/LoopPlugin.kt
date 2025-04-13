@@ -35,6 +35,7 @@ import app.aaps.core.interfaces.constraints.Constraint
 import app.aaps.core.interfaces.constraints.ConstraintsChecker
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.db.ProcessedTbrEbData
+import app.aaps.core.interfaces.iob.GlucoseStatusProvider
 import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
@@ -118,7 +119,8 @@ class LoopPlugin @Inject constructor(
     private val runningConfiguration: RunningConfiguration,
     private val uiInteraction: UiInteraction,
     private val instantiator: Instantiator,
-    private val processedDeviceStatusData: ProcessedDeviceStatusData
+    private val processedDeviceStatusData: ProcessedDeviceStatusData,
+    private val glucoseStatusProvider: GlucoseStatusProvider
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.LOOP)
@@ -151,8 +153,59 @@ class LoopPlugin @Inject constructor(
             // Skip db change of ending previous TT
             .debounce(10L, TimeUnit.SECONDS)
             .subscribe({ invoke("EventTempTargetChange", true) }, fabricPrivacy::logException)
+        // Démarrage du déclenchement périodique
+        startPeriodicLoop()
+    }
+    /*private fun startPeriodicLoop() {
+        // On récupère la valeur ApsMaxSmbFrequency en minutes
+        val freqMinutes = preferences.get(IntKey.ApsMaxSmbFrequency).toLong()
+        // On convertit en millisecondes
+        val freqMs = T.mins(freqMinutes).msecs()
+
+        // Définition du Runnable qui relancera votre loop, puis se replanifiera
+        val periodicRunnable = object : Runnable {
+            override fun run() {
+                // On relance le loop
+                invoke("PeriodicApsMaxSmbFrequency", true)
+
+                // On reprogramme le prochain run dans freqMs
+                handler?.postDelayed(this, freqMs)
+            }
+        }
+
+        // On lance la première fois maintenant
+        handler?.postDelayed(periodicRunnable, freqMs)
+    }*/
+    private fun startPeriodicLoop() {
+    // Récupère l'intervalle (en minutes) pour la planification
+    val freqMinutes = preferences.get(IntKey.ApsMaxSmbFrequency).toLong()
+    val freqMs = T.mins(freqMinutes).msecs()
+
+    val periodicRunnable = object : Runnable {
+        override fun run() {
+            // 1) Vérifie l'option autodrive
+            val autodrive = preferences.get(BooleanKey.OApsAIMIautoDrive)
+
+            // 2) Récupère la glycémie (ajustez le code si la variable/méthode diffère)
+            val currentBG = glucoseStatusProvider.glucoseStatusData?.glucose
+
+            // 3) Condition : autodrive activé ET glycémie disponible >= 120
+            if (autodrive && currentBG != null && currentBG >= 130.0) {
+                aapsLogger.debug(LTag.APS, "OApsAIMIautoDrive=$autodrive; BG=$currentBG => on lance le loop.")
+                invoke("PeriodicApsMaxSmbFrequency", true)
+            } else {
+                // Sinon, on logge qu'on ne fait rien
+                aapsLogger.debug(LTag.APS, "Pas de loop : autodrive=$autodrive; BG=$currentBG (<130 ?).")
+            }
+
+            // Replanifie le prochain cycle
+            handler?.postDelayed(this, freqMs)
+        }
     }
 
+    // Lance la première exécution
+    handler?.postDelayed(periodicRunnable, freqMs)
+}
     private fun createNotificationChannel() {
         val mNotificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         @SuppressLint("WrongConstant") val channel = NotificationChannel(

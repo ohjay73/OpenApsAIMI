@@ -367,5 +367,20 @@
     <string name="openapsama_iob_threshold_percent_summary" formatted="false">Percentage of maxIOB above which SMBs are disabled.\nDefault value: 100%\nWith 100% this feature is effectively disabled.</string>
     <string name="openapsama_iob_threshold_percent">maxIOB threshold percent for SMB\n(iob_threshold_percent)</string>
     <string name="Enable_xdripOM_title">Enable xdrip bg each one minute</string>
+    <string name="oaps_aimi_enableMlautoDrive_title">Experimental : Auto Drive</string>
+    <string name="prebolus_autodrive_mode_summary">Autodrive will send a prebolus regarding the raise detection conditions</string>
+    <string name="prebolus_autodrive_mode_title">Autodrive prebolus</string>
+    <string name="oaps_aimi_AutodriveISF_summary">under this ISF value, the condition to receive the prebolus is true</string>
+    <string name="oaps_aimi_AutodriveISF_title">ISF value Autodrive for prebolus</string>
+    <string name="OApsAIMI_CombinedDelta_summary">"Greater than value, the condition to receive the prebolus is true. "</string>
+    <string name="OApsAIMI_CombinedDelta_title">Combined Delta for autodrive prebolus</string>
+    <string name="oaps_aimi_AutodriveTarget_summary">under this target the condition is true to receive the autodrive prebolus</string>
+    <string name="oaps_aimi_AutodriveTarget_title">Minimum target Autodrive prebolus</string>
+    <string name="oaps_aimi_AutodriveBG_summary">Greater than this BG value, the condition is true to receive the autodrive prebolus</string>
+    <string name="oaps_aimi_AutodriveBG_title">minimum bg to recceive autodrive prebolus</string>
+    <string name="oaps_aimi_AutodriveDeviation_summary">Greater than this value, the condition is true to receive the autodrive prebolus</string>
+    <string name="oaps_aimi_AutodriveDeviation_title">Autodrive min deviation</string>
+    <string name="oaps_aimi_AutodriveAcceleration_summary">BG acceleration, if the acceleration is greater than this value, the condition for autodrive prebolus is true.</string>
+    <string name="oaps_aimi_AutodriveAcceleration_title">Autordrive BG acceleration condition</string>
 
 </resources>

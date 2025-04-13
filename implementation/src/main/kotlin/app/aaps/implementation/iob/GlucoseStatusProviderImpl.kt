@@ -43,8 +43,14 @@ class GlucoseStatusProviderImpl @Inject constructor(
         var change: Double
         if (sizeRecords == 1) {
             aapsLogger.debug(LTag.GLUCOSE, "sizeRecords==1")
+            val bg = if (kotlin.math.abs(now.recalculated - now.value) <= 10) {
+                now.value
+            } else {
+                now.recalculated
+            }
+
             return GlucoseStatus(
-                glucose = now.recalculated,
+                glucose = bg,
                 noise = 0.0,
                 delta = 0.0,
                 shortAvgDelta = 0.0,
@@ -243,9 +249,13 @@ class GlucoseStatusProviderImpl @Inject constructor(
             }
         }
         // End parabola fit
-
+        val bg = if (kotlin.math.abs(now.recalculated - now.value) <= 10) {
+            now.value
+        } else {
+            now.recalculated
+        }
         return GlucoseStatus(
-            glucose = now.recalculated,
+            glucose = bg,
             date = nowDate,
             noise = 0.0, //for now set to nothing as not all CGMs report noise
             shortAvgDelta = shortAverageDelta,

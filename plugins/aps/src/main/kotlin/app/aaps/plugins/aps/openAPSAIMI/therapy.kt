@@ -41,9 +41,9 @@ class Therapy (private val persistenceLayer: PersistenceLayer){
             fastingTime = findActiveFastingEvents(System.currentTimeMillis()).blockingGet()
             calibrationTime = isCalibrationEvent(System.currentTimeMillis()).blockingGet()
 
-            // Mettre à jour deleteTime en vérifiant la présence d'un événement "delete"
+            // Mettre à jour deleteTime en vérifiant la présence de l'événement "delete"
             deleteTime = findActivedeleteEvents(System.currentTimeMillis()).blockingGet()
-            // Extraire la date d'un éventuel événement "delete"
+            // Extraire la date de l'événement "delete"
             deleteEventDate = persistenceLayer.getTherapyEventDataFromTime(System.currentTimeMillis() - TimeUnit.DAYS.toMillis(1), true)
                 .map { events ->
                     val note = events.find { it.type == TE.Type.NOTE && it.note?.contains("delete", ignoreCase = true) == true }?.note
