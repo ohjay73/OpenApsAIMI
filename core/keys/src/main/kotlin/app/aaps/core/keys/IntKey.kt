@@ -75,7 +75,7 @@ enum class IntKey(
     OApsAIMISnackinterval("key_oaps_aimi_snack_interval", 3, 1, 20, defaultedBySM = true),
     OApsAIMIBFinterval("key_oaps_aimi_BF_interval", 3, 1, 20, defaultedBySM = true),
     OApsAIMISleepinterval("key_oaps_aimi_sleep_interval", 3, 1, 20, defaultedBySM = true),
-    OApsAIMIautodriveISF("key_oaps_aimi_autodriveISF",5,1,500),
+    //OApsAIMIautodriveISF("key_oaps_aimi_autodriveISF",5,1,500),
     OApsAIMIAutodriveTarget("key_oaps_aimi_autodriveTarget",70,1,160),
     OApsAIMIAutodriveBG("key_oaps_aimi_autodriveBG",90,1,160),
     OApsAIMIlogsize("key_oaps_aimi_logsize",25,1,50)

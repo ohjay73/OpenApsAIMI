@@ -876,7 +876,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val pbolusA: Double = preferences.get(DoubleKey.OApsAIMIautodrivePrebolus)
         val autodriveDelta: Double = preferences.get(DoubleKey.OApsAIMIcombinedDelta)
         val autodriveminDeviation: Double = preferences.get(DoubleKey.OApsAIMIAutodriveDeviation)
-        val autodriveISF: Int = preferences.get(IntKey.OApsAIMIautodriveISF)
+        //val autodriveISF: Int = preferences.get(IntKey.OApsAIMIautodriveISF)
         val autodriveTarget: Int = preferences.get(IntKey.OApsAIMIAutodriveTarget)
         val autodriveBG: Int = preferences.get(IntKey.OApsAIMIAutodriveBG)
         // Récupération des deltas récents et calcul du delta prédit
@@ -889,8 +889,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             return false
         }
 
-        return variableSensitivity <= autodriveISF &&
-            targetBg <= autodriveTarget &&
+        return targetBg <= autodriveTarget &&
             combinedDelta >= autodriveDelta &&
             autodrive &&
             slopeFromMinDeviation >= autodriveminDeviation &&
@@ -2229,10 +2228,12 @@ private fun neuralnetwork5(
         this.acceleratingDown = if (delta < -2 && delta - longAvgDelta < -2) 1 else 0
         this.decceleratingDown = if (delta < 0 && (delta > shortAvgDelta || delta > longAvgDelta)) 1 else 0
         this.stable = if (delta>-3 && delta<3 && shortAvgDelta>-3 && shortAvgDelta<3 && longAvgDelta>-3 && longAvgDelta<3 && bg < 180) 1 else 0
-        val AutodriveAcceleration = preferences.get(DoubleKey.OApsAIMIAutodriveAcceleration)
-        if (!hasReceivedPbolusMInLastHour(1.0) && autodrive && detectMealOnset(delta, predicted.toFloat(), bgAcceleration.toFloat()) && !mealTime && !lunchTime && !bfastTime && !dinnerTime && !sportTime && !snackTime && !highCarbTime && !sleepTime && !lowCarbTime) {
-            rT.units = 1.0
-            rT.reason.append("Détection précoce de repas: Microbolusing 1 U. ")
+        //val AutodriveAcceleration = preferences.get(DoubleKey.OApsAIMIAutodriveAcceleration)
+        val night = now in 1..7
+        val pbolusAS: Double = preferences.get(DoubleKey.OApsAIMIautodrivesmallPrebolus)
+        if (bg > 110 && predictedBg > 150 && !night && !hasReceivedPbolusMInLastHour(pbolusAS) && autodrive && detectMealOnset(delta, predicted.toFloat(), bgAcceleration.toFloat()) && !mealTime && !lunchTime && !bfastTime && !dinnerTime && !sportTime && !snackTime && !highCarbTime && !sleepTime && !lowCarbTime) {
+            rT.units = pbolusAS
+            rT.reason.append("Détection précoce de repas/snack: Microbolusing ${pbolusAS}U. ")
             return rT
         }
         if (isMealModeCondition()){
@@ -2241,7 +2242,7 @@ private fun neuralnetwork5(
                  rT.reason.append("Microbolusing Meal Mode ${pbolusM}U. ")
              return rT
          }
-        if (isAutodriveModeCondition(variableSensitivity, targetBg, delta, autodrive, mealData.slopeFromMinDeviation, bg.toFloat()) && !mealTime && !highCarbTime && !lunchTime && !bfastTime && !dinnerTime && !snackTime && !sportTime && !snackTime && !lowCarbTime && bgAcceleration.toFloat() >= AutodriveAcceleration){
+        if (isAutodriveModeCondition(variableSensitivity, targetBg, delta, autodrive, mealData.slopeFromMinDeviation, bg.toFloat()) && !mealTime && !highCarbTime && !lunchTime && !bfastTime && !dinnerTime && !snackTime && !sportTime && !snackTime && !lowCarbTime){
             val pbolusA: Double = preferences.get(DoubleKey.OApsAIMIautodrivePrebolus)
             rT.units = pbolusA
             rT.reason.append("Microbolusing Autodrive Mode ${pbolusA}U. ")
@@ -3109,7 +3110,7 @@ private fun neuralnetwork5(
             appendLine("╔${"═".repeat(screenWidth)}╗")
             appendLine(String.format("║ %-${screenWidth}s ║", "AAPS-MASTER-AIMI"))
             appendLine(String.format("║ %-${screenWidth}s ║", "OpenApsAIMI Settings"))
-            appendLine(String.format("║ %-${screenWidth}s ║", "13 Avril 2025"))
+            appendLine(String.format("║ %-${screenWidth}s ║", "15 Avril 2025"))
             appendLine("╚${"═".repeat(screenWidth)}╝")
             appendLine()
 

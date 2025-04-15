@@ -60,7 +60,7 @@ class KalmanISFCalculator(
         stateEstimate = 15.0,
         estimationError = 5.0,
         processVariance = 10.0,
-        measurementVariance = 2.0
+        measurementVariance = 1.0
     )
 
     private fun computeEffectiveTDD(): Double {
