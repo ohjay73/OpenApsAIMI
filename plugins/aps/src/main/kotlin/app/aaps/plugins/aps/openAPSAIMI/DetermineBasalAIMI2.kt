@@ -200,29 +200,36 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
 
     private fun roundBasal(value: Double): Double = value
-    fun getZeroBasalDuration(persistenceLayer: PersistenceLayer, lookBackHours: Int): Int {
+    private fun getZeroBasalDuration(persistenceLayer: PersistenceLayer, lookBackHours: Int): Int {
         val now = System.currentTimeMillis()
-        // Définir la période de recherche (par exemple, les 12 dernières heures)
         val fromTime = now - lookBackHours * 60 * 60 * 1000L
 
-        // Récupérer la liste des événements de basale temporaire à partir de "fromTime"
-        // Ici, on utilise blockingGet() pour simplifier l'exemple.
-        val tempBasals: List<TB> = persistenceLayer.getTemporaryBasalsStartingFromTime(fromTime, ascending = false)
+        // Récupère les basales temporaires triées par timestamp décroissant
+        val tempBasals: List<TB> = persistenceLayer
+            .getTemporaryBasalsStartingFromTime(fromTime, ascending = false)
             .blockingGet()
 
-        // Filtrer les événements dont le taux basal est proche de zéro (ici, on considère <= 0.05 U/h comme zéro)
-        val zeroBasals = tempBasals.filter { it.rate <= 0.05 }
-        if (zeroBasals.isEmpty()) {
-            return 0
+        if (tempBasals.isEmpty()) {
+            return 0 // Aucune donnée disponible pendant la période de recherche
         }
 
-        // Trouver l'événement le plus récent (avec le plus grand timestamp)
-        val lastZeroBasal = zeroBasals.maxByOrNull { it.timestamp } ?: return 0
+        var lastZeroTimestamp = fromTime // Initialiser avec le timestamp de base
 
-        // Calculer la durée écoulée (en minutes) depuis le timestamp de cet événement jusqu'à maintenant
-        return ((now - lastZeroBasal.timestamp) / 60000L).toInt()
+        for (event in tempBasals) {
+            if (event.rate > 0.05) break
+            lastZeroTimestamp = event.timestamp
+        }
+
+        // Si aucun événement n'a un taux > 0.05, alors on considère la durée depuis le début de la période
+        val zeroDuration = if (lastZeroTimestamp == fromTime) {
+            now - fromTime
+        } else {
+            now - lastZeroTimestamp
+        }
+
+        return (zeroDuration / 60000L).toInt()
     }
-// -- Classe représentant la décision de sécurité --
+    // -- Classe représentant la décision de sécurité --
     data class SafetyDecision(
         val stopBasal: Boolean,      // true => arrête la basale (ou force une basale à 0)
         val bolusFactor: Double,     // Facteur multiplicateur appliqué à la dose SMB (1.0 = dose complète, 0.0 = annulation)
@@ -634,94 +641,94 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     //         println("Erreur lors de la gestion des fichiers : ${e.message}")
     //     }
     // }
-    fun createFilteredAndSortedCopy(csvFile: File, dateToRemove: String) {
-        // Vérifier que le fichier CSV existe
-        if (!csvFile.exists()) {
-            println("Le fichier original n'existe pas.")
-            return
-        }
-
-        // Tenter de parser la date cible (attendue au format "dd/MM/yyyy")
-        val targetDate: Date? = try {
-            SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).parse(dateToRemove)
-        } catch (e: Exception) {
-            println("Erreur de parsing de la date cible : ${e.message}")
-            null
-        }
-        if (targetDate == null) {
-            println("La date cible est invalide.")
-            return
-        }
-
-        // Normaliser la date cible dans un format standard (ici "yyyyMMdd")
-        val normalizedTarget = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(targetDate)
-
-        // Liste des formats possibles présents dans le CSV pour la première colonne
-        val dateFormats = listOf(
-            SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()),
-            SimpleDateFormat("d/M/yy HH:mm", Locale.getDefault()),
-            SimpleDateFormat("d/M/yyyy HH:mm", Locale.getDefault())
-        )
-
-        // Lecture de toutes les lignes du fichier en mémoire (UTF-8)
-        val lines = csvFile.readLines(Charsets.UTF_8)
-        if (lines.isEmpty()) {
-            println("Le fichier CSV est vide.")
-            return
-        }
-
-        // La première ligne est l'en-tête
-        val header = lines.first()
-        val filteredLines = mutableListOf<String>()
-
-        // Traiter chaque ligne (à partir de la deuxième)
-        for (line in lines.drop(1)) {
-            val parts = line.split(",")
-            if (parts.isNotEmpty()) {
-                val rawDateStr = parts[0].trim() // Par exemple "01/01/2025 00:18" ou "4/3/25 00:44"
-                var parsedDate: Date? = null
-                // Essayer de parser la date avec chacun des formats disponibles
-                for (format in dateFormats) {
-                    try {
-                        parsedDate = format.parse(rawDateStr)
-                        if (parsedDate != null) break
-                    } catch (e: Exception) {
-                        // En cas d'erreur, on continue avec le format suivant
-                    }
-                }
-                if (parsedDate != null) {
-                    // Normaliser la date de la ligne
-                    val normalizedLineDate = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(parsedDate)
-                    if (normalizedLineDate == normalizedTarget) {
-                        println("Ligne supprimée : $line")
-                        continue  // Ne pas inclure cette ligne dans le nouveau contenu
-                    }
-                } else {
-                    // Si la date ne peut pas être parsée, on peut choisir de conserver la ligne
-                    println("Impossible de parser la date pour la ligne : $line")
-                }
-            }
-            filteredLines.add(line)
-        }
-
-        // Reconstituer le contenu final : en-tête + lignes filtrées
-        val newContent = buildString {
-            append(header).append("\n")
-            for (line in filteredLines) {
-                append(line).append("\n")
-            }
-        }
-
-        // Créer une sauvegarde du fichier original en y ajoutant un timestamp
-        val backupFileName = "oapsaimiML2_records_${SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault()).format(Date())}.csv"
-        val backupFile = File(csvFile.parentFile, backupFileName)
-        csvFile.copyTo(backupFile, overwrite = true)
-
-        // Écraser le fichier original avec le contenu filtré
-        csvFile.writeText(newContent, Charsets.UTF_8)
-
-        println("Fichier mis à jour. Backup créé sous '${backupFile.name}'.")
-    }
+    // fun createFilteredAndSortedCopy(csvFile: File, dateToRemove: String) {
+    //     // Vérifier que le fichier CSV existe
+    //     if (!csvFile.exists()) {
+    //         println("Le fichier original n'existe pas.")
+    //         return
+    //     }
+    //
+    //     // Tenter de parser la date cible (attendue au format "dd/MM/yyyy")
+    //     val targetDate: Date? = try {
+    //         SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).parse(dateToRemove)
+    //     } catch (e: Exception) {
+    //         println("Erreur de parsing de la date cible : ${e.message}")
+    //         null
+    //     }
+    //     if (targetDate == null) {
+    //         println("La date cible est invalide.")
+    //         return
+    //     }
+    //
+    //     // Normaliser la date cible dans un format standard (ici "yyyyMMdd")
+    //     val normalizedTarget = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(targetDate)
+    //
+    //     // Liste des formats possibles présents dans le CSV pour la première colonne
+    //     val dateFormats = listOf(
+    //         SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()),
+    //         SimpleDateFormat("d/M/yy HH:mm", Locale.getDefault()),
+    //         SimpleDateFormat("d/M/yyyy HH:mm", Locale.getDefault())
+    //     )
+    //
+    //     // Lecture de toutes les lignes du fichier en mémoire (UTF-8)
+    //     val lines = csvFile.readLines(Charsets.UTF_8)
+    //     if (lines.isEmpty()) {
+    //         println("Le fichier CSV est vide.")
+    //         return
+    //     }
+    //
+    //     // La première ligne est l'en-tête
+    //     val header = lines.first()
+    //     val filteredLines = mutableListOf<String>()
+    //
+    //     // Traiter chaque ligne (à partir de la deuxième)
+    //     for (line in lines.drop(1)) {
+    //         val parts = line.split(",")
+    //         if (parts.isNotEmpty()) {
+    //             val rawDateStr = parts[0].trim() // Par exemple "01/01/2025 00:18" ou "4/3/25 00:44"
+    //             var parsedDate: Date? = null
+    //             // Essayer de parser la date avec chacun des formats disponibles
+    //             for (format in dateFormats) {
+    //                 try {
+    //                     parsedDate = format.parse(rawDateStr)
+    //                     if (parsedDate != null) break
+    //                 } catch (e: Exception) {
+    //                     // En cas d'erreur, on continue avec le format suivant
+    //                 }
+    //             }
+    //             if (parsedDate != null) {
+    //                 // Normaliser la date de la ligne
+    //                 val normalizedLineDate = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(parsedDate)
+    //                 if (normalizedLineDate == normalizedTarget) {
+    //                     println("Ligne supprimée : $line")
+    //                     continue  // Ne pas inclure cette ligne dans le nouveau contenu
+    //                 }
+    //             } else {
+    //                 // Si la date ne peut pas être parsée, on peut choisir de conserver la ligne
+    //                 println("Impossible de parser la date pour la ligne : $line")
+    //             }
+    //         }
+    //         filteredLines.add(line)
+    //     }
+    //
+    //     // Reconstituer le contenu final : en-tête + lignes filtrées
+    //     val newContent = buildString {
+    //         append(header).append("\n")
+    //         for (line in filteredLines) {
+    //             append(line).append("\n")
+    //         }
+    //     }
+    //
+    //     // Créer une sauvegarde du fichier original en y ajoutant un timestamp
+    //     val backupFileName = "oapsaimiML2_records_${SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault()).format(Date())}.csv"
+    //     val backupFile = File(csvFile.parentFile, backupFileName)
+    //     csvFile.copyTo(backupFile, overwrite = true)
+    //
+    //     // Écraser le fichier original avec le contenu filtré
+    //     csvFile.writeText(newContent, Charsets.UTF_8)
+    //
+    //     println("Fichier mis à jour. Backup créé sous '${backupFile.name}'.")
+    // }
 
     private fun logDataToCsv(predictedSMB: Float, smbToGive: Float) {
 
