@@ -84,22 +84,22 @@ class KalmanISFCalculator(
         val safeTDD = if (effectiveTDD < 1.0) 1.0 else effectiveTDD
 
         // Apply a progressive reduction in ISF based on increasing glucose levels
-        // val bgFactor = when {
-        //     glucose >= 180.0 -> 0.3  // Maximum reduction at high glucose levels
-        //     glucose >= 160.0 -> 0.4
-        //     glucose >= 150.0 -> 0.5
-        //     glucose >= 130.0 -> 0.7
-        //     glucose >= 115.0 -> 0.8
-        //     glucose >= 100.0 -> 0.9
-        //     else -> 1.0
-        // }
-        val bgFactor = if (glucose > 100.0) {
-            // Apply exponential decay for faster reduction
-            val factor = Math.exp((glucose - 100.0)/50.0)
-            1.0 / factor.coerceAtLeast(1.0).coerceAtMost(2.0)
-        } else {
-            1.0
+        val bgFactor = when {
+            glucose >= 180.0 -> 0.3  // Maximum reduction at high glucose levels
+            glucose >= 160.0 -> 0.4
+            glucose >= 140.0 -> 0.5
+            glucose >= 130.0 -> 0.7
+            glucose >= 115.0 -> 0.8
+            glucose >= 100.0 -> 0.9
+            else -> 1.0
         }
+        // val bgFactor = if (glucose > 100.0) {
+        //     // Apply exponential decay for faster reduction
+        //     val factor = Math.exp((glucose - 100.0)/50.0)
+        //     1.0 / factor.coerceAtLeast(1.0).coerceAtMost(2.0)
+        // } else {
+        //     1.0
+        // }
 
 
         val rawISF = (SCALING_FACTOR / (safeTDD * ln(glucose / BASE_CONSTANT + 1))) * bgFactor
@@ -123,13 +123,13 @@ class KalmanISFCalculator(
 
         // Set new measurement variance based on combined delta influence
         var newMeasurementVariance = when {
-            deltaInfluence > 10 -> 0.5  // High responsiveness for significant changes
-            deltaInfluence > 5 -> 1.0   // Moderate responsiveness
+            deltaInfluence > 8 -> 0.5  // High responsiveness for significant changes
+            deltaInfluence > 4 -> 1.0   // Moderate responsiveness
             else -> 2.0                // Standard responsiveness
         }
 
         // Additional adjustment for high glucose to increase responsiveness
-        if (glucose >= 130.0) {
+        if (glucose >= 110.0) {
             newMeasurementVariance = max(1.0, newMeasurementVariance * 0.8)
         }
 
