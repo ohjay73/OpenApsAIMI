@@ -384,5 +384,7 @@
     <string name="oaps_aimi_AutodriveAcceleration_title">Autodrive BG acceleration condition</string>
     <string name="prebolussmall_autodrive_mode_summary"><![CDATA[use by an early meal detection, bg > 100, predictionBG > 180. The idea is when we get a early detection sending a small smb to avoid negative iob or late correction. can be a good approach for a small snack.]]></string>
     <string name="prebolussmall_autodrive_mode_title">snack autodrive prebolus/early meal detection</string>
+    <string name="autodrive_max_basal_summary">Meal early detection, fix the maxbasal during 30 minutes</string>
+    <string name="autodrive_max_basal_title">Meal Early Detection TBR</string>
 
 </resources>

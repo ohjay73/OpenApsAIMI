@@ -73,6 +73,7 @@ enum class DoubleKey(
     OApsAIMIcombinedDelta("key_combinedDelta_autodrive_mode",1.0,0.1, 20.0),
     OApsAIMIAutodriveDeviation("key_mindeviation_autodrive_mode",1.0,0.1, 5.0),
     OApsAIMIAutodriveAcceleration("key_Acceleration_autodrive_mode",1.0,0.1, 5.0),
+    autodriveMaxBasal("autodrive_max_basal", 1.0, 0.05, 25.0),
     OApsAIMILunchPrebolus("key_prebolus_lunch_mode",2.5,0.1, 10.0),
     OApsAIMILunchPrebolus2("key_prebolus2_lunch_mode",2.0,0.1, 10.0),
     OApsAIMIDinnerPrebolus("key_prebolus_dinner_mode",2.5,0.1, 10.0),

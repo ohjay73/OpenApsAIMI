@@ -80,7 +80,6 @@ import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
 import java.util.Locale
 import javax.inject.Inject
-import kotlin.system.exitProcess
 import android.provider.Settings
 
 class MainActivity : DaggerAppCompatActivityWithResult() {
@@ -352,10 +351,10 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             if (!Environment.isExternalStorageManager()) {
                 ToastUtils.errorToast(this, "Permission to manage files is required for this app to work.")
-            } else {
-                // La permission est accordée, continuez normalement
-                ToastUtils.okToast(this, "Permission granted. Thank you!")
-            }
+             } //else {
+            //     // La permission est accordée, continuez normalement
+            //     ToastUtils.okToast(this, "Permission granted. Thank you!")
+            // }
         }
         if (config.appInitialized) binding.splash.visibility = View.GONE
         if (!isProtectionCheckActive) {
