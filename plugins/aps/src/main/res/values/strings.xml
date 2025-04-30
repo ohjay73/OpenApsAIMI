@@ -186,11 +186,11 @@
     <string name="not_available_full">Not available</string>
     <string name="pump_disconnected">Pump disconnected</string>
     <string name="key_openapsaimi_settings">key_openapsaimi_settings</string>
-    <string name="openapsaimi">"OpenapsAIMI Settings "</string>
+    <string name="openapsaimi">"AIMI 3.3"</string>
     <string name="openapsaimi_maxsmb_summary">Value of max smb size</string>
     <string name="key_openapsaimi_max_smb">key_openapsaimi_max_smb</string>
     <string name="openapsaimi_maxsmb_title">OpenapsAIMI Max SMB</string>
-    <string name="description_openapsaimi">Small micro boluses based on Artifical Intelligence and Machine Learning.</string>
+    <string name="description_openapsaimi">Small micro boluses based on Artificial Intelligence and Machine Learning.</string>
     <string name="oaps_aimi_shortname">OpenApsAIMI</string>
     <string name="key_aimiweight">key_aimiweight</string>
     <string name="key_tdd7">key_tdd7</string>
@@ -209,7 +209,10 @@
     <string name="oaps_aimi_afternoon_factor_summary">Afternoon reactivity percentage between 12pm and 6 pm</string>
     <string name="key_oaps_aimi_afternoon_factor">key_oaps_aimi_afternoon_factor</string>
     <string name="key_oaps_aimi_hyper_factor">key_oaps_aimi_hyper_factor</string>
+    <string name="key_openapsaimi_fixed_tbr_rise">key_openapsaimi_fixed_tbr_rise</string>
     <string name="key_DynISFAdjusthyper">key_DynISFAdjusthyper</string>
+    <string name="oaps_aimi_tbr_fixed_rise_summary">Value Fixed TBR Rise when rise meal detect</string>
+    <string name="oaps_aimi_tbr_fixed_rise_title">Value Fixed TBR Rise detect</string>
     <string name="key_DynISF_Adjust">key_DynISF_Adjust</string>
     <string name="oaps_aimi_hyper_factor_summary"><![CDATA[Reactivity factor when bg > 120]]></string>
     <string name="oaps_aimi_hyper_factor_title"><![CDATA[Reactivity factor BG > 120, for Child BG > 180]]></string>
@@ -252,6 +255,11 @@
     <string name="oaps_aimi_cho_summary">Average carbs for a meal. it\'s an estimation not a precise value</string>
     <string name="oaps_aimi_cho_title">CHO Meal average lunch or dinner</string>
     <string name="aimi_preferences">AIMI specifics settings</string>
+    <string name="user_preferences">Global User Preferences</string>
+    <string name="reactivity_preferences"><![CDATA[Reactivity BG < 120]]></string>
+    <string name="high_BG_preferences">High BG Preferences (BG > 120)</string>
+    <string name="training_ml_modes_preferences">Training ML and Modes</string>
+    <string name="autodrive_preferences">Autodrive settings</string>
     <string name="AAPS_SMB_Settings">AAPS SMB Settings</string>
     <string name="oaps_aimi_enableMlTraining_title">Enable ML training calculation</string>
     <string name="OApsAIMI_MealFactor_summary">% of insulin required by the ai for the meal mode.</string>
@@ -361,11 +369,14 @@
     <string name="openapsama_smb_max_range_extension_summary">Default value: 1 This is another key OpenAPS safety cap, and specifies by what factor you can exceed the regular 120 maxSMB/maxUAM minutes. Increase this experimental value slowly and with caution.</string>
     <string name="enableSMB_EvenOn_OddOff_always">Enable alternative activation of SMB depending on active target being even number</string>
     <string name="enableSMB_EvenOn_OddOff_always_summary">\nenabled ...\nif active target(mmol/L) has even decimal\nor active target(mg/dL) is even number\n\ndisabled otherwise</string>
+    <string name="openapsama_iob_threshold_percent_summary" formatted="false">Percentage of maxIOB above which SMBs are disabled.\nDefault value: 100%\nWith 100% this feature is effectively disabled.</string>
+    <string name="openapsama_iob_threshold_percent">maxIOB threshold percent for SMB\n(iob_threshold_percent)</string>
+
+    <!--    AIMI START TRANSLATION MENU PREFERENCES   -->
+
     <string name="oaps_aimi_enableDeleteLine_title">Enable the possibility to delete one day in the ML Training</string>
     <string name="oaps_aimi_logsize_summary">log colon size</string>
     <string name="oaps_aimi_logsize_title">Define the log size for the colon in loop page</string>
-    <string name="openapsama_iob_threshold_percent_summary" formatted="false">Percentage of maxIOB above which SMBs are disabled.\nDefault value: 100%\nWith 100% this feature is effectively disabled.</string>
-    <string name="openapsama_iob_threshold_percent">maxIOB threshold percent for SMB\n(iob_threshold_percent)</string>
     <string name="Enable_xdripOM_title">Enable xdrip bg each one minute</string>
     <string name="oaps_aimi_enableMlautoDrive_title">Experimental : Auto Drive</string>
     <string name="prebolus_autodrive_mode_summary">Autodrive will send a prebolus regarding the raise detection conditions</string>
@@ -386,5 +397,40 @@
     <string name="prebolussmall_autodrive_mode_title">snack autodrive prebolus/early meal detection</string>
     <string name="autodrive_max_basal_summary">Meal early detection, fix the maxbasal during 30 minutes</string>
     <string name="autodrive_max_basal_title">Meal Early Detection TBR</string>
+    <string name="user_preferences_title_menu">Global User Preferences</string>
+    <string name="autodrive_preferences_title_menu">Autodrive settings</string>
+    <string name="manual_modes_preferences_title_menu">Training ML and Modes</string>
+    <string name="bg_under_120_preferences_title_menu"><![CDATA[Reactivity BG < 120]]></string>
+    <string name="bg_over_120_preferences_title_menu">High BG Preferences (BG > 120)</string>
+    <string name="aaps_preferences_title_menu">AAPS SMB Settings</string>
+    <string name="training_ml_breakfast_modes_preferences">Breakfast Mode settings</string>
+    <string name="training_ml_lunch_modes_preferences">Lunch Mode settings</string>
+    <string name="training_ml_dinner_modes_preferences">Dinner Mode settings</string>
+    <string name="training_ml_high_carb_modes_preferences">High Carb Mode settings</string>
+    <string name="training_ml_snack_modes_preferences">Snack Mode settings</string>
+    <string name="training_ml_generic_meal_modes_preferences">Generic Meal Mode settings</string>
+    <string name="training_ml_sleep_modes_preferences">Sleep Mode settings</string>
+    <string name="breakfast_modes_preferences_title_menu">Breakfast - Manual Mode settings</string>
+    <string name="lunch_modes_preferences_title_menu">Lunch - Manual Mode settings</string>
+    <string name="dinner_modes_preferences_title_menu">Dinner - Manual Mode settings</string>
+    <string name="snack_modes_preferences_title_menu">Snack - Manual Mode settings</string>
+    <string name="high_carb_modes_preferences_title_menu">High Carb - Manual Mode settings</string>
+    <string name="generic_meal_modes_preferences_title_menu">Generic Meal - Manual Mode settings</string>
+    <string name="sleep_modes_preferences_title_menu">Sleep - Manual Mode - settings</string>
 
+        <!--    AIMI START TRANSLATION AIMI TABLE PLUGIN -->
+
+    <string name="table_plugin_main_title_1">AAPS-MASTER-AIMI</string>
+    <string name="table_plugin_main_title_2">OpenApsAIMI Settings</string>
+    <string name="table_plugin_main_title_3">30 April 2025</string>
+    <string name="table_plugin_request_title">Request</string>
+    <string name="table_plugin_smb_prediction_title">SMB Prediction</string>
+    <string name="table_plugin_adjusted_factors_title">Adjusted Factors</string>
+    <string name="table_plugin_limits_title">Limits and Conditions</string>
+    <string name="table_plugin_glucose_title">Glucose Data</string>
+    <string name="table_plugin_tir_title">TIR Data</string>
+    <string name="table_plugin_steps_title">Step Data</string>
+    <string name="table_plugin_heart_title">Heart Rate Data</string>
+    <string name="table_plugin_manual_modes_title">Modes</string>
+    <string name="table_plugin_miscellaneous_title">Miscellaneous</string>
 </resources>
