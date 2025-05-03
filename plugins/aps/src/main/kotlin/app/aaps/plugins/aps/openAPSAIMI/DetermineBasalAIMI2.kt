@@ -266,7 +266,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val windowMinutes = 30f
         val dropPerHour = calculateDropPerHour(bgHistory, windowMinutes)
         val maxAllowedDropPerHour = 25f  // Ajustez si besoin
-
+        val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
         val reasonBuilder = StringBuilder()
         var stopBasal = false
         var basalLS = false
@@ -282,7 +282,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             bolusFactor *= 0.3
             reasonBuilder.append("BG drop élevé ($dropPerHour mg/dL/h), forte réduction du bolus; ")
         }
-        if (delta > 15f) {
+        if (delta >= 20f && combinedDelta >= 15f && !honeymoon) {
             // Mode "montée rapide" détecté, on override les réductions habituelles
             bolusFactor = 1.0
             reasonBuilder.append("Montée rapide détectée (delta ${delta} mg/dL), application du mode d'urgence; ")
@@ -318,14 +318,14 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // 5. Contrôle du TDD par heure
         val tddThreshold = tdd24Hrs / 24f
         if (tddPerHour > tddThreshold) {
-            bolusFactor *= 0.9
-            reasonBuilder.append("TDD/h élevé ($tddPerHour U/h), réduction x0.9; ")
+            bolusFactor *= 0.8
+            reasonBuilder.append("TDD/h élevé ($tddPerHour U/h), réduction x0.8; ")
         }
 
         // 6. TIR élevé
         if (tirInhypo >= 8f) {
-            bolusFactor *= 0.6
-            reasonBuilder.append("TIR élevé ($tirInhypo%), réduction x0.7; ")
+            bolusFactor *= 0.5
+            reasonBuilder.append("TIR élevé ($tirInhypo%), réduction x0.5; ")
         }
 
         // 7. BG prédit proche de la cible
@@ -530,7 +530,85 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
     // private fun getMaxSafeBasal(profile: OapsProfileAimi): Double =
     //     min(profile.max_basal, min(profile.max_daily_safety_multiplier * profile.max_daily_basal, profile.current_basal_safety_multiplier * profile.current_basal))
-     /**
+    //  /**
+    //  * Pose un temp basal en respectant — ou non — la limite de sécurité.
+    //  *
+    //  * @param _rate Taux souhaité (U/h).
+    //  * @param duration Durée du temp basal (en minutes).
+    //  * @param profile Profil utilisateur contenant les paramètres de sécurité.
+    //  * @param rT Objet RT pour accumuler la raison.
+    //  * @param currenttemp Temp actuel pour comparaison.
+    //  * @param overrideSafetyLimits Si vrai, bypass de la limite maxSafeBasal.
+    //  */
+    // fun setTempBasal(
+    //     _rate: Double,
+    //     duration: Int,
+    //     profile: OapsProfileAimi,
+    //     rT: RT,
+    //     currenttemp: CurrentTemp,
+    //     overrideSafetyLimits: Boolean = false
+    // ): RT {
+    //     // Calcul du maxSafeBasal habituel
+    //     val maxSafe = min(
+    //         profile.max_basal,
+    //         min(
+    //             profile.max_daily_safety_multiplier * profile.max_daily_basal,
+    //             profile.current_basal_safety_multiplier * profile.current_basal
+    //         )
+    //     )
+    //     // Choix du taux à appliquer :
+    //     // - si overrideSafetyLimits, on ne clamp pas à maxSafe
+    //     // - sinon on clamp le rate à maxSafe
+    //     val rate = if (overrideSafetyLimits) {
+    //         _rate
+    //     } else {
+    //         _rate.coerceIn(0.0, maxSafe)
+    //     }
+    //
+    //     // Log pour debug
+    //     if (overrideSafetyLimits) {
+    //         rT.reason.append("→ bypass sécurité (override) : rate = ${rate}U/h\n")
+    //     } else if (rate != _rate) {
+    //         rT.reason.append("→ clamped à maxSafeBasal $maxSafe U/h (demande: ${_rate}U/h)\n")
+    //     }
+    //
+    //     // Cas où il n’y a pas de changement utile
+    //     if (currenttemp.duration > (duration - 10)
+    //         && currenttemp.duration <= 120
+    //         && rate <= currenttemp.rate * 1.2
+    //         && rate >= currenttemp.rate * 0.8
+    //         && duration > 0
+    //     ) {
+    //         rT.reason.append("${currenttemp.duration}m restants & ${currenttemp.rate} ~ req $rate U/h : pas de temp.\n")
+    //         return rT
+    //     }
+    //
+    //     // Si le nouveau rate = basal de profil et qu’on skip les neutres
+    //     val profileBasal = profile.current_basal
+    //     if (rate == profileBasal) {
+    //         if (profile.skip_neutral_temps) {
+    //             if (currenttemp.duration > 0) {
+    //                 rT.reason.append("Taux neutre = profil & temp actif → annulation du temp.\n")
+    //                 rT.duration = 0
+    //                 rT.rate = 0.0
+    //             } else {
+    //                 rT.reason.append("Taux neutre = profil & pas de temp → rien à faire.\n")
+    //             }
+    //         } else {
+    //             rT.reason.append("Taux neutre = profil → pose d’un temp à $rate U/h.\n")
+    //             rT.duration = duration
+    //             rT.rate = rate
+    //         }
+    //     } else {
+    //         // Pose standard du temp
+    //         rT.reason.append("Pose temp à $rate U/h pour $duration minutes.\n")
+    //         rT.duration = duration
+    //         rT.rate = rate
+    //     }
+    //
+    //     return rT
+    // }
+    /**
      * Pose un temp basal en respectant — ou non — la limite de sécurité.
      *
      * @param _rate Taux souhaité (U/h).
@@ -538,7 +616,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
      * @param profile Profil utilisateur contenant les paramètres de sécurité.
      * @param rT Objet RT pour accumuler la raison.
      * @param currenttemp Temp actuel pour comparaison.
-     * @param overrideSafetyLimits Si vrai, bypass de la limite maxSafeBasal.
+     * @param overrideSafetyLimits Si vrai, bypass explicite de la limite maxSafeBasal.
      */
     fun setTempBasal(
         _rate: Double,
@@ -548,7 +626,33 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         currenttemp: CurrentTemp,
         overrideSafetyLimits: Boolean = false
     ): RT {
-        // Calcul du maxSafeBasal habituel
+        // ────────────────────────────────────────────────────────────────
+        // 1️⃣ On recalcule le mode “meal” / “highCarb” / “snack” / etc.
+        val therapy = Therapy(persistenceLayer).also { it.updateStatesBasedOnTherapyEvents() }
+        val isMealMode = therapy.snackTime
+            || therapy.highCarbTime
+            || therapy.mealTime
+            || therapy.lunchTime
+            || therapy.dinnerTime
+            || therapy.bfastTime
+
+        // 2️⃣ On recalcule le mode “early autodrive”
+        val hour = Calendar.getInstance()[Calendar.HOUR_OF_DAY]
+        val night = hour <= 7
+        val predDelta = predictedDelta(getRecentDeltas()).toFloat()
+        val autodrive = preferences.get(BooleanKey.OApsAIMIautoDrive)
+
+        val isEarlyAutodrive = !night
+            && !isMealMode
+            && autodrive
+            && bg > 110
+            && detectMealOnset(delta, predDelta, bgacc.toFloat())
+
+        // 3️⃣ On décide de bypasser la limite de sécurité si override ou mode spécial
+        val bypassSafety = overrideSafetyLimits || isMealMode || isEarlyAutodrive
+
+        // ────────────────────────────────────────────────────────────────
+        // 4️⃣ Calcul du maxSafeBasal standard
         val maxSafe = min(
             profile.max_basal,
             min(
@@ -557,23 +661,26 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             )
         )
 
-        // Choix du taux à appliquer :
-        // - si overrideSafetyLimits, on ne clamp pas à maxSafe
-        // - sinon on clamp le rate à maxSafe
-        val rate = if (overrideSafetyLimits) {
+        // 5️⃣ Choix du rate effectif : bypass ou clamp
+        val rate = if (bypassSafety) {
             _rate
         } else {
             _rate.coerceIn(0.0, maxSafe)
         }
 
-        // Log pour debug
-        if (overrideSafetyLimits) {
-            rT.reason.append("→ bypass sécurité (override) : rate = ${rate}U/h\n")
-        } else if (rate != _rate) {
-            rT.reason.append("→ clamped à maxSafeBasal $maxSafe U/h (demande: ${_rate}U/h)\n")
+        // ────────────────────────────────────────────────────────────────
+        // 6️⃣ Logging des raisons
+        when {
+            bypassSafety -> {
+                rT.reason.append("→ bypass sécurité${if (isMealMode) " (meal mode)" else if (isEarlyAutodrive) " (early autodrive)" else ""}: rate = ${rate} U/h\n")
+            }
+            rate != _rate -> {
+                rT.reason.append("→ clamped à maxSafeBasal ${"%.2f".format(maxSafe)} U/h (demandé: ${"%.2f".format(_rate)} U/h)\n")
+            }
         }
 
-        // Cas où il n’y a pas de changement utile
+        // ────────────────────────────────────────────────────────────────
+        // 7️⃣ Si pas de changement utile, on sort
         if (currenttemp.duration > (duration - 10)
             && currenttemp.duration <= 120
             && rate <= currenttemp.rate * 1.2
@@ -584,7 +691,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             return rT
         }
 
-        // Si le nouveau rate = basal de profil et qu’on skip les neutres
+        // ────────────────────────────────────────────────────────────────
+        // 8️⃣ Gestion du “neutral temp” = profil.current_basal
         val profileBasal = profile.current_basal
         if (rate == profileBasal) {
             if (profile.skip_neutral_temps) {
@@ -600,15 +708,17 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 rT.duration = duration
                 rT.rate = rate
             }
-        } else {
-            // Pose standard du temp
-            rT.reason.append("Pose temp à $rate U/h pour $duration minutes.\n")
-            rT.duration = duration
-            rT.rate = rate
+            return rT
         }
 
+        // ────────────────────────────────────────────────────────────────
+        // 9️⃣ Pose “standard” du temp basal
+        rT.reason.append("Pose temp à ${"%.2f".format(rate)} U/h pour $duration minutes.\n")
+        rT.duration = duration
+        rT.rate = rate
         return rT
     }
+
 
     // fun setTempBasal(_rate: Double, duration: Int, profile: OapsProfileAimi, rT: RT, currenttemp: CurrentTemp, overrideSafetyLimits: Boolean = false): RT {
     //     val maxSafeBasal = getMaxSafeBasal(profile)
@@ -1521,9 +1631,9 @@ private fun neuralnetwork5(
         val data = iobCobCalculator.ads.getBucketedDataTableCopy() ?: return emptyList()
         if (data.isEmpty()) return emptyList()
         // Fenêtre standard selon BG
-        val standardWindow = if (bg < 130) 20f else 10f
+        val standardWindow = if (bg < 130) 30f else 15f
         // Fenêtre raccourcie pour détection rapide
-        val rapidRiseWindow = 5f
+        val rapidRiseWindow = 10f
         // Si le delta instantané est supérieur à 15 mg/dL, on choisit la fenêtre rapide
         val intervalMinutes = if (delta > 15) rapidRiseWindow else standardWindow
 
@@ -3458,99 +3568,7 @@ private fun neuralnetwork5(
      if (safetyDecision.basalLS && combinedDelta in -1.0..3.0 && predictedBg > 130 && iob > 0.1){
          return setTempBasal(profile_current_basal, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
      }
-     // if (detectMealOnset(delta, predicted.toFloat(), bgAcceleration.toFloat()) && !mealTime && !lunchTime && !bfastTime && !dinnerTime && !sportTime && !snackTime && !highCarbTime && !sleepTime && !lowCarbTime) {
-     //     rT.reason.append("Détection précoce de repas: activation d'une basale maximale pendant 30 minutes. ")
-     //     val forcedBasal = preferences.get(DoubleKey.autodriveMaxBasal)  // Exemple, ajuster le facteur selon le profil
-     //     //return setTempBasal(forcedBasal, 30, profile, rT, currenttemp)
-     //     rate?.let {
-     //         rT.rate = forcedBasal
-     //         rT.deliverAt = deliverAt
-     //         rT.duration = 30
-     //     }
-     //     return rT
-     // }
-     // 🔴 Sécurité : Arrêt de la basale en cas de tendance baissière ou IOB trop élevé
-//      if (predictedBg < 100 && mealData.slopeFromMaxDeviation <= 0 || iob > maxIob) {
-//          return setTempBasal(0.0, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
-//      }
-//
-//      // ⚠️ Gestion des hypoglycémies et basale réduite si risque
-//      when {
-//          bg < 80                                                                                                                  -> rate = 0.0
-//          bg in 80.0..90.0 && slopeFromMaxDeviation <= 0 && iob > 0.1 && !sportTime                                                -> rate = 0.0
-//          bg in 80.0..90.0 && slopeFromMinDeviation >= 0.3 && slopeFromMaxDeviation >= 0 &&
-//              combinedDelta in -1.0..2.0 && !sportTime && bgAcceleration.toFloat() > 0.0f                                                  -> rate = profile_current_basal * 0.2
-//
-//          bg in 90.0..100.0 && slopeFromMinDeviation <= 0.3 && iob > 0.1 && !sportTime && bgAcceleration.toFloat() > 0.0f          -> rate = 0.0
-//          bg in 90.0..100.0 && slopeFromMinDeviation >= 0.3 && combinedDelta in -1.0..2.0 && !sportTime && bgAcceleration.toFloat() > 0.0f -> rate = profile_current_basal * 0.5
-//      }
-//
-//      // 🔺 Gestion des hausses lentes et rapides
-//      if (bg > 120 && slopeFromMinDeviation in 0.4..20.0 && combinedDelta > 1 && !sportTime && bgAcceleration.toFloat() > 1.0f) {
-//          rate = calculateBasalRate(finalBasalRate, profile_current_basal, combinedDelta.toDouble())
-//      } else if (eventualBG > 110 && !sportTime && bg > 150 && combinedDelta in -2.0..15.0 && bgAcceleration.toFloat() > 0.0f) {
-//          rate = calculateBasalRate(finalBasalRate, profile_current_basal, basalAdjustmentFactor)
-//      }
-//
-//      // 🔵 Gestion des horaires et activité
-//      if ((timenow in 11..13 || timenow in 18..21) && iob < 0.8 && recentSteps5Minutes < 100 && combinedDelta > -1 && slopeFromMinDeviation > 0.3 && bgAcceleration.toFloat() > 0.0f) {
-//          rate = profile_current_basal * 1.5
-//      } else if (timenow > sixAMHour && recentSteps5Minutes > 100) {
-//          rate = 0.0
-//      } else if (timenow <= sixAMHour && delta > 0 && bgAcceleration.toFloat() > 0.0f) {
-//          rate = profile_current_basal
-//      }
-//
-//      // 🍽️ Gestion des repas et snacks
-//      val mealConditions = listOf(
-//          snackTime to snackrunTime,
-//          mealTime to mealruntime,
-//          bfastTime to bfastruntime,
-//          lunchTime to lunchruntime,
-//          dinnerTime to dinnerruntime,
-//          highCarbTime to highCarbrunTime
-//      )
-//
-//      for ((meal, runtime) in mealConditions) {
-//          if (meal && runtime in 0..30) {
-//              rate = calculateBasalRate(finalBasalRate, profile_current_basal, 10.0)
-//          } else if (meal && runtime in 30..60 && delta > 0) {
-//              rate = calculateBasalRate(finalBasalRate, profile_current_basal, delta.toDouble())
-//          }
-//      }
-//
-//      // 🟢 Gestion des hyperglycémies et corrections
-//      when {
-//          eventualBG > 180 && delta > 3  -> rate = calculateBasalRate(basalaimi.toDouble(), profile_current_basal, basalAdjustmentFactor)
-//          bg > 180 && delta in -5.0..1.0 -> rate = profile_current_basal * basalAdjustmentFactor
-//      }
-//
-//      // 🌙 Mode honeymoon
-//      if (honeymoon) {
-//          when {
-//              bg in 140.0..169.0 && delta > 0                                                                                             -> rate = profile_current_basal
-//              bg > 170 && delta > 0                                                                                                       -> rate = calculateBasalRate(finalBasalRate, profile_current_basal, basalAdjustmentFactor)
-//              combinedDelta > 2 && bg in 90.0..119.0                                                                                              -> rate = profile_current_basal
-//              combinedDelta > 0 && bg > 110 && eventualBG > 120 && bg < 160                                                                       -> rate = profile_current_basal * basalAdjustmentFactor
-//              mealData.slopeFromMaxDeviation > 0 && mealData.slopeFromMinDeviation > 0 && bg > 110 && combinedDelta > 0                           -> rate = profile_current_basal * basalAdjustmentFactor
-//              mealData.slopeFromMaxDeviation in 0.0..0.2 && mealData.slopeFromMinDeviation in 0.0..0.5 && bg in 120.0..150.0 && delta > 0 -> rate = profile_current_basal * basalAdjustmentFactor
-//              mealData.slopeFromMaxDeviation > 0 && mealData.slopeFromMinDeviation > 0 && bg in 100.0..120.0 && delta > 0                 -> rate = profile_current_basal * basalAdjustmentFactor
-//          }
-//      }
-//
-//      // 🤰 Cas de grossesse
-//      if (pregnancyEnable && delta > 0 && bg > 110 && !honeymoon) {
-//          rate = calculateBasalRate(finalBasalRate, profile_current_basal, basalAdjustmentFactor)
-//      }
-//
-// // Application finale
-//      rate.let {
-//          rT.rate = it
-//          if (rate != null) {
-//              rT.reason.append("${currenttemp.duration}m@${(currenttemp.rate).toFixed2()} AI Force basal because of specific condition: ${round(rate.toDouble(), 2)}U/hr. ")
-//          }
-//          return setTempBasal(rate!!, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
-//      }
+
      // ------------------------------
 // 1️⃣ Préparation des variables
      var overrideSafety = false
