@@ -528,45 +528,124 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         consoleError.add(msg)
     }
 
-    private fun getMaxSafeBasal(profile: OapsProfileAimi): Double =
-        min(profile.max_basal, min(profile.max_daily_safety_multiplier * profile.max_daily_basal, profile.current_basal_safety_multiplier * profile.current_basal))
+    // private fun getMaxSafeBasal(profile: OapsProfileAimi): Double =
+    //     min(profile.max_basal, min(profile.max_daily_safety_multiplier * profile.max_daily_basal, profile.current_basal_safety_multiplier * profile.current_basal))
+     /**
+     * Pose un temp basal en respectant — ou non — la limite de sécurité.
+     *
+     * @param _rate Taux souhaité (U/h).
+     * @param duration Durée du temp basal (en minutes).
+     * @param profile Profil utilisateur contenant les paramètres de sécurité.
+     * @param rT Objet RT pour accumuler la raison.
+     * @param currenttemp Temp actuel pour comparaison.
+     * @param overrideSafetyLimits Si vrai, bypass de la limite maxSafeBasal.
+     */
+    fun setTempBasal(
+        _rate: Double,
+        duration: Int,
+        profile: OapsProfileAimi,
+        rT: RT,
+        currenttemp: CurrentTemp,
+        overrideSafetyLimits: Boolean = false
+    ): RT {
+        // Calcul du maxSafeBasal habituel
+        val maxSafe = min(
+            profile.max_basal,
+            min(
+                profile.max_daily_safety_multiplier * profile.max_daily_basal,
+                profile.current_basal_safety_multiplier * profile.current_basal
+            )
+        )
 
-    fun setTempBasal(_rate: Double, duration: Int, profile: OapsProfileAimi, rT: RT, currenttemp: CurrentTemp, overrideSafetyLimits: Boolean = false): RT {
-        val maxSafeBasal = getMaxSafeBasal(profile)
-        var rate = _rate
-        if (rate < 0) rate = 0.0
-        //else if (rate > maxSafeBasal && !mealR) rate = maxSafeBasal
-        else if (rate > maxSafeBasal && !overrideSafetyLimits  &&
-            !mealTime && !bfastTime && !lunchTime && !dinnerTime && !snackTime && !highCarbTime) {
-            rate = maxSafeBasal
+        // Choix du taux à appliquer :
+        // - si overrideSafetyLimits, on ne clamp pas à maxSafe
+        // - sinon on clamp le rate à maxSafe
+        val rate = if (overrideSafetyLimits) {
+            _rate
+        } else {
+            _rate.coerceIn(0.0, maxSafe)
         }
 
-        val suggestedRate = roundBasal(rate)
+        // Log pour debug
+        if (overrideSafetyLimits) {
+            rT.reason.append("→ bypass sécurité (override) : rate = ${rate}U/h\n")
+        } else if (rate != _rate) {
+            rT.reason.append("→ clamped à maxSafeBasal $maxSafe U/h (demande: ${_rate}U/h)\n")
+        }
 
-        if (currenttemp.duration > (duration - 10) && currenttemp.duration <= 120 &&
-            suggestedRate <= currenttemp.rate * 1.2 && suggestedRate >= currenttemp.rate * 0.8 &&
-            duration > 0) {
-            rT.reason.append(" ${currenttemp.duration}m left and ${currenttemp.rate.withoutZeros()} ~ req ${suggestedRate.withoutZeros()}U/hr: no temp required")
-        } else if (suggestedRate == profile.current_basal) {
+        // Cas où il n’y a pas de changement utile
+        if (currenttemp.duration > (duration - 10)
+            && currenttemp.duration <= 120
+            && rate <= currenttemp.rate * 1.2
+            && rate >= currenttemp.rate * 0.8
+            && duration > 0
+        ) {
+            rT.reason.append("${currenttemp.duration}m restants & ${currenttemp.rate} ~ req $rate U/h : pas de temp.\n")
+            return rT
+        }
+
+        // Si le nouveau rate = basal de profil et qu’on skip les neutres
+        val profileBasal = profile.current_basal
+        if (rate == profileBasal) {
             if (profile.skip_neutral_temps) {
                 if (currenttemp.duration > 0) {
-                    reason(rT, "Suggested rate is same as profile rate, a temp basal is active, canceling current temp")
+                    rT.reason.append("Taux neutre = profil & temp actif → annulation du temp.\n")
                     rT.duration = 0
                     rT.rate = 0.0
                 } else {
-                    reason(rT, "Suggested rate is same as profile rate, no temp basal is active, doing nothing")
+                    rT.reason.append("Taux neutre = profil & pas de temp → rien à faire.\n")
                 }
             } else {
-                reason(rT, "Setting neutral temp basal of ${profile.current_basal}U/hr")
+                rT.reason.append("Taux neutre = profil → pose d’un temp à $rate U/h.\n")
                 rT.duration = duration
-                rT.rate = suggestedRate
+                rT.rate = rate
             }
         } else {
+            // Pose standard du temp
+            rT.reason.append("Pose temp à $rate U/h pour $duration minutes.\n")
             rT.duration = duration
-            rT.rate = suggestedRate
+            rT.rate = rate
         }
+
         return rT
     }
+
+    // fun setTempBasal(_rate: Double, duration: Int, profile: OapsProfileAimi, rT: RT, currenttemp: CurrentTemp, overrideSafetyLimits: Boolean = false): RT {
+    //     val maxSafeBasal = getMaxSafeBasal(profile)
+    //     var rate = _rate
+    //     if (rate < 0) rate = 0.0
+    //     //else if (rate > maxSafeBasal && !mealR) rate = maxSafeBasal
+    //     else if (rate > maxSafeBasal && !overrideSafetyLimits  &&
+    //         !mealTime && !bfastTime && !lunchTime && !dinnerTime && !snackTime && !highCarbTime) {
+    //         rate = maxSafeBasal
+    //     }
+    //
+    //     val suggestedRate = roundBasal(rate)
+    //
+    //     if (currenttemp.duration > (duration - 10) && currenttemp.duration <= 120 &&
+    //         suggestedRate <= currenttemp.rate * 1.2 && suggestedRate >= currenttemp.rate * 0.8 &&
+    //         duration > 0) {
+    //         rT.reason.append(" ${currenttemp.duration}m left and ${currenttemp.rate.withoutZeros()} ~ req ${suggestedRate.withoutZeros()}U/hr: no temp required")
+    //     } else if (suggestedRate == profile.current_basal) {
+    //         if (profile.skip_neutral_temps) {
+    //             if (currenttemp.duration > 0) {
+    //                 reason(rT, "Suggested rate is same as profile rate, a temp basal is active, canceling current temp")
+    //                 rT.duration = 0
+    //                 rT.rate = 0.0
+    //             } else {
+    //                 reason(rT, "Suggested rate is same as profile rate, no temp basal is active, doing nothing")
+    //             }
+    //         } else {
+    //             reason(rT, "Setting neutral temp basal of ${profile.current_basal}U/hr")
+    //             rT.duration = duration
+    //             rT.rate = suggestedRate
+    //         }
+    //     } else {
+    //         rT.duration = duration
+    //         rT.rate = suggestedRate
+    //     }
+    //     return rT
+    // }
 
     private fun logDataMLToCsv(predictedSMB: Float, smbToGive: Float) {
         val usFormatter = DateTimeFormatter.ofPattern("MM/dd/yyyy HH:mm")
@@ -2165,7 +2244,7 @@ private fun neuralnetwork5(
         //val DynMaxSmb = (bg / 200) * (bg / 100) + (delta / 2)
         val enableUAM = profile.enableUAM
 
-        this.maxSMBHB = if (autodrive) DynMaxSmb.toDouble() else preferences.get(DoubleKey.OApsAIMIHighBGMaxSMB)
+        this.maxSMBHB = if (autodrive && !honeymoon) DynMaxSmb.toDouble() else preferences.get(DoubleKey.OApsAIMIHighBGMaxSMB)
         this.maxSMB = if (bg > 120 && !honeymoon && mealData.slopeFromMinDeviation >=1.4 || bg > 180 && honeymoon && mealData.slopeFromMinDeviation >= 1.4) maxSMBHB else maxSMB
         this.tir1DAYabove = tirCalculator.averageTIR(tirCalculator.calculate(1, 65.0, 180.0))?.abovePct()!!
         val tir1DAYIR = tirCalculator.averageTIR(tirCalculator.calculate(1, 65.0, 180.0))?.inRangePct()!!
@@ -2244,9 +2323,10 @@ private fun neuralnetwork5(
         this.decceleratingDown = if (delta < 0 && (delta > shortAvgDelta || delta > longAvgDelta)) 1 else 0
         this.stable = if (delta>-3 && delta<3 && shortAvgDelta>-3 && shortAvgDelta<3 && longAvgDelta>-3 && longAvgDelta<3 && bg < 180) 1 else 0
         val AutodriveAcceleration = preferences.get(DoubleKey.OApsAIMIAutodriveAcceleration)
-        val night = now < 7
+        val nightbis = hourOfDay <= 7
+        val modesCondition = !mealTime && !lunchTime && !bfastTime && !dinnerTime && !sportTime && !snackTime && !highCarbTime && !sleepTime && !lowCarbTime
         val pbolusAS: Double = preferences.get(DoubleKey.OApsAIMIautodrivesmallPrebolus)
-        if (bg > 110 && predictedBg > 150 && !night && !hasReceivedPbolusMInLastHour(pbolusAS) && autodrive && detectMealOnset(delta, predicted.toFloat(), bgAcceleration.toFloat()) && !mealTime && !lunchTime && !bfastTime && !dinnerTime && !sportTime && !snackTime && !highCarbTime && !sleepTime && !lowCarbTime) {
+        if (bg > 110 && predictedBg > 150 && !nightbis && !hasReceivedPbolusMInLastHour(pbolusAS) && autodrive && detectMealOnset(delta, predicted.toFloat(), bgAcceleration.toFloat()) && modesCondition) {
             rT.units = pbolusAS
             rT.reason.append("Autodrive early meal detection/snack: Microbolusing ${pbolusAS}U, CombinedDelta : ${combinedDelta}, Predicted : ${predicted}, Acceleration : ${bgAcceleration}.")
             return rT
@@ -2257,7 +2337,7 @@ private fun neuralnetwork5(
                  rT.reason.append("Microbolusing Meal Mode ${pbolusM}U.")
              return rT
          }
-        if (!night && isAutodriveModeCondition(targetBg, delta, autodrive, mealData.slopeFromMinDeviation, bg.toFloat()) && !mealTime && !highCarbTime && !lunchTime && !bfastTime && !dinnerTime && !snackTime && !sportTime && !snackTime && !lowCarbTime && bgAcceleration.toDouble() >= AutodriveAcceleration){
+        if (!nightbis && isAutodriveModeCondition(targetBg, delta, autodrive, mealData.slopeFromMinDeviation, bg.toFloat()) && modesCondition && bgAcceleration.toDouble() >= AutodriveAcceleration){
             val pbolusA: Double = preferences.get(DoubleKey.OApsAIMIautodrivePrebolus)
             rT.units = pbolusA
             rT.reason.append("Microbolusing Autodrive Mode ${pbolusA}U. TargetBg : ${targetBg}, CombinedDelta : ${combinedDelta}, Slopemindeviation : ${mealData.slopeFromMinDeviation}, Acceleration : ${bgAcceleration}. ")
@@ -3479,8 +3559,7 @@ private fun neuralnetwork5(
 // ------------------------------
 // 2️⃣ Early‐meal detection → bypass sécurité, forçage vers `forcedBasal`
      if (detectMealOnset(delta, predicted.toFloat(), bgAcceleration.toFloat())
-         && !night && !mealTime && !lunchTime && !bfastTime && !dinnerTime
-         && !sportTime && !snackTime && !highCarbTime && !sleepTime && !lowCarbTime
+         && !nightbis && modesCondition && bg > 110 && autodrive
      ) {
          chosenRate     = forcedBasal.toDouble()
          overrideSafety = true
