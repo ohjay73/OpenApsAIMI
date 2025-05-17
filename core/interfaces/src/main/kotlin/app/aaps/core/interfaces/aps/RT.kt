@@ -45,7 +45,8 @@ data class RT(
     var IOB: Double? = null,
     var variable_sens: Double? = null,
     var isfMgdlForCarbs: Double? = null, // used to pass to AAPS client
-
+    @Serializable(with = StringBuilderSerializer::class)
+    var aimilog: StringBuilder = StringBuilder(),
 
     var consoleLog: MutableList<String>? = null,
     var consoleError: MutableList<String>? = null

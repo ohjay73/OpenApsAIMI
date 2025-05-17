@@ -612,51 +612,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         val combinedDelta = (delta + predictedDelta) / 2.0f
         return combinedDelta > 3.0f && acceleration > 1.2f
     }
-    // override fun applyBasalConstraints(absoluteRate: Constraint<Double>, profile: Profile): Constraint<Double> {
-    //     val therapy = Therapy(persistenceLayer).also {
-    //         it.updateStatesBasedOnTherapyEvents()
-    //     }
-    //     var snackTime = therapy.snackTime
-    //     var highCarbTime = therapy.highCarbTime
-    //     var mealTime = therapy.mealTime
-    //     var lunchTime = therapy.lunchTime
-    //     var dinnerTime = therapy.dinnerTime
-    //     var bfastTime = therapy.bfastTime
-    //     var sportTime = therapy.sportTime
-    //     var sleepTime = therapy.sleepTime
-    //     var lowCarbTime = therapy.lowCarbTime
-    //     val calendarInstance = Calendar.getInstance()
-    //     var hourOfDay = calendarInstance[Calendar.HOUR_OF_DAY]
-    //     var night = hourOfDay <= 7
-    //     val modesCondition = !night && !mealTime && !lunchTime && !bfastTime && !dinnerTime && !sportTime && !snackTime && !highCarbTime && !sleepTime && !lowCarbTime
-    //     var maxBasal = preferences.get(DoubleKey.ApsMaxBasal)
-    //     val recentDeltas = getRecentDeltas()
-    //     val autodrive = preferences.get(BooleanKey.OApsAIMIautoDrive)
-    //     val predictedDelta = predictedDelta(recentDeltas)
-    //     if (snackTime || highCarbTime || mealTime || lunchTime || dinnerTime || bfastTime) maxBasal = preferences.get(DoubleKey.meal_modes_MaxBasal) else maxBasal
-    //     if (modesCondition && autodrive && glucoseStatusProvider.glucoseStatusData!!.glucose > 110 && detectMealOnset(glucoseStatusProvider.glucoseStatusData!!.delta.toFloat(), predictedDelta.toFloat(),glucoseStatusProvider.glucoseStatusData!!.bgAcceleration.toFloat())) maxBasal = preferences.get(DoubleKey.autodriveMaxBasal) else maxBasal
-    //     if (isEnabled()) {
-    //
-    //         if (maxBasal < profile.getMaxDailyBasal()) {
-    //             maxBasal = profile.getMaxDailyBasal()
-    //             absoluteRate.addReason(rh.gs(R.string.increasing_max_basal), this)
-    //         }
-    //         absoluteRate.setIfSmaller(maxBasal, rh.gs(app.aaps.core.ui.R.string.limitingbasalratio, maxBasal, rh.gs(R.string.maxvalueinpreferences)), this)
-    //
-    //         // Check percentRate but absolute rate too, because we know real current basal in pump
-    //         val maxBasalMultiplier = preferences.get(DoubleKey.ApsMaxCurrentBasalMultiplier)
-    //         val maxFromBasalMultiplier = floor(maxBasalMultiplier * profile.getBasal() * 100) / 100
-    //         absoluteRate.setIfSmaller(
-    //             maxFromBasalMultiplier,
-    //             rh.gs(app.aaps.core.ui.R.string.limitingbasalratio, maxFromBasalMultiplier, rh.gs(R.string.max_basal_multiplier)),
-    //             this
-    //         )
-    //         val maxBasalFromDaily = preferences.get(DoubleKey.ApsMaxDailyMultiplier)
-    //         val maxFromDaily = floor(profile.getMaxDailyBasal() * maxBasalFromDaily * 100) / 100
-    //         absoluteRate.setIfSmaller(maxFromDaily, rh.gs(app.aaps.core.ui.R.string.limitingbasalratio, maxFromDaily, rh.gs(R.string.max_daily_basal_multiplier)), this)
-    //     }
-    //     return absoluteRate
-    // }
+
     override fun applyBasalConstraints(
         absoluteRate: Constraint<Double>,
         profile: Profile
