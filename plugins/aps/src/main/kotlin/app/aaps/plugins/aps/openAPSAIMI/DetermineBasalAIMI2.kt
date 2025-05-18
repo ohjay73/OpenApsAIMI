@@ -783,7 +783,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         return bolusesLastHour.any { Math.abs(it.amount - pbolusA) < epsilon }
     }
     private fun isAutodriveModeCondition(
-        targetBg: Float,
         delta: Float,
         autodrive: Boolean,
         slopeFromMinDeviation: Double,
@@ -805,16 +804,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         if (hasReceivedPbolusMInLastHour(pbolusA)) {
             return false
         }
-        var conditions = targetBg <= autodriveTarget &&
-            combinedDelta >= autodriveDelta &&
+
+        return combinedDelta >= autodriveDelta &&
             autodrive &&
             slopeFromMinDeviation >= autodriveminDeviation &&
             bg >= autodriveBG
-        if (bg > 120 && iob < 2 && combinedDelta > 1 && delta >= 10 && bgacc > 2){
-            conditions = true
-        }
-
-        return conditions
     }
 
     private fun isMealModeCondition(): Boolean {
@@ -2171,7 +2165,7 @@ private fun neuralnetwork5(
             rT.reason.append("Microbolusing Meal Mode ${pbolusM}U.")
             return rT
         }
-        if (!nightbis && isAutodriveModeCondition(targetBg, delta, autodrive, mealData.slopeFromMinDeviation, bg.toFloat()) && modesCondition && bgAcceleration.toDouble() >= AutodriveAcceleration) {
+        if (!nightbis && isAutodriveModeCondition(delta, autodrive, mealData.slopeFromMinDeviation, bg.toFloat()) && modesCondition && bgAcceleration.toDouble() >= AutodriveAcceleration) {
             val pbolusA: Double = preferences.get(DoubleKey.OApsAIMIautodrivePrebolus)
             rT.units = pbolusA
             rT.reason.append("Microbolusing Autodrive Mode ${pbolusA}U. TargetBg : ${targetBg}, CombinedDelta : ${combinedDelta}, Slopemindeviation : ${mealData.slopeFromMinDeviation}, Acceleration : ${bgAcceleration}. ")
@@ -2817,7 +2811,7 @@ private fun neuralnetwork5(
             consoleError = consoleError,
             variable_sens = variableSensitivity.toDouble()
         )
-        rT.reason.append("Autodrive: $autodrive, Combined Delta: $combinedDelta, PredictedBg: $predictedBg, bgAcceleration: $bgacc, ")
+        rT.reason.append("Autodrive: $autodrive, autodrivemode : ${isAutodriveModeCondition(delta, autodrive, mealData.slopeFromMinDeviation, bg.toFloat())}, Combined Delta: $combinedDelta, PredictedBg: $predictedBg, bgAcceleration: $bgacc, ")
         rT.reason.append("TIRBelow: $currentTIRLow, TIRinRange: $currentTIRRange, TIRAbove: $currentTIRAbove")
 
         val csf = sens / profile.carb_ratio
