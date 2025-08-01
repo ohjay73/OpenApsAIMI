@@ -53,6 +53,7 @@ import app.aaps.pump.omnipod.common.queue.command.CommandResumeDelivery
 import app.aaps.pump.omnipod.common.queue.command.CommandSilenceAlerts
 import app.aaps.pump.omnipod.common.queue.command.CommandUpdateAlertConfiguration
 import app.aaps.pump.omnipod.dash.driver.OmnipodDashManager
+import app.aaps.pump.omnipod.dash.driver.comm.exceptions.BusyException
 import app.aaps.pump.omnipod.dash.driver.pod.definition.ActivationProgress
 import app.aaps.pump.omnipod.dash.driver.pod.definition.AlertConfiguration
 import app.aaps.pump.omnipod.dash.driver.pod.definition.AlertTrigger
@@ -250,36 +251,88 @@ class OmnipodDashPumpPlugin @Inject constructor(
     override fun finishHandshaking() {
     }
 
+    // override fun connect(reason: String) {
+    //     aapsLogger.info(LTag.PUMP, "connect reason=$reason")
+    //     podStateManager.bluetoothConnectionState = OmnipodDashPodStateManager.BluetoothConnectionState.CONNECTING
+    //     synchronized(this) {
+    //         stopConnecting?.let {
+    //             aapsLogger.warn(LTag.PUMP, "Already connecting: $stopConnecting")
+    //             return
+    //         }
+    //         val stop = CountDownLatch(1)
+    //         stopConnecting = stop
+    //     }
+    //     thread(
+    //         start = true,
+    //         name = "ConnectionThread",
+    //     ) {
+    //         try {
+    //             stopConnecting?.let {
+    //                 omnipodManager.connect(it).ignoreElements()
+    //                     .doOnComplete { podStateManager.incrementSuccessfulConnectionAttemptsAfterRetries() }
+    //                     .blockingAwait()
+    //             }
+    //         } catch (e: Exception) {
+    //             aapsLogger.info(LTag.PUMPCOMM, "connect error=$e")
+    //         } finally {
+    //             synchronized(this) {
+    //                 stopConnecting = null
+    //             }
+    //         }
+    //     }
+    // }
     override fun connect(reason: String) {
         aapsLogger.info(LTag.PUMP, "connect reason=$reason")
         podStateManager.bluetoothConnectionState = OmnipodDashPodStateManager.BluetoothConnectionState.CONNECTING
+
         synchronized(this) {
             stopConnecting?.let {
                 aapsLogger.warn(LTag.PUMP, "Already connecting: $stopConnecting")
                 return
             }
-            val stop = CountDownLatch(1)
-            stopConnecting = stop
+            stopConnecting = CountDownLatch(1)
         }
+
         thread(
             start = true,
             name = "ConnectionThread",
         ) {
             try {
-                stopConnecting?.let {
-                    omnipodManager.connect(it).ignoreElements()
-                        .doOnComplete { podStateManager.incrementSuccessfulConnectionAttemptsAfterRetries() }
-                        .blockingAwait()
+                var retries = 0
+                val maxRetries = 5
+                while (retries < maxRetries) {
+                    try {
+                        stopConnecting?.let { latch ->
+                            omnipodManager.connect(latch)
+                                .ignoreElements()
+                                .doOnComplete { podStateManager.incrementSuccessfulConnectionAttemptsAfterRetries() }
+                                .blockingAwait()
+                        }
+                        break
+                    } catch (e: Exception) {
+                        if (e is BusyException) {
+                            aapsLogger.warn(LTag.PUMPBTCOMM, "BusyException: retrying in 1 s")
+                            Thread.sleep(1000)
+                            retries++
+                        } else {
+                            aapsLogger.error(LTag.PUMPCOMM, "Error in connect loop: $e, forcing BLE reset")
+                            omnipodManager.disconnect(true)  // <— ferme le BluetoothGatt
+                            Thread.sleep(2000)
+                            retries++
+                        }
+                    }
                 }
-            } catch (e: Exception) {
-                aapsLogger.info(LTag.PUMPCOMM, "connect error=$e")
+                if (retries >= maxRetries) {
+                    aapsLogger.error(LTag.PUMPCOMM, "Maximum retries reached, forcing BLE reset")
+                    omnipodManager.disconnect(true)
+                }
             } finally {
-                synchronized(this) {
-                    stopConnecting = null
-                }
+                synchronized(this) { stopConnecting = null }
             }
         }
     }
+
+
 
     override fun disconnect(reason: String) {
         aapsLogger.info(LTag.PUMP, "disconnect reason=$reason")
