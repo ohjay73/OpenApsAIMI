@@ -520,50 +520,124 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         recentSteps5Minutes: Int,
         currentHR: Float,
         averageHR60: Float,
-        pumpAgeDays: Float
+        pumpAgeDays: Float,
+        iob: Double = 0.0 // Ajout du paramètre IOB
     ): Double {
         val reasonBuilder = StringBuilder()
+
         // 1. Conversion du DIA de base en minutes
         var diaMinutes = baseDIAHours * 60f  // Pour 9h, 9*60 = 540 min
+        reasonBuilder.append("Base DIA: ${baseDIAHours}h = ${diaMinutes}min\n")
 
         // 2. Ajustement selon l'heure de la journée
+        // Matin (6-10h) : absorption plus rapide, réduction du DIA de 20%
         if (currentHour in 6..10) {
-            // Le matin : absorption plus rapide, on réduit le DIA de 20%
             diaMinutes *= 0.8f
-        } else if (currentHour in 22..23 || currentHour in 0..5) {
-            // Soir/Nuit : absorption plus lente, on augmente le DIA de 20%
+            reasonBuilder.append("Morning adjustment (6-10h): reduced by 20%\n")
+        }
+        // Soir/Nuit (22-23h et 0-5h) : absorption plus lente, augmentation du DIA de 20%
+        else if (currentHour in 22..23 || currentHour in 0..5) {
             diaMinutes *= 1.2f
+            reasonBuilder.append("Night adjustment (22-23h & 0-5h): increased by 20%\n")
         }
 
         // 3. Ajustement en fonction de l'activité physique
         if (recentSteps5Minutes > 200 && currentHR > averageHR60) {
-            // Exercice : absorption accélérée, réduire le DIA de 30%
+            // Exercice : absorption accélérée, réduction du DIA de 30%
             diaMinutes *= 0.7f
+            reasonBuilder.append("Physical activity detected: reduced by 30%\n")
         } else if (recentSteps5Minutes == 0 && currentHR > averageHR60) {
-            // Aucune activité mais HR élevée (stress) : absorption potentiellement plus lente, augmenter le DIA de 30%
+            // Aucune activité mais HR élevée (stress) : absorption potentiellement plus lente, augmentation du DIA de 30%
             diaMinutes *= 1.3f
+            reasonBuilder.append("High HR without activity (stress): increased by 30%\n")
         }
 
         // 4. Ajustement en fonction du niveau absolu de fréquence cardiaque
         if (currentHR > 130f) {
-            // HR très élevée : circulation rapide, réduire le DIA de 30%
+            // HR très élevée : circulation rapide, réduction du DIA de 30%
             diaMinutes *= 0.7f
+            reasonBuilder.append("High HR (>130bpm): reduced by 30%\n")
         }
 
-        // 5. Ajustement en fonction de l'IOB
-        diaMinutes = adjustDIAForIOB(diaMinutes, iob)
+        // 5. Ajustement en fonction de l'IOB (Insulin on Board)
+        // Si le patient a déjà beaucoup d'insuline active, il faut réduire le DIA pour éviter l'hypoglycémie
+        if (iob > 2.0) {
+            diaMinutes *= 0.8f
+            reasonBuilder.append("High IOB (${iob}U): reduced by 20%\n")
+        } else if (iob < 0.5) {
+            diaMinutes *= 1.1f
+            reasonBuilder.append("Low IOB (${iob}U): increased by 10%\n")
+        }
+
+        // 6. Ajustement en fonction de l'âge du site d'insuline
         // Si le site est utilisé depuis 2 jours ou plus, augmenter le DIA de 10% par jour supplémentaire.
         if (pumpAgeDays >= 2f) {
             val extraDays = pumpAgeDays - 2f
-            val ageMultiplier = 1 + 0.2f * extraDays  // par exemple, 2 jours => 1 + 0.2*1 = 1.2
+            val ageMultiplier = 1 + 0.1f * extraDays  // 10% par jour supplémentaire
             diaMinutes *= ageMultiplier
+            reasonBuilder.append("Pump age (${pumpAgeDays} days): increased by ${extraDays * 10}%\n")
         }
 
-        // 6. Contrainte de la plage finale : entre 180 min (3h) et 720 min (12h)
-        diaMinutes = diaMinutes.coerceIn(180f, 720f)
-        reasonBuilder.append("Dia in minutes : $diaMinutes")
-        return diaMinutes.toDouble()
+        // 7. Contrainte de la plage finale : entre 180 min (3h) et 720 min (12h)
+        val finalDiaMinutes = diaMinutes.coerceIn(180f, 720f)
+        reasonBuilder.append("Final DIA constrained to [180, 720] min: ${finalDiaMinutes}min")
+
+        println("DIA Calculation Details:")
+        println(reasonBuilder.toString())
+
+        return finalDiaMinutes.toDouble()
     }
+
+    // fun calculateAdjustedDIA(
+    //     baseDIAHours: Float,
+    //     currentHour: Int,
+    //     recentSteps5Minutes: Int,
+    //     currentHR: Float,
+    //     averageHR60: Float,
+    //     pumpAgeDays: Float
+    // ): Double {
+    //     val reasonBuilder = StringBuilder()
+    //     // 1. Conversion du DIA de base en minutes
+    //     var diaMinutes = baseDIAHours * 60f  // Pour 9h, 9*60 = 540 min
+    //
+    //     // 2. Ajustement selon l'heure de la journée
+    //     if (currentHour in 6..10) {
+    //         // Le matin : absorption plus rapide, on réduit le DIA de 20%
+    //         diaMinutes *= 0.8f
+    //     } else if (currentHour in 22..23 || currentHour in 0..5) {
+    //         // Soir/Nuit : absorption plus lente, on augmente le DIA de 20%
+    //         diaMinutes *= 1.2f
+    //     }
+    //
+    //     // 3. Ajustement en fonction de l'activité physique
+    //     if (recentSteps5Minutes > 200 && currentHR > averageHR60) {
+    //         // Exercice : absorption accélérée, réduire le DIA de 30%
+    //         diaMinutes *= 0.7f
+    //     } else if (recentSteps5Minutes == 0 && currentHR > averageHR60) {
+    //         // Aucune activité mais HR élevée (stress) : absorption potentiellement plus lente, augmenter le DIA de 30%
+    //         diaMinutes *= 1.3f
+    //     }
+    //
+    //     // 4. Ajustement en fonction du niveau absolu de fréquence cardiaque
+    //     if (currentHR > 130f) {
+    //         // HR très élevée : circulation rapide, réduire le DIA de 30%
+    //         diaMinutes *= 0.7f
+    //     }
+    //
+    //     // 5. Ajustement en fonction de l'IOB
+    //     diaMinutes = adjustDIAForIOB(diaMinutes, iob)
+    //     // Si le site est utilisé depuis 2 jours ou plus, augmenter le DIA de 10% par jour supplémentaire.
+    //     if (pumpAgeDays >= 2f) {
+    //         val extraDays = pumpAgeDays - 2f
+    //         val ageMultiplier = 1 + 0.2f * extraDays  // par exemple, 2 jours => 1 + 0.2*1 = 1.2
+    //         diaMinutes *= ageMultiplier
+    //     }
+    //
+    //     // 6. Contrainte de la plage finale : entre 180 min (3h) et 720 min (12h)
+    //     diaMinutes = diaMinutes.coerceIn(180f, 720f)
+    //     reasonBuilder.append("Dia in minutes : $diaMinutes")
+    //     return diaMinutes.toDouble()
+    // }
 
     // -- Méthode pour obtenir l'historique récent de BG, similaire à getRecentBGs() --
     private fun getRecentBGs(): List<Float> {
@@ -781,6 +855,28 @@ fun appendCompactLog(
     //     rT.rate = rate
     //     return rT
     // }
+    private fun isBgDataAvailable(): Boolean {
+        // Vérifie si les données BG sont valides et récentes
+        if (bg <= 0.0 || delta <= 0.0 || bgacc <= 0.0) {
+            return false
+        }
+
+        try {
+            // Utilise directement lastBg() comme dans le code existant
+            val lastBg = iobCobCalculator.ads.lastBg()
+            if (lastBg == null) {
+                return false
+            }
+
+            // Vérifie que le dernier BG est récent (moins de 30 minutes)
+            val timeDiff = System.currentTimeMillis() - lastBg.timestamp
+            return timeDiff < 30 * 60 * 1000
+
+        } catch (e: Exception) {
+            consoleError.add("Erreur dans isBgDataAvailable : ${e.message}")
+            return false
+        }
+    }
     fun setTempBasal(
         _rate: Double,
         duration: Int,
@@ -798,8 +894,33 @@ fun appendCompactLog(
             || therapy.lunchTime
             || therapy.dinnerTime
             || therapy.bfastTime
-val reason = StringBuilder()
-        // 2️⃣ On recalcule le mode “early autodrive”
+
+        val reason = StringBuilder()
+
+        // ────────────────────────────────────────────────────────────────
+        // 2️⃣ Vérification de la disponibilité des données BG
+        val recentBGs = getRecentBGs()
+        val hasBgData = recentBGs.isNotEmpty() && isBgDataAvailable()
+
+        // ────────────────────────────────────────────────────────────────
+        // 3️⃣ Gestion spéciale pour les nouveaux capteurs (pas de données BG)
+        if (!hasBgData) {
+            println("⚠️ Aucune donnée BG disponible - utilisation stratégie de secours")
+
+            // Utiliser le taux de base sans ajustement
+            val rate = _rate.coerceIn(0.0, profile.max_basal)
+
+            // Logging
+            rT.reason.append("💡 Capteur nouveau ou données indisponibles - utilisation taux de base\n")
+            rT.reason.append("Pose temp à ${"%.2f".format(rate)} U/h pour $duration minutes.\n")
+            rT.duration = duration
+            rT.rate = rate
+
+            return rT
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        // 4️⃣ On recalcule le mode “early autodrive”
         val hour = Calendar.getInstance()[Calendar.HOUR_OF_DAY]
         val night = hour <= 7
         val predDelta = predictedDelta(getRecentDeltas()).toFloat()
@@ -812,26 +933,25 @@ val reason = StringBuilder()
             && detectMealOnset(delta, predDelta, bgacc.toFloat())
 
         // ────────────────────────────────────────────────────────────────
-        // Utilisation des valeurs récentes de BG pour ajuster le taux basal ou prendre d'autres décisions
-        val recentBGs = getRecentBGs()
+        // 5️⃣ Utilisation des valeurs récentes de BG pour ajuster le taux basal
         var rateAdjustment = _rate
 
-        if (recentBGs.isNotEmpty()) {
+        if (hasBgData) {
             val bgTrend = calculateBgTrend(recentBGs, reason)
             println("BG Trend: $bgTrend")
 
             // Ajuster le taux basal en fonction de la tendance des BG
             rateAdjustment = adjustRateBasedOnBgTrend(_rate, bgTrend)
-
         } else {
             println("No recent BG values available.")
         }
 
-        // 3️⃣ On décide de bypasser la limite de sécurité si override ou mode spécial
+        // ────────────────────────────────────────────────────────────────
+        // 6️⃣ On décide de bypasser la limite de sécurité si override ou mode spécial
         val bypassSafety = overrideSafetyLimits || isMealMode || isEarlyAutodrive
 
         // ────────────────────────────────────────────────────────────────
-        // 4️⃣ Calcul du maxSafeBasal standard
+        // 7️⃣ Calcul du maxSafeBasal standard
         val maxSafe = min(
             profile.max_basal,
             min(
@@ -840,7 +960,8 @@ val reason = StringBuilder()
             )
         )
 
-        // 5️⃣ Choix du rate effectif : bypass ou clamp
+        // ────────────────────────────────────────────────────────────────
+        // 8️⃣ Choix du rate effectif : bypass ou clamp
         val rate = if (bypassSafety) {
             rateAdjustment
         } else {
@@ -848,7 +969,7 @@ val reason = StringBuilder()
         }
 
         // ────────────────────────────────────────────────────────────────
-        // 6️⃣ Logging des raisons
+        // 9️⃣ Logging des raisons
         when {
             bypassSafety -> {
                 rT.reason.append("→ bypass sécurité${if (isMealMode) " (meal mode)" else if (isEarlyAutodrive) " (early autodrive)" else ""}\n")
@@ -859,12 +980,96 @@ val reason = StringBuilder()
         }
 
         // ────────────────────────────────────────────────────────────────
-        // 9️⃣ Pose “standard” du temp basal
+        // 🔟 Pose “standard” du temp basal
         rT.reason.append("Pose temp à ${"%.2f".format(rate)} U/h pour $duration minutes.\n")
         rT.duration = duration
         rT.rate = rate
         return rT
     }
+//     fun setTempBasal(
+//         _rate: Double,
+//         duration: Int,
+//         profile: OapsProfileAimi,
+//         rT: RT,
+//         currenttemp: CurrentTemp,
+//         overrideSafetyLimits: Boolean = false
+//     ): RT {
+//         // ────────────────────────────────────────────────────────────────
+//         // 1️⃣ On recalcule le mode “meal” / “highCarb” / “snack” / etc.
+//         val therapy = Therapy(persistenceLayer).also { it.updateStatesBasedOnTherapyEvents() }
+//         val isMealMode = therapy.snackTime
+//             || therapy.highCarbTime
+//             || therapy.mealTime
+//             || therapy.lunchTime
+//             || therapy.dinnerTime
+//             || therapy.bfastTime
+// val reason = StringBuilder()
+//         // 2️⃣ On recalcule le mode “early autodrive”
+//         val hour = Calendar.getInstance()[Calendar.HOUR_OF_DAY]
+//         val night = hour <= 7
+//         val predDelta = predictedDelta(getRecentDeltas()).toFloat()
+//         val autodrive = preferences.get(BooleanKey.OApsAIMIautoDrive)
+//
+//         val isEarlyAutodrive = !night
+//             && !isMealMode
+//             && autodrive
+//             && bg > 110
+//             && detectMealOnset(delta, predDelta, bgacc.toFloat())
+//
+//         // ────────────────────────────────────────────────────────────────
+//         // Utilisation des valeurs récentes de BG pour ajuster le taux basal ou prendre d'autres décisions
+//         val recentBGs = getRecentBGs()
+//         var rateAdjustment = _rate
+//
+//         if (recentBGs.isNotEmpty()) {
+//             val bgTrend = calculateBgTrend(recentBGs, reason)
+//             println("BG Trend: $bgTrend")
+//
+//             // Ajuster le taux basal en fonction de la tendance des BG
+//             rateAdjustment = adjustRateBasedOnBgTrend(_rate, bgTrend)
+//
+//         } else {
+//             println("No recent BG values available.")
+//         }
+//
+//         // 3️⃣ On décide de bypasser la limite de sécurité si override ou mode spécial
+//         val bypassSafety = overrideSafetyLimits || isMealMode || isEarlyAutodrive
+//
+//         // ────────────────────────────────────────────────────────────────
+//         // 4️⃣ Calcul du maxSafeBasal standard
+//         val maxSafe = min(
+//             profile.max_basal,
+//             min(
+//                 profile.max_daily_safety_multiplier * profile.max_daily_basal,
+//                 profile.current_basal_safety_multiplier * profile.current_basal
+//             )
+//         )
+//
+//         // 5️⃣ Choix du rate effectif : bypass ou clamp
+//         val rate = if (bypassSafety) {
+//             rateAdjustment
+//         } else {
+//             rateAdjustment.coerceIn(0.0, maxSafe)
+//         }
+//
+//         // ────────────────────────────────────────────────────────────────
+//         // 6️⃣ Logging des raisons
+//         when {
+//             bypassSafety -> {
+//                 rT.reason.append("→ bypass sécurité${if (isMealMode) " (meal mode)" else if (isEarlyAutodrive) " (early autodrive)" else ""}\n")
+//             }
+//             rate != _rate -> {
+//                 rT.reason.append("→ rate adjusted based on BG trend\n")
+//             }
+//         }
+//
+//         // ────────────────────────────────────────────────────────────────
+//         // 9️⃣ Pose “standard” du temp basal
+//         rT.reason.append("Pose temp à ${"%.2f".format(rate)} U/h pour $duration minutes.\n")
+//         rT.duration = duration
+//         rT.rate = rate
+//         return rT
+//     }
 
     // private fun calculateBgTrend(recentBGs: List<Float>): Float {
     //     // Calculer la tendance des BG en fonction de la différence entre les dernières valeurs
