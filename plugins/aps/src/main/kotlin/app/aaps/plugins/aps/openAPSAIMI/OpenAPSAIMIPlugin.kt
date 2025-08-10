@@ -617,6 +617,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         absoluteRate: Constraint<Double>,
         profile: Profile
     ): Constraint<Double> {
+        val glucoseStatus = glucoseStatusProvider.glucoseStatusData ?: return absoluteRate
         // ────────────────────────────────────────────────────
         // 1️⃣ On détecte si l’on est en mode “meal” ou “early autodrive”
         val therapy = Therapy(persistenceLayer).also { it.updateStatesBasedOnTherapyEvents() }
@@ -632,11 +633,11 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         val isEarlyAutodrive = !night
             && !isMealMode
             && /* tous les autres modes */ !therapy.sportTime
-            && glucoseStatusProvider.glucoseStatusData!!.glucose > 110
+            && glucoseStatus.glucose > 110
             && detectMealOnset(
-            glucoseStatusProvider.glucoseStatusData!!.delta.toFloat(),
+            glucoseStatus.delta.toFloat(),
             predictedDelta(getRecentDeltas()).toFloat(),
-            glucoseStatusProvider.glucoseStatusData!!.bgAcceleration.toFloat()
+            glucoseStatus.bgAcceleration.toFloat()
         )
 
         val isSpecialMode = isMealMode || isEarlyAutodrive

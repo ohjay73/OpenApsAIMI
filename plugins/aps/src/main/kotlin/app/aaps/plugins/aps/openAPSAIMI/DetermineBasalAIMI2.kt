@@ -53,6 +53,7 @@ import kotlin.math.sqrt
 import app.aaps.plugins.aps.R
 
 import android.content.Context
+import com.google.common.cache.CacheBuilder
 import kotlin.math.exp
 
 @Singleton
@@ -484,7 +485,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
      * @param threshold Le seuil d'IOB à partir duquel on commence à augmenter le DIA (par défaut 7 U).
      * @return Le DIA ajusté en minutes tenant compte de l'impact de l'IOB.
      */
-    fun adjustDIAForIOB(diaMinutes: Float, currentIOB: Float, threshold: Float = 5f): Float {
+    fun adjustDIAForIOB(diaMinutes: Float, currentIOB: Float, threshold: Float = 2f): Float {
         // Si l'IOB est inférieur ou égal au seuil, pas d'ajustement.
         if (currentIOB <= threshold) return diaMinutes
 
@@ -561,13 +562,14 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         // 5. Ajustement en fonction de l'IOB (Insulin on Board)
         // Si le patient a déjà beaucoup d'insuline active, il faut réduire le DIA pour éviter l'hypoglycémie
-        if (iob > 2.0) {
-            diaMinutes *= 0.8f
-            reasonBuilder.append("High IOB (${iob}U): reduced by 20%\n")
-        } else if (iob < 0.5) {
-            diaMinutes *= 1.1f
-            reasonBuilder.append("Low IOB (${iob}U): increased by 10%\n")
-        }
+        diaMinutes = adjustDIAForIOB(diaMinutes, iob.toFloat())
+        // if (iob > 2.0) {
+        //     diaMinutes *= 0.8f
+        //     reasonBuilder.append("High IOB (${iob}U): reduced by 20%\n")
+        // } else if (iob < 0.5) {
+        //     diaMinutes *= 1.1f
+        //     reasonBuilder.append("Low IOB (${iob}U): increased by 10%\n")
+        // }
 
         // 6. Ajustement en fonction de l'âge du site d'insuline
         // Si le site est utilisé depuis 2 jours ou plus, augmenter le DIA de 10% par jour supplémentaire.
@@ -643,7 +645,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private fun getRecentBGs(): List<Float> {
         val data = iobCobCalculator.ads.getBucketedDataTableCopy() ?: return emptyList()
         if (data.isEmpty()) return emptyList()
-        val intervalMinutes = if (bg < 130) 40f else 20f
+        val intervalMinutes = if (bg < 130) 60f else 30f
         val nowTimestamp = data.first().timestamp
         val recentBGs = mutableListOf<Float>()
 
@@ -1247,36 +1249,7 @@ fun appendCompactLog(
 
         return bolusesLastHour.any { Math.abs(it.amount - pbolusA) < epsilon }
     }
-    // private fun isAutodriveModeCondition(
-    //     delta: Float,
-    //     autodrive: Boolean,
-    //     slopeFromMinDeviation: Double,
-    //     bg: Float,
-    //     predictedBg: Float
-    // ): Boolean {
-    //     // Récupération de la valeur de pbolusMeal depuis les préférences
-    //     val pbolusA: Double = preferences.get(DoubleKey.OApsAIMIautodrivePrebolus)
-    //     val autodriveDelta: Double = preferences.get(DoubleKey.OApsAIMIcombinedDelta)
-    //     val autodriveminDeviation: Double = preferences.get(DoubleKey.OApsAIMIAutodriveDeviation)
-    //     //val autodriveISF: Int = preferences.get(IntKey.OApsAIMIautodriveISF)
-    //     val autodriveTarget: Int = preferences.get(IntKey.OApsAIMIAutodriveTarget)
-    //     val autodriveBG: Int = preferences.get(IntKey.OApsAIMIAutodriveBG)
-    //     // Récupération des deltas récents et calcul du delta prédit
-    //     val recentDeltas = getRecentDeltas()
-    //     val predicted = predictedDelta(recentDeltas)
-    //     // Calcul du delta combiné : combine le delta mesuré et le delta prédit
-    //     val combinedDelta = (delta + predicted) / 2.0f
-    //     // Si un bolus de pbolusA a déjà été administré dans la dernière heure, on ne le ré-administrera pas
-    //     if (hasReceivedPbolusMInLastHour(pbolusA)) {
-    //         return false
-    //     }
-    //
-    //     return combinedDelta >= autodriveDelta &&
-    //         predictedBg > 140 &&
-    //         autodrive &&
-    //         slopeFromMinDeviation >= autodriveminDeviation &&
-    //         bg >= autodriveBG
-    // }
+
     private fun isAutodriveModeCondition(
         delta: Float,
         autodrive: Boolean,
@@ -1325,16 +1298,6 @@ fun appendCompactLog(
             bg >= autodriveBG.toFloat()
     }
 
-    // private fun adjustAutodriveCondition(bgTrend: Float, predictedBg: Float, combinedDelta: Float): Boolean {
-    //     // Ajuster les conditions d'autodrive en fonction de la tendance des BG
-    //     val autodriveDelta: Double = preferences.get(DoubleKey.OApsAIMIcombinedDelta)
-    //     val autodriveCondition = when {
-    //         bgTrend < 0.0f -> false // Diminution significative, pas besoin d'insuline supplémentaire
-    //         predictedBg > 140 && combinedDelta >= autodriveDelta -> true // Besoin accru en insuline
-    //         else -> false // Autre cas par défaut
-    //     }
-    //     return autodriveCondition
-    // }
     private fun adjustAutodriveCondition(
         bgTrend: Float,
         predictedBg: Float,
@@ -1407,64 +1370,264 @@ fun appendCompactLog(
     private fun roundToPoint05(number: Float): Float {
         return (number * 20.0).roundToInt() / 20.0f
     }
+    // private fun isCriticalSafetyCondition(mealData: MealData): Pair<Boolean, String> {
+    //     val reasonBuilder = StringBuilder()
+    //     val conditionsTrue = mutableListOf<String>()
+    //     //val slopedeviation = mealData.slopeFromMaxDeviation <= -1.5 && mealData.slopeFromMinDeviation < 0.3
+    //     //if (slopedeviation) conditionsTrue.add("slopedeviation")
+    //     val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
+    //     val nosmbHM = iob > 0.7 && honeymoon && delta <= 10.0 && !mealTime && !bfastTime && !lunchTime && !dinnerTime && predictedBg < 130
+    //     if (nosmbHM) conditionsTrue.add("nosmbHM")
+    //     val honeysmb = honeymoon && delta < 0 && bg < 170
+    //     if (honeysmb) conditionsTrue.add("honeysmb")
+    //     val negdelta = delta <= 0 && !mealTime && !bfastTime && !lunchTime && !dinnerTime && eventualBG < 140
+    //     if (negdelta) conditionsTrue.add("negdelta")
+    //     val nosmb = iob >= 2*maxSMB && bg < 110 && delta < 10 && !mealTime && !bfastTime && !highCarbTime && !lunchTime && !dinnerTime
+    //     if (nosmb) conditionsTrue.add("nosmb")
+    //     val fasting = fastingTime
+    //     if (fasting) conditionsTrue.add("fasting")
+    //     val belowMinThreshold = bg < 100 && delta < 10 && !mealTime && !bfastTime && !highCarbTime && !lunchTime && !dinnerTime
+    //     if (belowMinThreshold) conditionsTrue.add("belowMinThreshold")
+    //     val isNewCalibration = iscalibration && delta > 8
+    //     if (isNewCalibration) conditionsTrue.add("isNewCalibration")
+    //     val belowTargetAndDropping = bg < targetBg && delta < -2 && !mealTime && !bfastTime && !highCarbTime && !lunchTime && !dinnerTime
+    //     if (belowTargetAndDropping) conditionsTrue.add("belowTargetAndDropping")
+    //     val belowTargetAndStableButNoCob = bg < targetBg - 15 && shortAvgDelta <= 2 && cob <= 10 && !mealTime && !bfastTime && !highCarbTime && !lunchTime && !dinnerTime
+    //     if (belowTargetAndStableButNoCob) conditionsTrue.add("belowTargetAndStableButNoCob")
+    //     val droppingFast = bg < 150 && delta < -2
+    //     if (droppingFast) conditionsTrue.add("droppingFast")
+    //     val droppingFastAtHigh = bg < 220 && delta <= -7
+    //     if (droppingFastAtHigh) conditionsTrue.add("droppingFastAtHigh")
+    //     val droppingVeryFast = delta < -11
+    //     if (droppingVeryFast) conditionsTrue.add("droppingVeryFast")
+    //     val prediction = predictedBg < targetBg && bg < 135 && !mealTime && !bfastTime && !highCarbTime && !lunchTime && !dinnerTime
+    //     if (prediction) conditionsTrue.add("prediction")
+    //     val interval = eventualBG < targetBg && delta > 10 && iob >= maxSMB/2 && lastsmbtime < 10 && !mealTime && !bfastTime && !highCarbTime && !lunchTime && !dinnerTime && !snackTime
+    //     if (interval) conditionsTrue.add("interval")
+    //     val targetinterval = targetBg >= 120 && delta > 0 && iob >= maxSMB/2 && lastsmbtime < 12 && !mealTime && !bfastTime && !highCarbTime && !lunchTime && !dinnerTime && !snackTime
+    //     if (targetinterval) conditionsTrue.add("targetinterval")
+    //     //val stablebg = delta>-3 && delta<3 && shortAvgDelta>-3 && shortAvgDelta<3 && longAvgDelta>-3 && longAvgDelta<3 && bg < 120 && !mealTime && !bfastTime && !highCarbTime && !lunchTime && !dinnerTime
+    //     //if (stablebg) conditionsTrue.add("stablebg")
+    //     val acceleratingDown = delta < -2 && delta - longAvgDelta < -2 && lastsmbtime < 15
+    //     if (acceleratingDown) conditionsTrue.add("acceleratingDown")
+    //     val decceleratingdown = delta < 0 && (delta > shortAvgDelta || delta > longAvgDelta) && lastsmbtime < 15
+    //     if (decceleratingdown) conditionsTrue.add("decceleratingdown")
+    //     val nosmbhoneymoon = honeymoon && iob > maxIob / 2 && delta < 0
+    //     if (nosmbhoneymoon) conditionsTrue.add("nosmbhoneymoon")
+    //     val bg90 = bg < 90
+    //     if (bg90) conditionsTrue.add("bg90")
+    //     val result = belowTargetAndDropping || belowTargetAndStableButNoCob || nosmbHM || honeysmb ||
+    //         droppingFast || droppingFastAtHigh || droppingVeryFast || prediction || interval || targetinterval || bg90 || negdelta ||
+    //         fasting || nosmb || isNewCalibration || belowMinThreshold || acceleratingDown || decceleratingdown || nosmbhoneymoon
+    //
+    //     val conditionsTrueString = if (conditionsTrue.isNotEmpty()) {
+    //         conditionsTrue.joinToString(", ")
+    //     } else {
+    //         "No conditions met"
+    //     }
+    //     reasonBuilder.append("Safety condition $result : $conditionsTrue")
+    //     return Pair(result, conditionsTrueString)
+    // }
+    /**
+     * Vérifie si une condition de sécurité critique est remplie
+     *
+     * @param mealData Les données sur le repas
+     * @return Une paire contenant :
+     *         - Le résultat booléen indiquant si la condition est critique
+     *         - Une chaîne décrivant les conditions remplies
+     */
     private fun isCriticalSafetyCondition(mealData: MealData): Pair<Boolean, String> {
-        val reasonBuilder = StringBuilder()
-        val conditionsTrue = mutableListOf<String>()
-        //val slopedeviation = mealData.slopeFromMaxDeviation <= -1.5 && mealData.slopeFromMinDeviation < 0.3
-        //if (slopedeviation) conditionsTrue.add("slopedeviation")
-        val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
-        val nosmbHM = iob > 0.7 && honeymoon && delta <= 10.0 && !mealTime && !bfastTime && !lunchTime && !dinnerTime && predictedBg < 130
-        if (nosmbHM) conditionsTrue.add("nosmbHM")
-        val honeysmb = honeymoon && delta < 0 && bg < 170
-        if (honeysmb) conditionsTrue.add("honeysmb")
-        val negdelta = delta <= 0 && !mealTime && !bfastTime && !lunchTime && !dinnerTime && eventualBG < 140
-        if (negdelta) conditionsTrue.add("negdelta")
-        val nosmb = iob >= 2*maxSMB && bg < 110 && delta < 10 && !mealTime && !bfastTime && !highCarbTime && !lunchTime && !dinnerTime
-        if (nosmb) conditionsTrue.add("nosmb")
-        val fasting = fastingTime
-        if (fasting) conditionsTrue.add("fasting")
-        val belowMinThreshold = bg < 100 && delta < 10 && !mealTime && !bfastTime && !highCarbTime && !lunchTime && !dinnerTime
-        if (belowMinThreshold) conditionsTrue.add("belowMinThreshold")
-        val isNewCalibration = iscalibration && delta > 8
-        if (isNewCalibration) conditionsTrue.add("isNewCalibration")
-        val belowTargetAndDropping = bg < targetBg && delta < -2 && !mealTime && !bfastTime && !highCarbTime && !lunchTime && !dinnerTime
-        if (belowTargetAndDropping) conditionsTrue.add("belowTargetAndDropping")
-        val belowTargetAndStableButNoCob = bg < targetBg - 15 && shortAvgDelta <= 2 && cob <= 10 && !mealTime && !bfastTime && !highCarbTime && !lunchTime && !dinnerTime
-        if (belowTargetAndStableButNoCob) conditionsTrue.add("belowTargetAndStableButNoCob")
-        val droppingFast = bg < 150 && delta < -2
-        if (droppingFast) conditionsTrue.add("droppingFast")
-        val droppingFastAtHigh = bg < 220 && delta <= -7
-        if (droppingFastAtHigh) conditionsTrue.add("droppingFastAtHigh")
-        val droppingVeryFast = delta < -11
-        if (droppingVeryFast) conditionsTrue.add("droppingVeryFast")
-        val prediction = predictedBg < targetBg && bg < 135 && !mealTime && !bfastTime && !highCarbTime && !lunchTime && !dinnerTime
-        if (prediction) conditionsTrue.add("prediction")
-        val interval = eventualBG < targetBg && delta > 10 && iob >= maxSMB/2 && lastsmbtime < 10 && !mealTime && !bfastTime && !highCarbTime && !lunchTime && !dinnerTime && !snackTime
-        if (interval) conditionsTrue.add("interval")
-        val targetinterval = targetBg >= 120 && delta > 0 && iob >= maxSMB/2 && lastsmbtime < 12 && !mealTime && !bfastTime && !highCarbTime && !lunchTime && !dinnerTime && !snackTime
-        if (targetinterval) conditionsTrue.add("targetinterval")
-        //val stablebg = delta>-3 && delta<3 && shortAvgDelta>-3 && shortAvgDelta<3 && longAvgDelta>-3 && longAvgDelta<3 && bg < 120 && !mealTime && !bfastTime && !highCarbTime && !lunchTime && !dinnerTime
-        //if (stablebg) conditionsTrue.add("stablebg")
-        val acceleratingDown = delta < -2 && delta - longAvgDelta < -2 && lastsmbtime < 15
-        if (acceleratingDown) conditionsTrue.add("acceleratingDown")
-        val decceleratingdown = delta < 0 && (delta > shortAvgDelta || delta > longAvgDelta) && lastsmbtime < 15
-        if (decceleratingdown) conditionsTrue.add("decceleratingdown")
-        val nosmbhoneymoon = honeymoon && iob > maxIob / 2 && delta < 0
-        if (nosmbhoneymoon) conditionsTrue.add("nosmbhoneymoon")
-        val bg90 = bg < 90
-        if (bg90) conditionsTrue.add("bg90")
-        val result = belowTargetAndDropping || belowTargetAndStableButNoCob || nosmbHM || honeysmb ||
-            droppingFast || droppingFastAtHigh || droppingVeryFast || prediction || interval || targetinterval || bg90 || negdelta ||
-            fasting || nosmb || isNewCalibration || belowMinThreshold || acceleratingDown || decceleratingdown || nosmbhoneymoon
+        // Extraction des données de contexte pour éviter les variables globales
+        val context = SafetyContext(
+            delta = delta.toDouble(),
+            bg = bg,
+            iob = iob.toDouble(),
+            predictedBg = predictedBg.toDouble(),
+            eventualBG = eventualBG,
+            shortAvgDelta = shortAvgDelta.toDouble(),
+            longAvgDelta = longAvgDelta.toDouble(),
+            lastsmbtime = lastsmbtime,
+            fastingTime = fastingTime,
+            iscalibration = iscalibration,
+            targetBg = targetBg.toDouble(),
+            maxSMB = maxSMB,
+            maxIob = maxIob,
+            mealTime = mealTime,
+            bfastTime = bfastTime,
+            lunchTime = lunchTime,
+            dinnerTime = dinnerTime,
+            highCarbTime = highCarbTime,
+            snackTime = snackTime
+        )
 
-        val conditionsTrueString = if (conditionsTrue.isNotEmpty()) {
-            conditionsTrue.joinToString(", ")
+        // Récupération des conditions critiques
+        val criticalConditions = determineCriticalConditions(context)
+
+        // Calcul du résultat final
+        val isCritical = criticalConditions.isNotEmpty()
+
+        // Construction du message de retour
+        val message = buildConditionMessage(isCritical, criticalConditions)
+
+        return Pair(isCritical, message)
+    }
+
+    /**
+     * Structure de données pour le contexte de sécurité
+     */
+    private data class SafetyContext(
+        val delta: Double,
+        val bg: Double,
+        val iob: Double,
+        val predictedBg: Double,
+        val eventualBG: Double,
+        val shortAvgDelta: Double,
+        val longAvgDelta: Double,
+        val lastsmbtime: Int,
+        val fastingTime: Boolean,
+        val iscalibration: Boolean,
+        val targetBg: Double,
+        val maxSMB: Double,
+        val maxIob: Double,
+        val mealTime: Boolean,
+        val bfastTime: Boolean,
+        val lunchTime: Boolean,
+        val dinnerTime: Boolean,
+        val highCarbTime: Boolean,
+        val snackTime: Boolean
+    )
+
+    /**
+     * Détermine les conditions critiques à partir du contexte fourni
+     */
+    private fun determineCriticalConditions(context: SafetyContext): List<String> {
+        val conditions = mutableListOf<String>()
+
+        // Vérification des conditions critiques avec des noms explicites
+        if (isNosmbHm(context)) conditions.add("nosmbHM")
+        if (isHoneysmb(context)) conditions.add("honeysmb")
+        if (isNegDelta(context)) conditions.add("negdelta")
+        if (isNosmb(context)) conditions.add("nosmb")
+        if (isFasting(context)) conditions.add("fasting")
+        if (isBelowMinThreshold(context)) conditions.add("belowMinThreshold")
+        if (isNewCalibration(context)) conditions.add("isNewCalibration")
+        if (isBelowTargetAndDropping(context)) conditions.add("belowTargetAndDropping")
+        if (isBelowTargetAndStableButNoCob(context)) conditions.add("belowTargetAndStableButNoCob")
+        if (isDroppingFast(context)) conditions.add("droppingFast")
+        if (isDroppingFastAtHigh(context)) conditions.add("droppingFastAtHigh")
+        if (isDroppingVeryFast(context)) conditions.add("droppingVeryFast")
+        if (isPrediction(context)) conditions.add("prediction")
+        if (isInterval(context)) conditions.add("interval")
+        if (isTargetInterval(context)) conditions.add("targetinterval")
+        if (isBg90(context)) conditions.add("bg90")
+        if (isAcceleratingDown(context)) conditions.add("acceleratingDown")
+        if (isDeceleratingDown(context)) conditions.add("decceleratingdown")
+        if (isNosmbHoneymoon(context)) conditions.add("nosmbhoneymoon")
+
+        return conditions
+    }
+
+    /**
+     * Construction du message de retour décrivant les conditions remplies
+     */
+    private fun buildConditionMessage(isCritical: Boolean, conditions: List<String>): String {
+        val conditionsString = if (conditions.isNotEmpty()) {
+            conditions.joinToString(", ")
         } else {
             "No conditions met"
         }
-        reasonBuilder.append("Safety condition $result : $conditionsTrue")
-        return Pair(result, conditionsTrueString)
+
+        return "Safety condition $isCritical : $conditionsString"
     }
+
+    // Fonctions de vérification spécifiques pour chaque condition
+    private fun isNosmbHm(context: SafetyContext): Boolean =
+        context.iob > 0.7 &&
+            preferences.get(BooleanKey.OApsAIMIhoneymoon) &&
+            context.delta <= 10.0 &&
+            !context.mealTime &&
+            !context.bfastTime &&
+            !context.lunchTime &&
+            !context.dinnerTime &&
+            context.predictedBg < 130
+
+    private fun isHoneysmb(context: SafetyContext): Boolean =
+        preferences.get(BooleanKey.OApsAIMIhoneymoon) &&
+            context.delta < 0 &&
+            context.bg < 170
+
+    private fun isNegDelta(context: SafetyContext): Boolean =
+        context.delta <= 0 &&
+            !context.mealTime &&
+            !context.bfastTime &&
+            !context.lunchTime &&
+            !context.dinnerTime &&
+            context.eventualBG < 140
+
+    private fun isNosmb(context: SafetyContext): Boolean =
+        context.iob >= 2 * context.maxSMB &&
+            context.bg < 110 &&
+            context.delta < 10 &&
+            !context.mealTime &&
+            !context.bfastTime &&
+            !context.lunchTime &&
+            !context.dinnerTime
+
+    private fun isFasting(context: SafetyContext): Boolean = context.fastingTime
+
+    private fun isBelowMinThreshold(context: SafetyContext): Boolean =
+        context.bg < 60 // Seuil arbitraire pour la valeur minimale
+
+    private fun isNewCalibration(context: SafetyContext): Boolean = context.iscalibration
+
+    private fun isBelowTargetAndDropping(context: SafetyContext): Boolean =
+        context.bg < context.targetBg &&
+            context.delta < 0
+
+    private fun isBelowTargetAndStableButNoCob(context: SafetyContext): Boolean =
+        context.bg < context.targetBg &&
+            context.delta >= 0 &&
+            context.iob <= 0 // Pas de COB (Carbohydrate On Board)
+
+    private fun isDroppingFast(context: SafetyContext): Boolean =
+        context.delta < -2.0 // Seuil arbitraire pour une chute rapide
+
+    private fun isDroppingFastAtHigh(context: SafetyContext): Boolean =
+        context.bg > 180 &&
+            context.delta < -1.5
+
+    private fun isDroppingVeryFast(context: SafetyContext): Boolean =
+        context.delta < -3.0
+
+    private fun isPrediction(context: SafetyContext): Boolean =
+        context.predictedBg < context.bg &&
+            context.delta < 0
+
+    private fun isInterval(context: SafetyContext): Boolean =
+        context.eventualBG > context.targetBg &&
+            context.lastsmbtime > 10 // Seuil arbitraire pour le temps écoulé
+
+    private fun isTargetInterval(context: SafetyContext): Boolean =
+        context.bg < context.targetBg &&
+            context.delta > 0
+
+    private fun isBg90(context: SafetyContext): Boolean = context.bg < 90
+
+    private fun isAcceleratingDown(context: SafetyContext): Boolean =
+        context.delta < 0 &&
+            context.longAvgDelta < 0 &&
+            context.shortAvgDelta < 0
+
+    private fun isDeceleratingDown(context: SafetyContext): Boolean =
+        context.delta > 0 &&
+            context.longAvgDelta > 0 &&
+            context.shortAvgDelta > 0
+
+    private fun isNosmbHoneymoon(context: SafetyContext): Boolean =
+        preferences.get(BooleanKey.OApsAIMIhoneymoon) &&
+            context.iob <= 0 &&
+            context.lastsmbtime > 30
+
     private fun isSportSafetyCondition(): Boolean {
         val sport = targetBg >= 140 && recentSteps5Minutes >= 200 && recentSteps10Minutes >= 400
         val sport1 = targetBg >= 140 && recentSteps5Minutes >= 200 && averageBeatsPerMinute > averageBeatsPerMinute10
@@ -1478,118 +1641,86 @@ fun appendCompactLog(
     }
     private fun calculateSMBInterval(): Int {
         val reasonBuilder = StringBuilder()
-        // Récupération des intervalles configurés
-        val intervalSnack = preferences.get(IntKey.OApsAIMISnackinterval)
-        val intervalMeal = preferences.get(IntKey.OApsAIMImealinterval)
-        val intervalBF = preferences.get(IntKey.OApsAIMIBFinterval)
-        val intervalLunch = preferences.get(IntKey.OApsAIMILunchinterval)
-        val intervalDinner = preferences.get(IntKey.OApsAIMIDinnerinterval)
-        val intervalSleep = preferences.get(IntKey.OApsAIMISleepinterval)
-        val intervalHC = preferences.get(IntKey.OApsAIMIHCinterval)
-        val intervalHighBG = preferences.get(IntKey.OApsAIMIHighBGinterval)
+
+        // Récupération préalable des intervalles depuis les préférences
+        val intervals = SMBIntervals(
+            snack = preferences.get(IntKey.OApsAIMISnackinterval),
+            meal = preferences.get(IntKey.OApsAIMImealinterval),
+            bfast = preferences.get(IntKey.OApsAIMIBFinterval),
+            lunch = preferences.get(IntKey.OApsAIMILunchinterval),
+            dinner = preferences.get(IntKey.OApsAIMIDinnerinterval),
+            sleep = preferences.get(IntKey.OApsAIMISleepinterval),
+            hc = preferences.get(IntKey.OApsAIMIHCinterval),
+            highBG = preferences.get(IntKey.OApsAIMIHighBGinterval)
+        )
+
+        // Condition critique : si delta > 15, intervalle fixe à 1
         if (delta > 15f) {
+            reasonBuilder.append("Interval : 1 (delta > 15)")
             return 1
         }
-        // Par défaut, on part d'un intervalle de base (par exemple 5 minutes)
-        var interval = 5
 
-        // Si une des conditions d'intervalle est satisfaite, annuler l'intervalle (0 minute)
-        if (shouldApplyIntervalAdjustment(
-                intervalSnack, intervalMeal, intervalBF,
-                intervalLunch, intervalDinner, intervalSleep,
-                intervalHC, intervalHighBG
-            )) {
+        var interval = 5 // Intervalle de base
+
+        // Vérification des ajustements basés sur les intervalles configurés
+        if (shouldApplyIntervalAdjustment(intervals)) {
             interval = 0
-        }
-        // Sinon, si une condition de sécurité s'applique, forcer un intervalle de 10 minutes
-        else if (shouldApplySafetyAdjustment()) {
+        } else if (shouldApplySafetyAdjustment()) {
             interval = 10
-        }
-        // Sinon, si une condition temporelle (ex. heure inappropriée) s'applique, fixer l'intervalle à 10 minutes
-        else if (shouldApplyTimeAdjustment()) {
+        } else if (shouldApplyTimeAdjustment()) {
             interval = 10
         }
 
-        // Si une forte activité est détectée via les pas, l'intervalle devient 0 (on annule toute nouvelle administration)
+        // Ajustement basé sur l'activité physique
         if (shouldApplyStepAdjustment()) {
             interval = 0
         }
 
         // Ajustements supplémentaires :
-        // Si BG est en dessous de la cible (et donc en chute), augmenter l'intervalle (attendre plus longtemps)
         if (bg < targetBg) {
             interval = (interval * 2).coerceAtMost(20)
         }
-        // En mode honeymoon avec BG < 170 et delta faible, attendre plus longtemps
-        if (preferences.get(BooleanKey.OApsAIMIhoneymoon) && bg < 170 && delta < 5) {
+
+        val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
+        if (honeymoon && bg < 170 && delta < 5) {
             interval = (interval * 2).coerceAtMost(20)
         }
-        // Si c'est la nuit (par exemple à 23h) et que delta est faible et IOB bas, on réduit légèrement l'intervalle
+
         val currentHour = LocalTime.now().hour
         if (preferences.get(BooleanKey.OApsAIMInight) && currentHour == 23 && delta < 10 && iob < maxSMB) {
             interval = (interval * 0.8).toInt()
         }
+
         reasonBuilder.append("Interval : $interval")
         return interval
     }
 
-    private fun applySpecificAdjustments(smbToGive: Float): Float {
-        var result = smbToGive
-        val intervalSMBsnack = preferences.get(IntKey.OApsAIMISnackinterval)
-        val intervalSMBmeal = preferences.get(IntKey.OApsAIMImealinterval)
-        val intervalSMBbfast = preferences.get(IntKey.OApsAIMIBFinterval)
-        val intervalSMBlunch = preferences.get(IntKey.OApsAIMILunchinterval)
-        val intervalSMBdinner = preferences.get(IntKey.OApsAIMIDinnerinterval)
-        val intervalSMBsleep = preferences.get(IntKey.OApsAIMISleepinterval)
-        val intervalSMBhc = preferences.get(IntKey.OApsAIMIHCinterval)
-        val intervalSMBhighBG = preferences.get(IntKey.OApsAIMIHighBGinterval)
-        val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
-        val belowTargetAndDropping = bg < targetBg
-        val night = preferences.get(BooleanKey.OApsAIMInight)
-        val currentHour = LocalTime.now().hour
+    // Structure pour regrouper les intervalles
+    data class SMBIntervals(
+        val snack: Int,
+        val meal: Int,
+        val bfast: Int,
+        val lunch: Int,
+        val dinner: Int,
+        val sleep: Int,
+        val hc: Int,
+        val highBG: Int
+    )
 
-        when {
-            shouldApplyIntervalAdjustment(intervalSMBsnack, intervalSMBmeal, intervalSMBbfast, intervalSMBlunch, intervalSMBdinner, intervalSMBsleep, intervalSMBhc, intervalSMBhighBG) -> {
-                result = 0.0f
-            }
-            shouldApplySafetyAdjustment() -> {
-                result *= 0.75f
-                this.intervalsmb = 10
-            }
-            shouldApplyTimeAdjustment() -> {
-                result = 0.0f
-                this.intervalsmb = 10
-            }
-        }
-
-        if (shouldApplyStepAdjustment()) result = 0.0f
-        if (belowTargetAndDropping) result /= 2
-        if (honeymoon && bg < 170 && delta < 5) result /= 2
-        if (night && currentHour in 23..23 && delta < 10 && iob < maxSMB) result *= 0.8f
-        if (currentHour in 0..7 && delta < 10 && iob < maxSMB) result *= 0.8f // Ajout d'une réduction pendant la période de minuit à 5h du matin
-
-        return result
-    }
-
-
-    private fun shouldApplyIntervalAdjustment(
-        intervalSMBsnack: Int, intervalSMBmeal: Int, intervalSMBbfast: Int,
-        intervalSMBlunch: Int, intervalSMBdinner: Int, intervalSMBsleep: Int,
-        intervalSMBhc: Int, intervalSMBhighBG: Int
-    ): Boolean {
+    // Refacto des fonctions de vérification conditionnelles
+    private fun shouldApplyIntervalAdjustment(intervals: SMBIntervals): Boolean {
         val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
 
-        return (lastsmbtime < intervalSMBsnack && snackTime)
-            || (lastsmbtime < intervalSMBmeal && mealTime)
-            || (lastsmbtime < intervalSMBbfast && bfastTime)
-            || (lastsmbtime < intervalSMBlunch && lunchTime)
-            || (lastsmbtime < intervalSMBdinner && dinnerTime)
-            || (lastsmbtime < intervalSMBsleep && sleepTime)
-            || (lastsmbtime < intervalSMBhc && highCarbTime)
-            || (!honeymoon && lastsmbtime < intervalSMBhighBG && bg > 120)
-            || (honeymoon && lastsmbtime < intervalSMBhighBG && bg > 180)
+        return (lastsmbtime < intervals.snack && snackTime)
+            || (lastsmbtime < intervals.meal && mealTime)
+            || (lastsmbtime < intervals.bfast && bfastTime)
+            || (lastsmbtime < intervals.lunch && lunchTime)
+            || (lastsmbtime < intervals.dinner && dinnerTime)
+            || (lastsmbtime < intervals.sleep && sleepTime)
+            || (lastsmbtime < intervals.hc && highCarbTime)
+            || (!honeymoon && lastsmbtime < intervals.highBG && bg > 120)
+            || (honeymoon && lastsmbtime < intervals.highBG && bg > 180)
     }
-
 
     private fun shouldApplySafetyAdjustment(): Boolean {
         val safetysmb = recentSteps180Minutes > 1500 && bg < 120
@@ -1604,6 +1735,181 @@ fun appendCompactLog(
     private fun shouldApplyStepAdjustment(): Boolean {
         return recentSteps5Minutes > 100 && recentSteps30Minutes > 500 && lastsmbtime < 20
     }
+
+    // Fonction modifiée pour utiliser les nouvelles structures
+    private fun applySpecificAdjustments(smbAmount: Float): Float {
+        val intervals = SMBIntervals(
+            snack = preferences.get(IntKey.OApsAIMISnackinterval),
+            meal = preferences.get(IntKey.OApsAIMImealinterval),
+            bfast = preferences.get(IntKey.OApsAIMIBFinterval),
+            lunch = preferences.get(IntKey.OApsAIMILunchinterval),
+            dinner = preferences.get(IntKey.OApsAIMIDinnerinterval),
+            sleep = preferences.get(IntKey.OApsAIMISleepinterval),
+            hc = preferences.get(IntKey.OApsAIMIHCinterval),
+            highBG = preferences.get(IntKey.OApsAIMIHighBGinterval)
+        )
+
+        val currentHour = LocalTime.now().hour
+        val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
+
+        when {
+            shouldApplyIntervalAdjustment(intervals) -> return 0.0f
+            shouldApplySafetyAdjustment() -> {
+                this.intervalsmb = 10
+                return smbAmount / 2
+            }
+            shouldApplyTimeAdjustment() -> {
+                this.intervalsmb = 10
+                return 0.0f
+            }
+        }
+
+        if (shouldApplyStepAdjustment()) return 0.0f
+
+        val belowTargetAndDropping = bg < targetBg
+        if (belowTargetAndDropping) return smbAmount / 2
+
+        if (honeymoon && bg < 170 && delta < 5) return smbAmount / 2
+
+        if (preferences.get(BooleanKey.OApsAIMInight) && currentHour in 23..23 && delta < 10 && iob < maxSMB) {
+            return smbAmount * 0.8f
+        }
+
+        if (currentHour in 0..7 && delta < 10 && iob < maxSMB) {
+            return smbAmount * 0.8f
+        }
+
+        return smbAmount
+    }
+
+    // private fun calculateSMBInterval(): Int {
+    //     val reasonBuilder = StringBuilder()
+    //     // Récupération des intervalles configurés
+    //     val intervalSnack = preferences.get(IntKey.OApsAIMISnackinterval)
+    //     val intervalMeal = preferences.get(IntKey.OApsAIMImealinterval)
+    //     val intervalBF = preferences.get(IntKey.OApsAIMIBFinterval)
+    //     val intervalLunch = preferences.get(IntKey.OApsAIMILunchinterval)
+    //     val intervalDinner = preferences.get(IntKey.OApsAIMIDinnerinterval)
+    //     val intervalSleep = preferences.get(IntKey.OApsAIMISleepinterval)
+    //     val intervalHC = preferences.get(IntKey.OApsAIMIHCinterval)
+    //     val intervalHighBG = preferences.get(IntKey.OApsAIMIHighBGinterval)
+    //     if (delta > 15f) {
+    //         return 1
+    //     }
+    //     // Par défaut, on part d'un intervalle de base (par exemple 5 minutes)
+    //     var interval = 5
+    //
+    //     // Si une des conditions d'intervalle est satisfaite, annuler l'intervalle (0 minute)
+    //     if (shouldApplyIntervalAdjustment(
+    //             intervalSnack, intervalMeal, intervalBF,
+    //             intervalLunch, intervalDinner, intervalSleep,
+    //             intervalHC, intervalHighBG
+    //         )) {
+    //         interval = 0
+    //     }
+    //     // Sinon, si une condition de sécurité s'applique, forcer un intervalle de 10 minutes
+    //     else if (shouldApplySafetyAdjustment()) {
+    //         interval = 10
+    //     }
+    //     // Sinon, si une condition temporelle (ex. heure inappropriée) s'applique, fixer l'intervalle à 10 minutes
+    //     else if (shouldApplyTimeAdjustment()) {
+    //         interval = 10
+    //     }
+    //
+    //     // Si une forte activité est détectée via les pas, l'intervalle devient 0 (on annule toute nouvelle administration)
+    //     if (shouldApplyStepAdjustment()) {
+    //         interval = 0
+    //     }
+    //
+    //     // Ajustements supplémentaires :
+    //     // Si BG est en dessous de la cible (et donc en chute), augmenter l'intervalle (attendre plus longtemps)
+    //     if (bg < targetBg) {
+    //         interval = (interval * 2).coerceAtMost(20)
+    //     }
+    //     // En mode honeymoon avec BG < 170 et delta faible, attendre plus longtemps
+    //     if (preferences.get(BooleanKey.OApsAIMIhoneymoon) && bg < 170 && delta < 5) {
+    //         interval = (interval * 2).coerceAtMost(20)
+    //     }
+    //     // Si c'est la nuit (par exemple à 23h) et que delta est faible et IOB bas, on réduit légèrement l'intervalle
+    //     val currentHour = LocalTime.now().hour
+    //     if (preferences.get(BooleanKey.OApsAIMInight) && currentHour == 23 && delta < 10 && iob < maxSMB) {
+    //         interval = (interval * 0.8).toInt()
+    //     }
+    //     reasonBuilder.append("Interval : $interval")
+    //     return interval
+    // }
+    //
+    // private fun applySpecificAdjustments(smbToGive: Float): Float {
+    //     var result = smbToGive
+    //     val intervalSMBsnack = preferences.get(IntKey.OApsAIMISnackinterval)
+    //     val intervalSMBmeal = preferences.get(IntKey.OApsAIMImealinterval)
+    //     val intervalSMBbfast = preferences.get(IntKey.OApsAIMIBFinterval)
+    //     val intervalSMBlunch = preferences.get(IntKey.OApsAIMILunchinterval)
+    //     val intervalSMBdinner = preferences.get(IntKey.OApsAIMIDinnerinterval)
+    //     val intervalSMBsleep = preferences.get(IntKey.OApsAIMISleepinterval)
+    //     val intervalSMBhc = preferences.get(IntKey.OApsAIMIHCinterval)
+    //     val intervalSMBhighBG = preferences.get(IntKey.OApsAIMIHighBGinterval)
+    //     val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
+    //     val belowTargetAndDropping = bg < targetBg
+    //     val night = preferences.get(BooleanKey.OApsAIMInight)
+    //     val currentHour = LocalTime.now().hour
+    //
+    //     when {
+    //         shouldApplyIntervalAdjustment(intervalSMBsnack, intervalSMBmeal, intervalSMBbfast, intervalSMBlunch, intervalSMBdinner, intervalSMBsleep, intervalSMBhc, intervalSMBhighBG) -> {
+    //             result = 0.0f
+    //         }
+    //         shouldApplySafetyAdjustment() -> {
+    //             result *= 0.75f
+    //             this.intervalsmb = 10
+    //         }
+    //         shouldApplyTimeAdjustment() -> {
+    //             result = 0.0f
+    //             this.intervalsmb = 10
+    //         }
+    //     }
+    //
+    //     if (shouldApplyStepAdjustment()) result = 0.0f
+    //     if (belowTargetAndDropping) result /= 2
+    //     if (honeymoon && bg < 170 && delta < 5) result /= 2
+    //     if (night && currentHour in 23..23 && delta < 10 && iob < maxSMB) result *= 0.8f
+    //     if (currentHour in 0..7 && delta < 10 && iob < maxSMB) result *= 0.8f // Ajout d'une réduction pendant la période de minuit à 5h du matin
+    //
+    //     return result
+    // }
+    //
+    //
+    // private fun shouldApplyIntervalAdjustment(
+    //     intervalSMBsnack: Int, intervalSMBmeal: Int, intervalSMBbfast: Int,
+    //     intervalSMBlunch: Int, intervalSMBdinner: Int, intervalSMBsleep: Int,
+    //     intervalSMBhc: Int, intervalSMBhighBG: Int
+    // ): Boolean {
+    //     val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
+    //
+    //     return (lastsmbtime < intervalSMBsnack && snackTime)
+    //         || (lastsmbtime < intervalSMBmeal && mealTime)
+    //         || (lastsmbtime < intervalSMBbfast && bfastTime)
+    //         || (lastsmbtime < intervalSMBlunch && lunchTime)
+    //         || (lastsmbtime < intervalSMBdinner && dinnerTime)
+    //         || (lastsmbtime < intervalSMBsleep && sleepTime)
+    //         || (lastsmbtime < intervalSMBhc && highCarbTime)
+    //         || (!honeymoon && lastsmbtime < intervalSMBhighBG && bg > 120)
+    //         || (honeymoon && lastsmbtime < intervalSMBhighBG && bg > 180)
+    // }
+    //
+    //
+    // private fun shouldApplySafetyAdjustment(): Boolean {
+    //     val safetysmb = recentSteps180Minutes > 1500 && bg < 120
+    //     return (safetysmb || lowCarbTime) && lastsmbtime >= 15
+    // }
+    //
+    // private fun shouldApplyTimeAdjustment(): Boolean {
+    //     val safetysmb = recentSteps180Minutes > 1500 && bg < 120
+    //     return (safetysmb || lowCarbTime) && lastsmbtime < 15
+    // }
+    //
+    // private fun shouldApplyStepAdjustment(): Boolean {
+    //     return recentSteps5Minutes > 100 && recentSteps30Minutes > 500 && lastsmbtime < 20
+    // }
     private fun finalizeSmbToGive(smbToGive: Float): Float {
         var result = smbToGive
         // Assurez-vous que smbToGive n'est pas négatif
@@ -1616,46 +1922,216 @@ fun appendCompactLog(
         return result
     }
     private fun calculateSMBFromModel(): Float {
-        val selectedModelFile: File?
-        val modelInputs: FloatArray
+        // Définir les deux modèles possibles avec leurs fichiers respectifs
+        val modelFiles = listOf(
+            ModelFile("main", modelFile),
+            ModelFile("UAM", modelFileUAM)
+        )
 
-        when {
-            cob > 0 && lastCarbAgeMin < 240 && modelFile.exists() -> {
-                selectedModelFile = modelFile
-                modelInputs = floatArrayOf(
-                    hourOfDay.toFloat(), weekend.toFloat(),
-                    bg.toFloat(), targetBg, iob, cob, lastCarbAgeMin.toFloat(), futureCarbs, delta, shortAvgDelta, longAvgDelta
-                )
-            }
-
-            modelFileUAM.exists()   -> {
-                selectedModelFile = modelFileUAM
-                modelInputs = floatArrayOf(
-                    hourOfDay.toFloat(), weekend.toFloat(),
-                    bg.toFloat(), targetBg, iob, delta, shortAvgDelta, longAvgDelta,
-                    tdd7DaysPerHour, tdd2DaysPerHour, tddPerHour, tdd24HrsPerHour,
-                    recentSteps5Minutes.toFloat(),recentSteps10Minutes.toFloat(),recentSteps15Minutes.toFloat(),recentSteps30Minutes.toFloat(),recentSteps60Minutes.toFloat(),recentSteps180Minutes.toFloat()
-                )
-            }
-
-            else                 -> {
-                return 0.0F
-            }
+        // Sélectionner le modèle à utiliser selon la logique existante
+        val selectedModel = when {
+            cob > 0 && lastCarbAgeMin < 240 && modelFile.exists() -> modelFiles[0] // Modèle principal
+            modelFileUAM.exists() -> modelFiles[1] // Modèle UAM
+            else -> return 0.0F // Aucun modèle disponible
         }
 
-        val interpreter = Interpreter(selectedModelFile)
+        // Préparer les données d'entrée selon le modèle sélectionné
+        val modelInputs = when (selectedModel.name) {
+            "main" -> floatArrayOf(
+                hourOfDay.toFloat(), weekend.toFloat(),
+                bg.toFloat(), targetBg, iob, cob, lastCarbAgeMin.toFloat(), futureCarbs, delta, shortAvgDelta, longAvgDelta
+            )
+            "UAM" -> floatArrayOf(
+                hourOfDay.toFloat(), weekend.toFloat(),
+                bg.toFloat(), targetBg, iob, delta, shortAvgDelta, longAvgDelta,
+                tdd7DaysPerHour, tdd2DaysPerHour, tddPerHour, tdd24HrsPerHour,
+                recentSteps5Minutes.toFloat(), recentSteps10Minutes.toFloat(), recentSteps15Minutes.toFloat(),
+                recentSteps30Minutes.toFloat(), recentSteps60Minutes.toFloat(), recentSteps180Minutes.toFloat()
+            )
+            else -> throw IllegalArgumentException("Modèle inconnu: ${selectedModel.name}")
+        }
+
+        // Utiliser le cache pour éviter les calculs redondants
+        val cacheKey = generateCacheKey(selectedModel.name, modelInputs)
+        val cachedResult = cache.getIfPresent(cacheKey)
+
+        if (cachedResult != null) {
+            return cachedResult
+        }
+
+        // Exécuter le modèle avec la logique existante
+        val interpreter = Interpreter(selectedModel.file)
         val output = arrayOf(floatArrayOf(0.0F))
         interpreter.run(modelInputs, output)
         interpreter.close()
+
+        // Traiter le résultat comme dans l'original
         var smbToGive = output[0][0].toString().replace(',', '.').toDouble()
 
         val formatter = DecimalFormat("#.####", DecimalFormatSymbols(Locale.US))
         smbToGive = formatter.format(smbToGive).toDouble()
 
-        return smbToGive.toFloat()
+        val finalResult = smbToGive.toFloat()
+
+        // Mettre en cache le résultat pour les appels futurs avec les mêmes paramètres
+        cache.put(cacheKey, finalResult)
+
+        return finalResult
     }
 
-private fun neuralnetwork5(
+    // Classe pour encapsuler les fichiers de modèle
+    private data class ModelFile(val name: String, val file: File)
+
+    // Générer une clé unique pour le cache basée sur le nom du modèle et les paramètres
+    private fun generateCacheKey(modelName: String, inputs: FloatArray): String {
+        return "${modelName}_${inputs.joinToString("_")}"
+    }
+
+    // Cache global pour stocker les résultats (peut être remplacé par un cache plus sophistiqué)
+    private val cache = CacheBuilder.newBuilder()
+        .maximumSize(1000) // Limiter le nombre de résultats mis en cache
+        .expireAfterWrite(30, TimeUnit.MINUTES) // Expire après 30 minutes
+        .build<String, Float>()
+
+    // private fun calculateSMBFromModel(): Float {
+    //     val selectedModelFile: File?
+    //     val modelInputs: FloatArray
+    //
+    //     when {
+    //         cob > 0 && lastCarbAgeMin < 240 && modelFile.exists() -> {
+    //             selectedModelFile = modelFile
+    //             modelInputs = floatArrayOf(
+    //                 hourOfDay.toFloat(), weekend.toFloat(),
+    //                 bg.toFloat(), targetBg, iob, cob, lastCarbAgeMin.toFloat(), futureCarbs, delta, shortAvgDelta, longAvgDelta
+    //             )
+    //         }
+    //
+    //         modelFileUAM.exists()   -> {
+    //             selectedModelFile = modelFileUAM
+    //             modelInputs = floatArrayOf(
+    //                 hourOfDay.toFloat(), weekend.toFloat(),
+    //                 bg.toFloat(), targetBg, iob, delta, shortAvgDelta, longAvgDelta,
+    //                 tdd7DaysPerHour, tdd2DaysPerHour, tddPerHour, tdd24HrsPerHour,
+    //                 recentSteps5Minutes.toFloat(),recentSteps10Minutes.toFloat(),recentSteps15Minutes.toFloat(),recentSteps30Minutes.toFloat(),recentSteps60Minutes.toFloat(),recentSteps180Minutes.toFloat()
+    //             )
+    //         }
+    //
+    //         else                 -> {
+    //             return 0.0F
+    //         }
+    //     }
+    //
+    //     val interpreter = Interpreter(selectedModelFile)
+    //     val output = arrayOf(floatArrayOf(0.0F))
+    //     interpreter.run(modelInputs, output)
+    //     interpreter.close()
+    //     var smbToGive = output[0][0].toString().replace(',', '.').toDouble()
+    //
+    //     val formatter = DecimalFormat("#.####", DecimalFormatSymbols(Locale.US))
+    //     smbToGive = formatter.format(smbToGive).toDouble()
+    //
+    //     return smbToGive.toFloat()
+    // }
+    /**
+     * Calcul du SMB en utilisant le modèle mis en cache
+     */
+    // private fun calculateSMBFromModel(): Float {
+    //     // Utilisation du modèle mis en cache pour éviter les rechargements fréquents
+    //     val interpreter = cachedModel
+    //
+    //     // Sélection du modèle et des paramètres selon les conditions
+    //     val (selectedModelFile, inputValues) = selectModelAndInputs()
+    //
+    //     // Si aucun modèle n'est disponible, retourner 0
+    //     if (selectedModelFile == null || inputValues.isEmpty()) {
+    //         return 0.0F
+    //     }
+    //
+    //     try {
+    //         // Création du tableau de sortie
+    //         val output = floatArrayOf(0.0F)
+    //
+    //         // Exécution du modèle avec les paramètres sélectionnés
+    //         interpreter.run(inputValues, arrayOf(output))
+    //
+    //         // Récupération de la valeur calculée
+    //         val smbToGive = output[0]
+    //
+    //         // Validation des valeurs sensibles (vérification NaN, Infini, négatif)
+    //         return when {
+    //             smbToGive.isNaN() || smbToGive.isInfinite() -> 0.0F
+    //             smbToGive < 0 -> 0.0F // Insuline négative non valide
+    //             else -> {
+    //                 // Formatage avec précision contrôlée, éviter les conversions inutiles
+    //                 smbToGive
+    //             }
+    //         }
+    //     } catch (e: Exception) {
+    //         // Gestion d'erreur robuste en cas de problème d'exécution du modèle
+    //         e.printStackTrace()
+    //         return 0.0F
+    //     }
+    // }
+    //
+    // /**
+    //  * Sélection du modèle et des paramètres d'entrée selon les conditions métier
+    //  */
+    // private fun selectModelAndInputs(): Pair<File?, FloatArray> {
+    //     return when {
+    //         cob > 0 && lastCarbAgeMin < 240 && modelFile.exists() -> {
+    //             val inputs = floatArrayOf(
+    //                 hourOfDay.toFloat(), weekend.toFloat(),
+    //                 bg.toFloat(), targetBg, iob, cob, lastCarbAgeMin.toFloat(),
+    //                 futureCarbs, delta, shortAvgDelta, longAvgDelta
+    //             )
+    //             modelFile to inputs
+    //         }
+    //
+    //         modelFileUAM.exists() -> {
+    //             val inputs = floatArrayOf(
+    //                 hourOfDay.toFloat(), weekend.toFloat(),
+    //                 bg.toFloat(), targetBg, iob, delta, shortAvgDelta, longAvgDelta,
+    //                 tdd7DaysPerHour, tdd2DaysPerHour, tddPerHour, tdd24HrsPerHour,
+    //                 recentSteps5Minutes.toFloat(), recentSteps10Minutes.toFloat(),
+    //                 recentSteps15Minutes.toFloat(), recentSteps30Minutes.toFloat(),
+    //                 recentSteps60Minutes.toFloat(), recentSteps180Minutes.toFloat()
+    //             )
+    //             modelFileUAM to inputs
+    //         }
+    //
+    //         else -> null to floatArrayOf() // Aucun modèle disponible
+    //     }
+    // }
+    //
+    // /**
+    //  * Initialisation du modèle TensorFlow Lite avec lazy loading pour éviter les rechargements
+    //  */
+    // private val cachedModel: Interpreter by lazy {
+    //     try {
+    //         val model = loadModelFile(modelFileUAM)
+    //         val options = Interpreter.Options()
+    //         Interpreter(model, options)
+    //     } catch (e: Exception) {
+    //         e.printStackTrace()
+    //         throw RuntimeException("Impossible de charger le modèle TensorFlow Lite", e)
+    //     }
+    // }
+    //
+    // private fun loadModelFile(file: File): ByteBuffer {
+    //     return try {
+    //         val inputStream = FileInputStream(file)
+    //         val fileDescriptor = inputStream.fd
+    //         val startOffset = 0L
+    //         val declaredLength = file.length()
+    //         FileChannel.open(Paths.get(file.absolutePath), StandardOpenOption.READ)
+    //             .map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
+    //     } catch (e: Exception) {
+    //         throw RuntimeException("Erreur lors du chargement du fichier modèle", e)
+    //     }
+    // }
+
+
+    private fun neuralnetwork5(
     delta: Float,
     shortAvgDelta: Float,
     longAvgDelta: Float,
