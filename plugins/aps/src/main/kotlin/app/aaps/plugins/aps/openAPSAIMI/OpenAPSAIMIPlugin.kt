@@ -79,8 +79,7 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.floor
-import kotlin.math.ln
-import kotlin.math.min
+import app.aaps.plugins.aps.openAPSAIMI.AimiModelHandler
 
 @Singleton
 open class OpenAPSAIMIPlugin  @Inject constructor(
@@ -120,8 +119,12 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
     aapsLogger, rh
 ), APS, PluginConstraints {
 
+
+
     override fun onStart() {
         super.onStart()
+        AimiModelHandler.clearCache()
+
         var count = 0
         val apsResults = persistenceLayer.getApsResults(dateUtil.now() - T.days(1).msecs(), dateUtil.now())
         apsResults.forEach {
@@ -135,6 +138,10 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         aapsLogger.debug(LTag.APS, "Loaded $count variable sensitivity values from database")
     }
 
+    override fun onStop() {
+        super.onStop()
+        AimiModelHandler.closeInterpreters()
+    }
     // last values
     override var lastAPSRun: Long = 0
     override val algorithm = APSResult.Algorithm.AIMI
