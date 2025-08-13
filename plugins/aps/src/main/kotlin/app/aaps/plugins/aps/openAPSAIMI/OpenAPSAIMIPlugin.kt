@@ -79,7 +79,7 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.floor
-import app.aaps.plugins.aps.openAPSAIMI.AimiModelHandler
+//import app.aaps.plugins.aps.openAPSAIMI.AimiModelHandler
 
 @Singleton
 open class OpenAPSAIMIPlugin  @Inject constructor(
@@ -123,7 +123,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
 
     override fun onStart() {
         super.onStart()
-        AimiModelHandler.clearCache()
+        AimiUamHandler.clearCache()
 
         var count = 0
         val apsResults = persistenceLayer.getApsResults(dateUtil.now() - T.days(1).msecs(), dateUtil.now())
@@ -140,7 +140,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
 
     override fun onStop() {
         super.onStop()
-        AimiModelHandler.closeInterpreters()
+        AimiUamHandler.close()
     }
     // last values
     override var lastAPSRun: Long = 0

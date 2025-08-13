@@ -17,188 +17,187 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.max
 
 /**
- * Gestion centralisée des modèles TFLite AIMI (main & UAM).
- * - Interpréteurs persistants (lazy, thread-safe)
- * - Cache résultat (clé SHA-256 stable)
- * - Nettoyage des features (NaN/Inf -> 0)
- * - Fermeture propre via closeInterpreters()
+ * Handler UAM-only :
+ *  - 1 seul modèle : Documents/AAPS/ml/modelUAM.tflite
+ *  - Lazy init de l'Interpreter (persistant)
+ *  - Cache résultat (clé SHA-256 des features)
+ *  - Sanitize des entrées (NaN/Inf -> 0)
+ *  - Logs détaillés dans rT.reason (optionnels) + Logcat
+ *
+ * Utilisation :
+ *   val smb = AimiUamHandler.predictSmbUam(features, rT.reason).coerceAtLeast(0f)
+ *   // en lifecycle plugin : onStart -> clearCache ; onStop -> close()
  */
-object AimiModelHandler {
+object AimiUamHandler {
+    private const val TAG = "AIMI-UAM"
 
-    private const val TAG = "AIMI-Model"
-
-    // --- Chemins modèles (même logique que dans ton code actuel) ---
+    // Emplacement standard du modèle
     private val externalDir = File(Environment.getExternalStorageDirectory().absolutePath + "/Documents/AAPS")
-    private val modelFile = File(externalDir, "ml/model.tflite")
-    private val modelFileUAM = File(externalDir, "ml/modelUAM.tflite")
+    private val modelUamFile = File(externalDir, "ml/modelUAM.tflite")
 
-    @Volatile private var mainModelFile: File? = defaultMainModelFile()
-    @Volatile private var uamModelFile: File?  = defaultUamModelFile()
+    // Interpreter TFLite (lazy/persistant)
+    @Volatile private var interpreter: Interpreter? = null
+    private val lock = Any()
 
-    // --- Interpréteurs TFLite (lazy/persistants) ---
-    @Volatile private var interpreterMeal: Interpreter? = null
-    @Volatile private var interpreterUAM: Interpreter?  = null
-
-    // --- Locks pour sécurité thread ---
-    private val lockMeal = Any()
-    private val lockUam  = Any()
-
-    // --- Cache SMB ---
+    // Cache des prédictions
     private val smbCache: Cache<String, Float> = CacheBuilder.newBuilder()
         .maximumSize(1000)
         .expireAfterWrite(30, TimeUnit.MINUTES)
         .build()
 
-    // ==================== API publique ====================
+    // État de santé du modèle
+    @Volatile private var lastModelPath: String? = null
+    @Volatile private var lastLoadOk: Boolean = false
+    @Volatile private var lastLoadError: String? = null
+    @Volatile private var lastLoadTime: Long = 0L
 
-    /** Optionnel: reconfigurer explicitement (sinon utilise les defaults ci-dessus). */
-    fun configure(main: File?, uam: File?) {
-        mainModelFile = main ?: defaultMainModelFile()
-        uamModelFile  = uam  ?: defaultUamModelFile()
-        closeInterpreters()
+    // Pour compat avec code existant qui attend un "getInstance()"
+    fun getInstance(): AimiUamHandler = this
+
+    /** Ligne de statut prête à logguer dans rT.reason */
+    fun statusLine(): String {
+        val path = lastModelPath ?: modelUamFile.absolutePath
+        val flag = if (lastLoadOk) "✅" else "❌"
+        val size = if (modelUamFile.exists()) "${modelUamFile.length()} B" else "missing"
+        return "📦 UAM model: $flag ($path, $size)"
+    }
+
+    /** Ajoute la ligne de statut dans un StringBuilder (ex: rT.reason) */
+    fun appendStatus(to: StringBuilder?) {
+        to?.appendLine(statusLine())
+    }
+
+    /** Vide le cache des prédictions. À appeler par ex. dans onStart(). */
+    fun clearCache() {
         smbCache.invalidateAll()
-        Log.i(TAG, "Configured model files: main=${mainModelFile?.absolutePath}, uam=${uamModelFile?.absolutePath}")
+        Log.i(TAG, "SMB cache cleared")
+    }
+
+    /** Ferme l'interpréteur. À appeler dans onStop() du plugin. */
+    fun close() {
+        try {
+            synchronized(lock) {
+                interpreter?.close()
+                interpreter = null
+            }
+            Log.i(TAG, "Interpreter closed")
+        } catch (e: Throwable) {
+            Log.w(TAG, "Error closing interpreter: ${e.message}")
+        }
+    }
+
+    /** Force un autre fichier modèle (test / debug), puis purge et re-lazy-init au prochain run. */
+    fun configureUamModel(file: File?) {
+        synchronized(lock) {
+            close()
+            if (file != null) {
+                if (file.exists()) {
+                    modelUamFile.parentFile?.mkdirs()
+                    // on ne copie pas : on pointe directement
+                    // (si tu veux copier dans le dossier AAPS, ajoute une copie ici)
+                }
+                lastModelPath = file.absolutePath
+            } else {
+                lastModelPath = modelUamFile.absolutePath
+            }
+            lastLoadOk = false
+            lastLoadError = null
+            clearCache()
+        }
     }
 
     /**
-     * Prédit un SMB à partir des features construites par l'appelant.
-     * @param cob             COB, sert aussi à choisir le modèle
-     * @param lastCarbAgeMin  âge des derniers glucides (min), sert aussi à choisir le modèle
-     * @param featuresBuilder lambda qui reçoit "main" ou "UAM" et retourne le FloatArray d'inputs
+     * Exécute le modèle UAM sur les features données.
+     * @param features FloatArray prêt (taille/ordre UAM)
+     * @param reason   (optionnel) StringBuilder pour logs visibles (ex: rT.reason)
+     * @return SMB brut (>=0 recommandé de faire .coerceAtLeast(0f) côté appelant)
      */
-    fun predictSmb(
-        cob: Double,
-        lastCarbAgeMin: Int,
-        featuresBuilder: (modelName: String) -> FloatArray
+    fun predictSmbUam(
+        features: FloatArray,
+        reason: StringBuilder? = null
     ): Float {
-        val (modelName, interpreter) = selectModel(cob, lastCarbAgeMin)
-        if (interpreter == null) {
-            Log.w(TAG, "No model available (name=$modelName). Returning 0.")
-            return 0f
+        appendStatus(reason) // affiche d'entrée l'état du modèle
+
+        val (inputs, replaced) = sanitizeWithCount(features)
+        if (replaced > 0) {
+            reason?.appendLine("🧹 Sanitize: $replaced entrées non finies -> 0")
         }
 
-        val rawInputs = try {
-            featuresBuilder(modelName)
-        } catch (e: Throwable) {
-            Log.e(TAG, "featuresBuilder failed: ${e.message}")
-            return 0f
-        }
-        if (rawInputs.isEmpty()) return 0f
-
-        val inputs = sanitize(rawInputs)
-        val key = cacheKey(modelName, inputs)
-
+        val key = cacheKey("UAM", inputs)
         smbCache.getIfPresent(key)?.let { cached ->
             if (isUsable(cached)) {
-                Log.d(TAG, "SMB cache HIT ($modelName) -> $cached")
+                reason?.appendLine("⚡ Cache HIT → ${"%.4f".format(cached)} U")
                 return cached
             } else {
-                Log.w(TAG, "SMB cache HIT but unusable ($modelName) -> $cached; recompute")
+                reason?.appendLine("⚠️ Cache HIT non exploitable (NaN/Inf), recalcul…")
             }
         }
 
+        val itp = ensureInterpreter(reason) ?: run {
+            reason?.appendLine("❌ Modèle UAM indisponible → SMB=0")
+            return 0f
+        }
+
         val raw = try {
-            runModel(interpreter, inputs)
+            runModel(itp, inputs)
         } catch (e: Throwable) {
-            Log.e(TAG, "TFLite run failed ($modelName): ${e.message}")
+            reason?.appendLine("💥 TFLite run échoué: ${e.message} → SMB=0")
+            Log.e(TAG, "TFLite run failed: ${e.message}")
             return 0f
         }
 
         val result = if (isUsable(raw)) round4(raw) else 0f
         if (isUsable(result)) {
             smbCache.put(key, result)
-            Log.d(TAG, "SMB cache PUT ($modelName) -> $result")
+            reason?.appendLine("✅ UAM exécuté → ${"%.4f".format(result)} U")
         } else {
-            Log.w(TAG, "Unusable SMB result ($modelName): $raw (stored? no)")
+            reason?.appendLine("⚠️ Résultat non exploitable (raw=$raw) → SMB=0")
         }
         return max(0f, result)
     }
 
-    /** À appeler sur stop/disable du plugin ou changement de prefs AIMI. */
-    @Synchronized
-    fun closeInterpreters() {
-        try {
-            synchronized(lockMeal) {
-                interpreterMeal?.close()
-                interpreterMeal = null
+    // ────────────────────────── Privé : init & exécution ──────────────────────────
+
+    private fun ensureInterpreter(reason: StringBuilder? = null): Interpreter? {
+        interpreter?.let { return it }
+        synchronized(lock) {
+            interpreter?.let { return it }
+
+            val file = File(lastModelPath ?: modelUamFile.absolutePath)
+            if (!file.exists()) {
+                lastLoadOk = false
+                lastLoadError = "file not found"
+                reason?.appendLine("❌ Fichier modèle introuvable : ${file.absolutePath}")
+                Log.e(TAG, "Model file not found: ${file.absolutePath}")
+                return null
             }
-            synchronized(lockUam) {
-                interpreterUAM?.close()
-                interpreterUAM = null
-            }
-            Log.i(TAG, "Interpreters closed")
-        } catch (e: Throwable) {
-            Log.w(TAG, "Error closing interpreters: ${e.message}")
-        }
-    }
-
-    fun clearCache() {
-        smbCache.invalidateAll()
-        Log.i(TAG, "SMB cache cleared")
-    }
-
-    // ==================== Sélection du modèle ====================
-
-    private fun selectModel(cob: Double, lastCarbAgeMin: Int): Pair<String, Interpreter?> {
-        val main = mainModelFile
-        val uam  = uamModelFile
-
-        // Modèle "main" si COB > 0 et repas récent
-        if (cob > 0.0 && lastCarbAgeMin < 240 && main?.exists() == true) {
-            return "main" to getMealInterpreter(main)
-        }
-
-        // Sinon UAM si dispo
-        if (uam?.exists() == true) {
-            return "UAM" to getUamInterpreter(uam)
-        }
-
-        return "none" to null
-    }
-
-    // ==================== Interpréteurs (lazy) ====================
-
-    private fun getMealInterpreter(file: File): Interpreter? {
-        interpreterMeal?.let { return it }
-        synchronized(lockMeal) {
-            interpreterMeal?.let { return it }
             return try {
                 val mapped = loadModel(file)
-                Interpreter(mapped).also { interpreterMeal = it }
+                Interpreter(mapped).also {
+                    interpreter = it
+                    lastLoadOk = true
+                    lastLoadError = null
+                    lastLoadTime = System.currentTimeMillis()
+                    lastModelPath = file.absolutePath
+                    reason?.appendLine("📦 Chargé ✓ : ${file.name} (${file.length()} B)")
+                    Log.i(TAG, "Interpreter initialized from ${file.absolutePath} (${file.length()} bytes)")
+                }
             } catch (e: Throwable) {
-                Log.e(TAG, "Failed to init MEAL model: ${e.message}")
-                null
-            }
-        }
-    }
-
-    private fun getUamInterpreter(file: File): Interpreter? {
-        interpreterUAM?.let { return it }
-        synchronized(lockUam) {
-            interpreterUAM?.let { return it }
-            return try {
-                val mapped = loadModel(file)
-                Interpreter(mapped).also { interpreterUAM = it }
-            } catch (e: Throwable) {
+                lastLoadOk = false
+                lastLoadError = e.message
+                reason?.appendLine("❌ Échec chargement modèle: ${e.message}")
                 Log.e(TAG, "Failed to init UAM model: ${e.message}")
                 null
             }
         }
     }
 
-    // ==================== Exécution modèle ====================
-
     private fun runModel(interpreter: Interpreter, features: FloatArray): Float {
-        val input = arrayOf(features)                 // 1 x N
-        val out = Array(1) { FloatArray(1) }         // 1 x 1
+        val input = arrayOf(features)         // 1 x N
+        val out = Array(1) { FloatArray(1) }  // 1 x 1
         interpreter.run(input, out)
         return out[0][0]
     }
-
-    // ==================== Utilitaires ====================
-
-    private fun defaultMainModelFile(): File? = if (modelFile.exists()) modelFile else null
-    private fun defaultUamModelFile(): File?  = if (modelFileUAM.exists()) modelFileUAM else null
 
     private fun loadModel(file: File): MappedByteBuffer {
         FileInputStream(file).use { fis ->
@@ -207,13 +206,20 @@ object AimiModelHandler {
         }
     }
 
-    private fun sanitize(values: FloatArray): FloatArray {
+    // ────────────────────────── Utilitaires ──────────────────────────
+
+    private fun sanitizeWithCount(values: FloatArray): Pair<FloatArray, Int> {
+        var replaced = 0
         val out = FloatArray(values.size)
         for (i in values.indices) {
             val v = values[i]
-            out[i] = if (v.isFinite() && !v.isNaN()) v else 0f
+            val ok = v.isFinite() && !v.isNaN()
+            out[i] = if (ok) v else {
+                replaced += 1
+                0f
+            }
         }
-        return out
+        return out to replaced
     }
 
     private fun isUsable(v: Float): Boolean = v.isFinite() && !v.isNaN()
@@ -228,8 +234,4 @@ object AimiModelHandler {
         md.update(bb.array())
         return modelName + "_" + md.digest().joinToString("") { "%02x".format(it) }
     }
-
-    // Extensions pratiques (si besoin côté appelant)
-    fun Double.cleanF(): Float = if (this.isFinite()) this.toFloat() else 0f
-    fun Float.cleanF(): Float  = if (this.isFinite()) this else 0f
 }
