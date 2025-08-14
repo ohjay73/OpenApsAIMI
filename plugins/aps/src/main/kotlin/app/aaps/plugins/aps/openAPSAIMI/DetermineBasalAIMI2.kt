@@ -48,7 +48,6 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
-import app.aaps.plugins.aps.R
 import android.content.Context
 import kotlin.math.exp
 
@@ -67,6 +66,21 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     @Inject lateinit var profileFunction: ProfileFunction
     @Inject lateinit var iobCobCalculator: IobCobCalculator
     @Inject lateinit var activePlugin: ActivePlugin
+
+    private val EPS_FALL = 0.3      // mg/dL/5min : seuil de baisse
+    private val EPS_ACC  = 0.2      // mg/dL/5min : seuil d'écart short vs long
+    // — Hypo guard —
+    private val HYPO_MARGIN_BASE = 0.0     // mg/dL
+    private val HYPO_MARGIN_FALL  = 5.0    // delta <= -1.5 mg/dL/5min
+    private val HYPO_MARGIN_FAST  = 10.0   // delta <= -3.0 mg/dL/5min
+
+    // — Hystérèse anti-pompage —
+    private val HYPO_RELEASE_MARGIN   = 5.0      // mg/dL au-dessus du seuil
+    private val HYPO_RELEASE_HOLD_MIN = 5        // minutes à rester > seuil+margin
+
+    // État interne d’hystérèse
+    private var lastHypoBlockAt: Long = 0L
+    private var hypoClearCandidateSince: Long? = null
 
     private val consoleError = mutableListOf<String>()
     private val consoleLog = mutableListOf<String>()
@@ -278,10 +292,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
     // -- Calcul de la chute de BG par heure sur une fenêtre donnée (en minutes) --
     fun calculateDropPerHour(bgHistory: List<Float>, windowMinutes: Float): Float {
-        if (bgHistory.isEmpty()) return 0f
-        val drop = bgHistory.last() - bgHistory.first()  // positif si baisse
+        if (bgHistory.size < 2) return 0f
+        val first = bgHistory.first()  // plus ancien
+        val last  = bgHistory.last()   // plus récent
+        val drop  = (first - last)     // positif si baisse
         return drop * (60f / windowMinutes)
     }
+
     /**
      * Ajuste la dose d'insuline (SMB) et décide éventuellement de stopper la basale.
      *
@@ -787,11 +804,11 @@ fun appendCompactLog(
     ): RT {
         // ────────────────────────────────────────────────────────────────
         // 0️⃣ LGS / Hypo kill-switch (avant tout)
-        val lgs = profile.lgsThreshold?.toDouble()
-        val hypoGuard = maxOf(lgs!!, 80.0)
+        val lgsPref = profile.lgsThreshold
+        val hypoGuard = computeHypoThreshold(minBg = profile.min_bg, lgsThreshold = lgsPref)
         val bgNow = bg
         if (bgNow <= hypoGuard) {
-            rT.reason.append("🛑 LGS: BG=${"%.0f".format(bgNow)} ≤ ${"%.0f".format(hypoGuard)} mg/dL → TBR 0U/h (30m)\n")
+            rT.reason.append("🛑 LGS: BG=${"%.0f".format(bgNow)} ≤ ${"%.0f".format(hypoGuard)} → TBR 0U/h (30m)\n")
             rT.duration = maxOf(duration, 30)
             rT.rate = 0.0
             return rT
@@ -1005,11 +1022,12 @@ fun appendCompactLog(
     private fun applySafetyPrecautions(
         mealData: MealData,
         smbToGiveParam: Float,
+        hypoThreshold: Double,
         reason: StringBuilder? = null
     ): Float {
         var smbToGive = smbToGiveParam
 
-        val (isCrit, critMsg) = isCriticalSafetyCondition(mealData)
+        val (isCrit, critMsg) = isCriticalSafetyCondition(mealData, hypoThreshold)
         if (isCrit) {
             reason?.appendLine("🛑 $critMsg → SMB=0")
             return 0f
@@ -1040,7 +1058,7 @@ fun appendCompactLog(
         if (smbToGive != beforeLimits) {
             reason?.appendLine("🧱 Limites: ${"%.2f".format(beforeLimits)} → ${"%.2f".format(smbToGive)} U")
         }
-
+        smbToGive = smbToGive.coerceAtLeast(0f)
         return smbToGive
     }
     private fun applyMaxLimits(smbToGive: Float): Float {
@@ -1080,7 +1098,6 @@ fun appendCompactLog(
         val pbolusA: Double = preferences.get(DoubleKey.OApsAIMIautodrivePrebolus)
         val autodriveDelta: Float = preferences.get(DoubleKey.OApsAIMIcombinedDelta).toFloat()
         val autodriveMinDeviation: Double = preferences.get(DoubleKey.OApsAIMIAutodriveDeviation)
-        val autodriveTarget: Int = preferences.get(IntKey.OApsAIMIAutodriveTarget)
         val autodriveBG: Int = preferences.get(IntKey.OApsAIMIAutodriveBG)
 
         // 📈 Deltas récents & delta combiné
@@ -1119,7 +1136,7 @@ fun appendCompactLog(
         reason.appendLine(
             "🚗 Autodrive: ${if (ok) "✅ ON" else "❌ OFF"} | " +
                 "cond=$autodriveCondition, Δc≥${"%.2f".format(autodriveDelta)}, " +
-                "predBG>${autodriveTarget}, slope≥${"%.2f".format(autodriveMinDeviation)}, bg≥${autodriveBG}"
+                "predBG>140, slope≥${"%.2f".format(autodriveMinDeviation)}, bg≥${autodriveBG}"
         )
 
         return ok
@@ -1198,7 +1215,7 @@ fun appendCompactLog(
         return (number * 20.0).roundToInt() / 20.0f
     }
 
-    private fun isCriticalSafetyCondition(mealData: MealData): Pair<Boolean, String> {
+    private fun isCriticalSafetyCondition(mealData: MealData,  hypoThreshold: Double): Pair<Boolean, String> {
         val cobFromMeal = try {
             // Adapte le nom selon ta classe (souvent mealData.cob ou mealData.mealCOB)
             mealData.mealCOB
@@ -1226,7 +1243,8 @@ fun appendCompactLog(
             dinnerTime = dinnerTime,
             highCarbTime = highCarbTime,
             snackTime = snackTime,
-            cob = cobFromMeal
+            cob = cobFromMeal,
+            hypoThreshold = hypoThreshold
         )
 
         // Récupération des conditions critiques
@@ -1264,9 +1282,17 @@ fun appendCompactLog(
         val dinnerTime: Boolean,
         val highCarbTime: Boolean,
         val snackTime: Boolean,
-        val cob: Double
+        val cob: Double,
+        val hypoThreshold: Double
     )
-
+    private fun isHypoBlocked(context: SafetyContext): Boolean =
+        shouldBlockHypoWithHysteresis(
+            bg = context.bg,
+            predictedBg = context.predictedBg,
+            eventualBg = context.eventualBG,
+            threshold = context.hypoThreshold,
+            deltaMgdlPer5min = context.delta
+        )
     /**
      * Détermine les conditions critiques à partir du contexte fourni
      */
@@ -1274,6 +1300,7 @@ fun appendCompactLog(
         val conditions = mutableListOf<String>()
 
         // Vérification des conditions critiques avec des noms explicites
+        if (isHypoBlocked(context)) conditions.add("hypoGuard")
         if (isNosmbHm(context)) conditions.add("nosmbHM")
         if (isHoneysmb(context)) conditions.add("honeysmb")
         if (isNegDelta(context)) conditions.add("negdelta")
@@ -1287,12 +1314,8 @@ fun appendCompactLog(
         if (isDroppingFastAtHigh(context)) conditions.add("droppingFastAtHigh")
         if (isDroppingVeryFast(context)) conditions.add("droppingVeryFast")
         if (isPrediction(context)) conditions.add("prediction")
-        if (isInterval(context)) conditions.add("interval")
-        if (isTargetInterval(context)) conditions.add("targetinterval")
         if (isBg90(context)) conditions.add("bg90")
         if (isAcceleratingDown(context)) conditions.add("acceleratingDown")
-        if (isDeceleratingDown(context)) conditions.add("decceleratingdown")
-        if (isNosmbHoneymoon(context)) conditions.add("nosmbhoneymoon")
 
         return conditions
     }
@@ -1327,12 +1350,12 @@ fun appendCompactLog(
             context.bg < 170
 
     private fun isNegDelta(context: SafetyContext): Boolean =
-        context.delta <= 0 &&
+        context.delta <= -1 &&
             !context.mealTime &&
             !context.bfastTime &&
             !context.lunchTime &&
             !context.dinnerTime &&
-            context.eventualBG < 140
+            context.eventualBG < 120
 
     private fun isNosmb(context: SafetyContext): Boolean =
         context.iob >= 2 * context.maxSMB &&
@@ -1373,30 +1396,12 @@ fun appendCompactLog(
         context.predictedBg < context.bg &&
             context.delta < 0
 
-    private fun isInterval(context: SafetyContext): Boolean =
-        context.eventualBG > context.targetBg &&
-            context.lastsmbtime > 10 // Seuil arbitraire pour le temps écoulé
-
-    private fun isTargetInterval(context: SafetyContext): Boolean =
-        context.bg < context.targetBg &&
-            context.delta > 0
-
     private fun isBg90(context: SafetyContext): Boolean = context.bg < 90
 
     private fun isAcceleratingDown(context: SafetyContext): Boolean =
         context.delta < 0 &&
             context.longAvgDelta < 0 &&
             context.shortAvgDelta < 0
-
-    private fun isDeceleratingDown(context: SafetyContext): Boolean =
-        context.delta > 0 &&
-            context.longAvgDelta > 0 &&
-            context.shortAvgDelta > 0
-
-    private fun isNosmbHoneymoon(context: SafetyContext): Boolean =
-        preferences.get(BooleanKey.OApsAIMIhoneymoon) &&
-            context.iob <= 0 &&
-            context.lastsmbtime > 30
 
     private fun isSportSafetyCondition(): Boolean {
         val sport = targetBg >= 140 && recentSteps5Minutes >= 200 && recentSteps10Minutes >= 400
@@ -1505,23 +1510,89 @@ fun appendCompactLog(
     private fun shouldApplyStepAdjustment(): Boolean {
         return recentSteps5Minutes > 100 && recentSteps30Minutes > 500 && lastsmbtime < 20
     }
+    // Calcule le seuil "OpenAPS-like" et applique LGS si plus haut
+    private fun computeHypoThreshold(minBg: Double, lgsThreshold: Int?): Double {
+        var t = minBg - 0.5 * (minBg - 40.0) // 90→65, 100→70, 110→75, 130→85
+        if (lgsThreshold != null && lgsThreshold > t) t = lgsThreshold.toDouble()
+        return t
+    }
 
-    // Fonction modifiée pour utiliser les nouvelles structures
+    // Hard safety: vrai si BG, predictedBG ou eventualBG passent sous le seuil
+    private fun isBelowHypoThreshold(
+        bg: Double,
+        predictedBg: Double,
+        eventualBg: Double,
+        threshold: Double,
+        deltaMgdlPer5min: Double = 0.0
+    ): Boolean {
+        fun safe(v: Double) = if (v.isFinite()) v else Double.POSITIVE_INFINITY
+        val minBg = minOf(safe(bg), safe(predictedBg), safe(eventualBg))
+
+        val extraMargin = when {
+            minBg <= threshold           -> 0.0
+            deltaMgdlPer5min <= -3.0     -> HYPO_MARGIN_FAST
+            deltaMgdlPer5min <= -1.5     -> HYPO_MARGIN_FALL
+            else                         -> HYPO_MARGIN_BASE
+        }
+        return minBg <= threshold + extraMargin
+    }
+    // Hystérèse : on ne débloque qu’après avoir été > (seuil+margin) pendant X minutes
+    private fun shouldBlockHypoWithHysteresis(
+        bg: Double,
+        predictedBg: Double,
+        eventualBg: Double,
+        threshold: Double,
+        deltaMgdlPer5min: Double,
+        now: Long = System.currentTimeMillis()
+    ): Boolean {
+        fun safe(v: Double) = if (v.isFinite()) v else Double.POSITIVE_INFINITY
+        val minBg = minOf(safe(bg), safe(predictedBg), safe(eventualBg))
+
+        val blockedNow = isBelowHypoThreshold(bg, predictedBg, eventualBg, threshold, deltaMgdlPer5min)
+        if (blockedNow) {
+            lastHypoBlockAt = now
+            hypoClearCandidateSince = null
+            return true
+        }
+
+        // jamais bloqué avant → pas de collant
+        if (lastHypoBlockAt == 0L) return false
+
+        val above = minBg > threshold + HYPO_RELEASE_MARGIN
+        if (above) {
+            if (hypoClearCandidateSince == null) hypoClearCandidateSince = now
+            val heldMs = now - hypoClearCandidateSince!!
+            return if (heldMs >= HYPO_RELEASE_HOLD_MIN * 60_000L) {
+                // libération de l’hystérèse
+                lastHypoBlockAt = 0L
+                hypoClearCandidateSince = null
+                false
+            } else {
+                true // on colle encore
+            }
+        } else {
+            // rechute sous (seuil+margin) → on réinitialise la fenêtre de libération
+            hypoClearCandidateSince = null
+            return true
+        }
+    }
+
     private fun applySpecificAdjustments(smbAmount: Float): Float {
         val intervals = SMBIntervals(
-            snack = preferences.get(IntKey.OApsAIMISnackinterval),
-            meal = preferences.get(IntKey.OApsAIMImealinterval),
-            bfast = preferences.get(IntKey.OApsAIMIBFinterval),
-            lunch = preferences.get(IntKey.OApsAIMILunchinterval),
+            snack  = preferences.get(IntKey.OApsAIMISnackinterval),
+            meal   = preferences.get(IntKey.OApsAIMImealinterval),
+            bfast  = preferences.get(IntKey.OApsAIMIBFinterval),
+            lunch  = preferences.get(IntKey.OApsAIMILunchinterval),
             dinner = preferences.get(IntKey.OApsAIMIDinnerinterval),
-            sleep = preferences.get(IntKey.OApsAIMISleepinterval),
-            hc = preferences.get(IntKey.OApsAIMIHCinterval),
+            sleep  = preferences.get(IntKey.OApsAIMISleepinterval),
+            hc     = preferences.get(IntKey.OApsAIMIHCinterval),
             highBG = preferences.get(IntKey.OApsAIMIHighBGinterval)
         )
 
         val currentHour = LocalTime.now().hour
-        val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
+        val honeymoon   = preferences.get(BooleanKey.OApsAIMIhoneymoon)
 
+        // 1) hard/tempo guards existants
         when {
             shouldApplyIntervalAdjustment(intervals) -> return 0.0f
             shouldApplySafetyAdjustment() -> {
@@ -1536,15 +1607,29 @@ fun appendCompactLog(
 
         if (shouldApplyStepAdjustment()) return 0.0f
 
-        val belowTargetAndDropping = bg < targetBg
-        if (belowTargetAndDropping) return smbAmount / 2
+        // 2) 🔧 AJUSTEMENT “falling decelerating” (soft)
+        //    On baisse encore (deltas négatifs) mais la baisse RALENTIT :
+        //    shortAvgDelta est moins négatif que longAvgDelta → on temporise.
+        val fallingDecelerating =
+            delta < -EPS_FALL &&
+                shortAvgDelta < -EPS_FALL &&
+                longAvgDelta  < -EPS_FALL &&
+                shortAvgDelta >  longAvgDelta + EPS_ACC
+
+        if (fallingDecelerating && bg < targetBg + 10) {
+            // On est sous/près de la cible et la baisse ralentit → on réduit le SMB
+            return (smbAmount * 0.5f).coerceAtLeast(0f)
+        }
+
+        // 3) règles existantes “soft”
+        val belowTarget = bg < targetBg
+        if (belowTarget) return smbAmount / 2
 
         if (honeymoon && bg < 170 && delta < 5) return smbAmount / 2
 
-        if (preferences.get(BooleanKey.OApsAIMInight) && currentHour in 23..23 && delta < 10 && iob < maxSMB) {
+        if (preferences.get(BooleanKey.OApsAIMInight) && currentHour == 23 && delta < 10 && iob < maxSMB) {
             return smbAmount * 0.8f
         }
-
         if (currentHour in 0..7 && delta < 10 && iob < maxSMB) {
             return smbAmount * 0.8f
         }
@@ -1552,134 +1637,6 @@ fun appendCompactLog(
         return smbAmount
     }
 
-    // private fun calculateSMBInterval(): Int {
-    //     val reasonBuilder = StringBuilder()
-    //     // Récupération des intervalles configurés
-    //     val intervalSnack = preferences.get(IntKey.OApsAIMISnackinterval)
-    //     val intervalMeal = preferences.get(IntKey.OApsAIMImealinterval)
-    //     val intervalBF = preferences.get(IntKey.OApsAIMIBFinterval)
-    //     val intervalLunch = preferences.get(IntKey.OApsAIMILunchinterval)
-    //     val intervalDinner = preferences.get(IntKey.OApsAIMIDinnerinterval)
-    //     val intervalSleep = preferences.get(IntKey.OApsAIMISleepinterval)
-    //     val intervalHC = preferences.get(IntKey.OApsAIMIHCinterval)
-    //     val intervalHighBG = preferences.get(IntKey.OApsAIMIHighBGinterval)
-    //     if (delta > 15f) {
-    //         return 1
-    //     }
-    //     // Par défaut, on part d'un intervalle de base (par exemple 5 minutes)
-    //     var interval = 5
-    //
-    //     // Si une des conditions d'intervalle est satisfaite, annuler l'intervalle (0 minute)
-    //     if (shouldApplyIntervalAdjustment(
-    //             intervalSnack, intervalMeal, intervalBF,
-    //             intervalLunch, intervalDinner, intervalSleep,
-    //             intervalHC, intervalHighBG
-    //         )) {
-    //         interval = 0
-    //     }
-    //     // Sinon, si une condition de sécurité s'applique, forcer un intervalle de 10 minutes
-    //     else if (shouldApplySafetyAdjustment()) {
-    //         interval = 10
-    //     }
-    //     // Sinon, si une condition temporelle (ex. heure inappropriée) s'applique, fixer l'intervalle à 10 minutes
-    //     else if (shouldApplyTimeAdjustment()) {
-    //         interval = 10
-    //     }
-    //
-    //     // Si une forte activité est détectée via les pas, l'intervalle devient 0 (on annule toute nouvelle administration)
-    //     if (shouldApplyStepAdjustment()) {
-    //         interval = 0
-    //     }
-    //
-    //     // Ajustements supplémentaires :
-    //     // Si BG est en dessous de la cible (et donc en chute), augmenter l'intervalle (attendre plus longtemps)
-    //     if (bg < targetBg) {
-    //         interval = (interval * 2).coerceAtMost(20)
-    //     }
-    //     // En mode honeymoon avec BG < 170 et delta faible, attendre plus longtemps
-    //     if (preferences.get(BooleanKey.OApsAIMIhoneymoon) && bg < 170 && delta < 5) {
-    //         interval = (interval * 2).coerceAtMost(20)
-    //     }
-    //     // Si c'est la nuit (par exemple à 23h) et que delta est faible et IOB bas, on réduit légèrement l'intervalle
-    //     val currentHour = LocalTime.now().hour
-    //     if (preferences.get(BooleanKey.OApsAIMInight) && currentHour == 23 && delta < 10 && iob < maxSMB) {
-    //         interval = (interval * 0.8).toInt()
-    //     }
-    //     reasonBuilder.append("Interval : $interval")
-    //     return interval
-    // }
-    //
-    // private fun applySpecificAdjustments(smbToGive: Float): Float {
-    //     var result = smbToGive
-    //     val intervalSMBsnack = preferences.get(IntKey.OApsAIMISnackinterval)
-    //     val intervalSMBmeal = preferences.get(IntKey.OApsAIMImealinterval)
-    //     val intervalSMBbfast = preferences.get(IntKey.OApsAIMIBFinterval)
-    //     val intervalSMBlunch = preferences.get(IntKey.OApsAIMILunchinterval)
-    //     val intervalSMBdinner = preferences.get(IntKey.OApsAIMIDinnerinterval)
-    //     val intervalSMBsleep = preferences.get(IntKey.OApsAIMISleepinterval)
-    //     val intervalSMBhc = preferences.get(IntKey.OApsAIMIHCinterval)
-    //     val intervalSMBhighBG = preferences.get(IntKey.OApsAIMIHighBGinterval)
-    //     val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
-    //     val belowTargetAndDropping = bg < targetBg
-    //     val night = preferences.get(BooleanKey.OApsAIMInight)
-    //     val currentHour = LocalTime.now().hour
-    //
-    //     when {
-    //         shouldApplyIntervalAdjustment(intervalSMBsnack, intervalSMBmeal, intervalSMBbfast, intervalSMBlunch, intervalSMBdinner, intervalSMBsleep, intervalSMBhc, intervalSMBhighBG) -> {
-    //             result = 0.0f
-    //         }
-    //         shouldApplySafetyAdjustment() -> {
-    //             result *= 0.75f
-    //             this.intervalsmb = 10
-    //         }
-    //         shouldApplyTimeAdjustment() -> {
-    //             result = 0.0f
-    //             this.intervalsmb = 10
-    //         }
-    //     }
-    //
-    //     if (shouldApplyStepAdjustment()) result = 0.0f
-    //     if (belowTargetAndDropping) result /= 2
-    //     if (honeymoon && bg < 170 && delta < 5) result /= 2
-    //     if (night && currentHour in 23..23 && delta < 10 && iob < maxSMB) result *= 0.8f
-    //     if (currentHour in 0..7 && delta < 10 && iob < maxSMB) result *= 0.8f // Ajout d'une réduction pendant la période de minuit à 5h du matin
-    //
-    //     return result
-    // }
-    //
-    //
-    // private fun shouldApplyIntervalAdjustment(
-    //     intervalSMBsnack: Int, intervalSMBmeal: Int, intervalSMBbfast: Int,
-    //     intervalSMBlunch: Int, intervalSMBdinner: Int, intervalSMBsleep: Int,
-    //     intervalSMBhc: Int, intervalSMBhighBG: Int
-    // ): Boolean {
-    //     val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
-    //
-    //     return (lastsmbtime < intervalSMBsnack && snackTime)
-    //         || (lastsmbtime < intervalSMBmeal && mealTime)
-    //         || (lastsmbtime < intervalSMBbfast && bfastTime)
-    //         || (lastsmbtime < intervalSMBlunch && lunchTime)
-    //         || (lastsmbtime < intervalSMBdinner && dinnerTime)
-    //         || (lastsmbtime < intervalSMBsleep && sleepTime)
-    //         || (lastsmbtime < intervalSMBhc && highCarbTime)
-    //         || (!honeymoon && lastsmbtime < intervalSMBhighBG && bg > 120)
-    //         || (honeymoon && lastsmbtime < intervalSMBhighBG && bg > 180)
-    // }
-    //
-    //
-    // private fun shouldApplySafetyAdjustment(): Boolean {
-    //     val safetysmb = recentSteps180Minutes > 1500 && bg < 120
-    //     return (safetysmb || lowCarbTime) && lastsmbtime >= 15
-    // }
-    //
-    // private fun shouldApplyTimeAdjustment(): Boolean {
-    //     val safetysmb = recentSteps180Minutes > 1500 && bg < 120
-    //     return (safetysmb || lowCarbTime) && lastsmbtime < 15
-    // }
-    //
-    // private fun shouldApplyStepAdjustment(): Boolean {
-    //     return recentSteps5Minutes > 100 && recentSteps30Minutes > 500 && lastsmbtime < 20
-    // }
     private fun finalizeSmbToGive(smbToGive: Float): Float {
         var result = smbToGive
         // Assurez-vous que smbToGive n'est pas négatif
@@ -1697,9 +1654,9 @@ fun appendCompactLog(
         val smb = AimiUamHandler.predictSmbUam(
             floatArrayOf(
                 hourOfDay.toFloat(), weekend.toFloat(),
-                bg.toFloat(), targetBg.toFloat(), iob.toFloat(),
-                delta.toFloat(), shortAvgDelta.toFloat(), longAvgDelta.toFloat(),
-                tdd7DaysPerHour.toFloat(), tdd2DaysPerHour.toFloat(), tddPerHour.toFloat(), tdd24HrsPerHour.toFloat(),
+                bg.toFloat(), targetBg, iob,
+                delta, shortAvgDelta, longAvgDelta,
+                tdd7DaysPerHour, tdd2DaysPerHour, tddPerHour, tdd24HrsPerHour,
                 recentSteps5Minutes.toFloat(), recentSteps10Minutes.toFloat(),
                 recentSteps15Minutes.toFloat(), recentSteps30Minutes.toFloat(),
                 recentSteps60Minutes.toFloat(), recentSteps180Minutes.toFloat()
@@ -1925,7 +1882,7 @@ fun appendCompactLog(
     private fun computeDynamicBolusMultiplier(delta: Float): Float {
         // Centrer la sigmoïde autour de 5 mg/dL, avec une pente modérée (échelle 10)
         val x = (delta - 5f) / 10f
-        val sig = (1f / (1f + exp(-x))).toFloat()  // sigmoïde entre 0 et 1
+        val sig = (1f / (1f + exp(-x)))  // sigmoïde entre 0 et 1
         return 0.5f + sig * 0.7f  // multipliateur lissé entre 0,5 et 1,2
     }
 
@@ -2216,7 +2173,7 @@ fun appendCompactLog(
             val netCarbImpact = max(0.0, bgDifference - (cob * csf)) // Ajuster avec COB
 
             // 7. Calculer les glucides nécessaires pour combler la différence de glycémie
-            val carbsReq = round(netCarbImpact / csf).toInt()
+            val carbsReq = round(netCarbImpact / csf)
 
             // Debug info
             consoleError.add("Future BG: $futureBG, Projected Drop: $projectedDrop, Insulin Effect: $insulinEffect, COB Impact: ${cob * csf}, Carbs Required: $carbsReq")
@@ -2251,8 +2208,8 @@ fun appendCompactLog(
         insulinEffect *= physicalActivityFactor
         // Calculer le facteur de retard ajusté en fonction de l'activité physique
         val adjustedDelayFactor = calculateAdjustedDelayFactor(
-            normalBgThreshold,
-            recentSteps180Min,
+            bg,
+            recentSteps180Minutes,
             averageBeatsPerMinute,
             averageBeatsPerMinute10
         )
@@ -2426,8 +2383,8 @@ fun appendCompactLog(
         val polyY = arrayOf(0.5, 1.0, 2.0, 3.0, 5.0, 7.0, 9.0, 10.0, 10.0, 10.0, 10.0, 10.0) // Ajustement des valeurs pour la basale
 
         // Constants for basal adjustment weights
-        val higherBasalRangeWeight: Double = 1.5 // Facteur pour les glycémies supérieures à 100 mg/dL
-        val lowerBasalRangeWeight: Double = 0.8 // Facteur pour les glycémies inférieures à 100 mg/dL mais supérieures ou égales à 80
+        val higherBasalRangeWeight = 1.5 // Facteur pour les glycémies supérieures à 100 mg/dL
+        val lowerBasalRangeWeight = 0.8 // Facteur pour les glycémies inférieures à 100 mg/dL mais supérieures ou égales à 80
 
         val polymax = polyX.size - 1
         var step = polyX[0]
@@ -2801,7 +2758,7 @@ private fun calculateDynamicPeakTime(
             recentSteps15Minutes,
             averageBeatsPerMinute.toInt(),
             bg,
-            combinedDelta.toDouble(),
+            combinedDelta,
             reasonAimi
         )
         val autodrive = preferences.get(BooleanKey.OApsAIMIautoDrive)
@@ -3419,15 +3376,25 @@ private fun calculateDynamicPeakTime(
         //val expectedDelta = calculateExpectedDelta(target_bg, eventualBG, bgi)
         val modelcal = calculateSMBFromModel(rT.reason)
 
-        // min_bg of 90 -> threshold of 65, 100 -> 70 110 -> 75, and 130 -> 85
-        var threshold = min_bg - 0.5 * (min_bg - 40)
-        val lgsThreshold = profile.lgsThreshold
-        if (lgsThreshold != null && lgsThreshold > threshold) {
-            consoleError.add("Threshold set from ${convertBG(threshold)} to ${convertBG(lgsThreshold.toDouble())}; ")
-            threshold = lgsThreshold.toDouble()
+        val threshold = computeHypoThreshold(min_bg, profile.lgsThreshold)
+
+        if (shouldBlockHypoWithHysteresis(
+                bg = bg,
+                predictedBg = predictedBg.toDouble(),
+                eventualBg = eventualBG,
+                threshold = threshold,
+                deltaMgdlPer5min = delta.toDouble()
+            )
+        ) {
+            rT.reason.appendLine(
+                "🛑 Hypo guard+hystérèse: BG=${convertBG(bg)} " +
+                    "≤ Th=${convertBG(threshold)} → SMB=0 (attente > ${HYPO_RELEASE_MARGIN.toInt()} mg/dL pendant ${HYPO_RELEASE_HOLD_MIN} min)"
+            )
+            this.predictedSMB = 0f
+        } else {
+            rT.reason.appendLine("💉 SMB (UAM): ${"%.2f".format(modelcal)} U")
+            this.predictedSMB = modelcal
         }
-        rT.reason.appendLine("💉 SMB (UAM): ${"%.2f".format(modelcal)} U")
-        this.predictedSMB = modelcal
 
         if (preferences.get(BooleanKey.OApsAIMIMLtraining) && csvfile.exists()) {
             val allLines = csvfile.readLines()
@@ -3489,9 +3456,9 @@ private fun calculateDynamicPeakTime(
             dinnerTime                                                                                                                        -> smbToGive * dinnerfactor.toFloat()
             snackTime                                                                                                                         -> smbToGive * snackfactor.toFloat()
             sleepTime                                                                                                                         -> smbToGive * sleepfactor.toFloat()
-            hourOfDay in 1..11                                                                                                                -> smbToGive * adjustedMorningFactor.toFloat()
-            hourOfDay in 12..18                                                                                                               -> smbToGive * adjustedAfternoonFactor.toFloat()
-            hourOfDay in 19..23                                                                                                               -> smbToGive * adjustedEveningFactor.toFloat()
+            hourOfDay in 1..11                                                                                                                -> smbToGive * adjustedMorningFactor
+            hourOfDay in 12..18                                                                                                               -> smbToGive * adjustedAfternoonFactor
+            hourOfDay in 19..23                                                                                                               -> smbToGive * adjustedEveningFactor
             bg > 120 && delta > 7 && !honeymoon                                                                                               -> smbToGive * hyperfactor.toFloat()
             bg > 180 && delta > 5 && iob < 1.2 && honeymoon                                                                                   -> smbToGive * hyperfactor.toFloat()
             else                                                                                                                              -> smbToGive
@@ -3521,71 +3488,143 @@ private fun calculateDynamicPeakTime(
             pumpAgeDays = pumpAgeDays
         )
         consoleLog.add("DIA ajusté (en minutes) : $adjustedDIAInMinutes")
+//         val actCurr = profile.sensorLagActivity
+//         val actFuture = profile.futureActivity
+//         val td = adjustedDIAInMinutes
+//         val deltaGross = round((glucose_status.delta + actCurr * sens).coerceIn(0.0, 35.0), 1)
+//         val actTarget = deltaGross / sens * factors.toFloat()
+//         var actMissing = 0.0
+//         var deltaScore = 0.5
+//
+//         if (glucose_status.delta <= 4.0) {
+//
+//             actMissing = round((actCurr * smbToGive - Math.max(actFuture, 0.0)) / 5, 4)
+//             deltaScore = ((bg - target_bg) / 100).coerceIn(0.0, 1.0)
+//         } else {
+//             actMissing = round((actTarget - Math.max(actFuture, 0.0)) / 5, 4)
+//         }
+//
+//         val tau = tp * (1 - tp / td) / (1 - 2 * tp / td)
+//         val a = 2 * tau / td
+//         val S = 1 / (1 - a + (1 + a) * Math.exp((-td / tau)))
+//         var AimiInsReq = actMissing / (S / Math.pow(tau, 2.0) * tp * (1 - tp / td) * Math.exp((-tp / tau)))
+//
+//         AimiInsReq = if (AimiInsReq < smbToGive) AimiInsReq else smbToGive.toDouble()
+//
+//         val finalInsulinDose = round(AimiInsReq, 2)
+//         // ===== Intégration du module MPC et du correctif PI =====
+// // Exemple d’optimisation simple sur la dose basale candidate
+//
+// // Définition des bornes (par exemple de 0.0 à la basale courante maximale ou une valeur fixée)
+//         val doseMin = 0.0
+//         val doseMax = maxSMB
+// // Paramètres pour le module prédictif
+//         val horizon = 30  // horizon en minutes
+//         val insulinSensitivity = variableSensitivity.toDouble()  // conversion si nécessaire
+//
+// // On utilise une recherche itérative simple pour trouver la dose qui minimise le coût
+//         var optimalDose = doseMin
+//         var bestCost = Double.MAX_VALUE
+//         val nSteps = 20  // nombre de pas d’échantillonnage entre doseMin et doseMax
+//
+//         for (i in 0..nSteps) {
+//             val candidate = doseMin + i * (doseMax - doseMin) / nSteps
+//             val cost = costFunction(basal, bg.toDouble(), targetBg.toDouble(), horizon, insulinSensitivity, smbToGive.toDouble())
+//             if (cost < bestCost) {
+//                 bestCost = cost
+//                 optimalDose = candidate
+//             }
+//         }
+//
+// // Correction en boucle fermée avec un simple contrôleur PI
+//         val error = bg.toDouble() - targetBg.toDouble()  // erreur actuelle
+//         val Kp = 0.1  // gain proportionnel (à calibrer)
+//         val correction = -Kp * error
+//
+//         val optimalBasalMPC = optimalDose + correction
+//
+// // On loggue ces valeurs pour debug
+//         consoleLog.add("Module MPC: dose candidate = ${optimalDose}, correction = ${correction}, optimalBasalMPC = ${optimalBasalMPC}")
+//
+// // On peut maintenant utiliser cette dose pour ajuster la décision.
+//         smbToGive = optimalBasalMPC.toFloat()
+//         rT.reason.appendLine("🎛️ Facteur appliqué → ${"%.2f".format(smbToGive)} U")
+// // ===== Fin de l’intégration du module MPC =====
+//         smbToGive = applySafetyPrecautions(mealData, finalInsulinDose.toFloat(), rT.reason)
+//         rT.reason.appendLine("✅ SMB final: ${"%.2f".format(smbToGive)} U")
+//         smbToGive = roundToPoint05(smbToGive)
         val actCurr = profile.sensorLagActivity
         val actFuture = profile.futureActivity
         val td = adjustedDIAInMinutes
         val deltaGross = round((glucose_status.delta + actCurr * sens).coerceIn(0.0, 35.0), 1)
         val actTarget = deltaGross / sens * factors.toFloat()
         var actMissing = 0.0
-        var deltaScore: Double = 0.5
+        var deltaScore = 0.5  // 0..1 : 0 proche/sous target, 1 très au-dessus
 
         if (glucose_status.delta <= 4.0) {
-
-            actMissing = round((actCurr * smbToGive - Math.max(actFuture, 0.0)) / 5, 4)
-            deltaScore = ((bg - target_bg) / 100).coerceIn(0.0, 1.0)
+            actMissing = round((actCurr * smbToGive - max(actFuture, 0.0)) / 5, 4)
+            // échelle 0..1 en fonction de l’écart à la cible
+            deltaScore = ((bg - target_bg) / 100.0).coerceIn(0.0, 1.0)
         } else {
-            actMissing = round((actTarget - Math.max(actFuture, 0.0)) / 5, 4)
+            actMissing = round((actTarget - max(actFuture, 0.0)) / 5, 4)
         }
 
-        val tau = tp * (1 - tp / td) / (1 - 2 * tp / td)
-        val a = 2 * tau / td
-        val S = 1 / (1 - a + (1 + a) * Math.exp((-td / tau)))
-        var AimiInsReq = actMissing / (S / Math.pow(tau, 2.0) * tp * (1 - tp / td) * Math.exp((-tp / tau)))
+// Sécurisation du calcul des constantes (éviter divisions/exp instables)
+        val tpD = tp.toDouble()
+        val tdD = td.toDouble().coerceAtLeast(tpD * 2.1) // td doit être > 2*tp
+        val tau = tpD * (1 - tpD / tdD) / (1 - 2 * tpD / tdD)
+        val a = 2 * tau / tdD
+        val S = 1 / (1 - a + (1 + a) * Math.exp(-tdD / tau))
+        var AimiInsReq = actMissing / (S / (tau * tau) * tpD * (1 - tpD / tdD) * Math.exp(-tpD / tau))
 
         AimiInsReq = if (AimiInsReq < smbToGive) AimiInsReq else smbToGive.toDouble()
-
         val finalInsulinDose = round(AimiInsReq, 2)
-        // ===== Intégration du module MPC et du correctif PI =====
-// Exemple d’optimisation simple sur la dose basale candidate
 
-// Définition des bornes (par exemple de 0.0 à la basale courante maximale ou une valeur fixée)
+// ===== Module MPC + correctif PI =====
         val doseMin = 0.0
         val doseMax = maxSMB
-// Paramètres pour le module prédictif
-        val horizon = 30  // horizon en minutes
-        val insulinSensitivity = variableSensitivity.toDouble()  // conversion si nécessaire
+        val horizon = 30 // minutes
+        val insulinSensitivity = variableSensitivity.toDouble()
 
-// On utilise une recherche itérative simple pour trouver la dose qui minimise le coût
         var optimalDose = doseMin
         var bestCost = Double.MAX_VALUE
-        val nSteps = 20  // nombre de pas d’échantillonnage entre doseMin et doseMax
+        val nSteps = 20
 
         for (i in 0..nSteps) {
             val candidate = doseMin + i * (doseMax - doseMin) / nSteps
-            val cost = costFunction(basal, bg.toDouble(), targetBg.toDouble(), horizon, insulinSensitivity, smbToGive.toDouble())
+            // ⚠️ corriger : évaluer le coût avec "candidate", pas "smbToGive"
+            val cost = costFunction(basal, bg.toDouble(), targetBg.toDouble(), horizon, insulinSensitivity, candidate)
             if (cost < bestCost) {
                 bestCost = cost
                 optimalDose = candidate
             }
         }
 
-// Correction en boucle fermée avec un simple contrôleur PI
-        val error = bg.toDouble() - targetBg.toDouble()  // erreur actuelle
-        val Kp = 0.1  // gain proportionnel (à calibrer)
+// PI : on module Kp par deltaScore (0.5× à 1.5×)
+        val baseKp = 0.1
+        val Kp = baseKp * (0.5 + deltaScore) // si très haut au-dessus de target ⇒ correction plus énergique
+        val error = bg.toDouble() - targetBg.toDouble()
         val correction = -Kp * error
 
-        val optimalBasalMPC = optimalDose + correction
+        val optimalBasalMPC = (optimalDose + correction).coerceIn(doseMin, doseMax)
 
-// On loggue ces valeurs pour debug
-        consoleLog.add("Module MPC: dose candidate = ${optimalDose}, correction = ${correction}, optimalBasalMPC = ${optimalBasalMPC}")
+// Log
+        consoleLog.add("Module MPC: dose=${"%.2f".format(optimalDose)}, Kp=${"%.3f".format(Kp)}, corr=${"%.2f".format(correction)}, out=${"%.2f".format(optimalBasalMPC)}")
 
-// On peut maintenant utiliser cette dose pour ajuster la décision.
-        smbToGive = optimalBasalMPC.toFloat()
-        rT.reason.appendLine("🎛️ Facteur appliqué → ${"%.2f".format(smbToGive)} U")
-// ===== Fin de l’intégration du module MPC =====
-        smbToGive = applySafetyPrecautions(mealData, finalInsulinDose.toFloat(), rT.reason)
-        rT.reason.appendLine("✅ SMB final: ${"%.2f".format(smbToGive)} U")
-        smbToGive = roundToPoint05(smbToGive)
+// Mix final entre modèle MPC et estimation "physio" (pondéré par deltaScore)
+        val alpha = 0.3 + 0.5 * deltaScore // 0.3..0.8
+        var smbDecision = (alpha * optimalBasalMPC + (1 - alpha) * finalInsulinDose).toFloat()
+
+        rT.reason.appendLine("🎛️ MPC/PI → ${"%.2f".format(optimalBasalMPC)} U | physio=${"%.2f".format(finalInsulinDose)} U | α=${"%.2f".format(alpha)}")
+
+// ===== Fin MPC =====
+
+// ⚠️ passer la DECISION courante à la safety (pas finalInsulinDose)
+        smbDecision = applySafetyPrecautions(mealData, smbDecision, threshold,rT.reason)
+        rT.reason.appendLine("✅ SMB final: ${"%.2f".format(smbDecision)} U")
+
+        smbToGive = roundToPoint05(smbDecision)
+
 
         logDataMLToCsv(predictedSMB, smbToGive)
         logDataToCsv(predictedSMB, smbToGive)
@@ -3825,155 +3864,155 @@ rT.reason.appendLine(
                     .withoutZeros()
             }, Target: ${convertBG(target_bg)}}"
         )
-        val (conditionResult, conditionsTrue) = isCriticalSafetyCondition(mealData)
+        //val (conditionResult, conditionsTrue) = isCriticalSafetyCondition(mealData, hypoThreshold)
         this.zeroBasalAccumulatedMinutes = getZeroBasalDuration(persistenceLayer, 2)
-        val screenWidth = preferences.get(IntKey.OApsAIMIlogsize)// Largeur d'écran par défaut en caractères si non spécifié
-        val columnWidth = (screenWidth / 2) - 2 // Calcul de la largeur des colonnes en fonction de la largeur de l'écran
-
-        val aimilog = buildString {
-            appendLine("╔${"═".repeat(screenWidth)}╗")
-            appendLine(String.format("║ %-${screenWidth}s ║", "AAPS-MASTER-AIMI"))
-            appendLine(String.format("║ %-${screenWidth}s ║", "OpenApsAIMI Settings"))
-            appendLine(String.format("║ %-${screenWidth}s ║", "16 Mai 2025"))
-            // appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_main_title_1)))
-            // appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_main_title_2)))
-            // appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_main_title_3)))
-            appendLine("╚${"═".repeat(screenWidth)}╝")
-            appendLine()
-
-            appendLine("╔${"═".repeat(screenWidth)}╗")
-            //appendLine(String.format("║ %-${screenWidth}s ║", "Request"))
-            appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_request_title)))
-            appendLine("╠${"═".repeat(screenWidth)}╣")
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Reason", "COB: $cob, Dev: $deviation, BGI: $bgi, ISF: $variableSensitivity, CR: $ci, Target: $target_bg"))
-            appendLine("╚${"═".repeat(screenWidth)}╝")
-            appendLine()
-
-            appendLine("╔${"═".repeat(screenWidth)}╗")
-            //appendLine(String.format("║ %-${screenWidth}s ║", "SMB Prediction"))
-            appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_smb_prediction_title)))
-            appendLine("╠${"═".repeat(screenWidth)}╣")
-            appendLine(String.format("║ %-${columnWidth}s │ %s u", "AI Pred.", String.format("%.2f", predictedSMB)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s u", "Req. SMB", String.format("%.2f", smbToGive)))
-            appendLine("╚${"═".repeat(screenWidth)}╝")
-            appendLine()
-
-            appendLine("╔${"═".repeat(screenWidth)}╗")
-            //appendLine(String.format("║ %-${screenWidth}s ║", "Adjusted Factors"))
-            appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_adjusted_factors_title)))
-            appendLine("╠${"═".repeat(screenWidth)}╣")
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Factors", adjustedFactors))
-            appendLine("╚${"═".repeat(screenWidth)}╝")
-            appendLine()
-
-            appendLine("╔${"═".repeat(screenWidth)}╗")
-            //appendLine(String.format("║ %-${screenWidth}s ║", "Limits & Conditions"))
-            appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_limits_title)))
-            appendLine("╠${"═".repeat(screenWidth)}╣")
-            appendLine(String.format("║ %-${columnWidth}s │ %s u", "Max IOB", String.format("%.1f", maxIob)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s u", "IOB", String.format("%.1f", iob)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s u", "IOB2", String.format("%.1f", iob2)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s u", "Max SMB", String.format("%.1f", maxSMB)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Safety", conditionResult))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Met", conditionsTrue))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "peakTimeProfile", String.format("%.1f", profile.peakTime)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "currentActivity", String.format("%.1f", profile.currentActivity)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "After IOB Adjustment", String.format("%.1f", peakintermediaire)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Activity Ratio", String.format("%.1f", profile.futureActivity / (profile.currentActivity + 0.0001))))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Final Peak Time after coerceIn", String.format("%.1f", tp)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Adjusted Dia H", String.format("%.1f", adjustedDIAInMinutes/60)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "pumpAgeDays", String.format("%.1f", pumpAgeDays)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "zeroBasalAccumulatedMinutes", String.format("%.1f", zeroBasalAccumulatedMinutes.toDouble())))
-            appendLine("╚${"═".repeat(screenWidth)}╝")
-            appendLine()
-
-            appendLine("╔${"═".repeat(screenWidth)}╗")
-            //appendLine(String.format("║ %-${screenWidth}s ║", "Glucose Data"))
-            appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_glucose_title)))
-            appendLine("╠${"═".repeat(screenWidth)}╣")
-            appendLine(String.format("║ %-${columnWidth}s │ %s mg/dL", "Current BG", String.format("%.1f", bg)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s mg/dL", "predictedBg", String.format("%.1f", predictedBg)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s mg/dL", "Target BG", String.format("%.1f", targetBg)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s mg/dL", "Prediction", String.format("%.1f", predictedBg)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s mg/dL", "Eventual BG", String.format("%.1f", eventualBG)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Delta", String.format("%.1f", delta)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "combinedDelta", String.format("%.1f", combinedDelta)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Short Δ", String.format("%.1f", shortAvgDelta)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Long Δ", String.format("%.1f", longAvgDelta)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "slopeFromMaxDeviation", String.format("%.1f", mealData.slopeFromMaxDeviation)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "slopeFromMinDeviation", String.format("%.1f", mealData.slopeFromMinDeviation)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "bgAcceleration", String.format("%.1f", bgAcceleration)))
-            appendLine("╚${"═".repeat(screenWidth)}╝")
-            appendLine()
-
-            appendLine("╔${"═".repeat(screenWidth)}╗")
-            //appendLine(String.format("║ %-${screenWidth}s ║", "TIR Data"))
-            appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_tir_title)))
-            appendLine("╠${"═".repeat(screenWidth)}╣")
-            appendLine(String.format("║ %-${columnWidth}s │ %s%%", "TIR Low", String.format("%.1f", currentTIRLow)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s%%", "TIR In Range", String.format("%.1f", currentTIRRange)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s%%", "TIR High", String.format("%.1f", currentTIRAbove)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s%%", "Last Hr TIR Low", String.format("%.1f", lastHourTIRLow)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s%%", "Last Hr TIR >120", String.format("%.1f", lastHourTIRabove120)))
-            appendLine("╚${"═".repeat(screenWidth)}╝")
-            appendLine()
-
-            appendLine("╔${"═".repeat(screenWidth)}╗")
-            //appendLine(String.format("║ %-${screenWidth}s ║", "Step Data"))
-            appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_steps_title)))
-            appendLine("╠${"═".repeat(screenWidth)}╣")
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Steps (5m)", recentSteps5Minutes))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Steps (30m)", recentSteps30Minutes))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Steps (60m)", recentSteps60Minutes))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Steps (180m)", recentSteps180Minutes))
-            appendLine("╚${"═".repeat(screenWidth)}╝")
-            appendLine()
-
-            appendLine("╔${"═".repeat(screenWidth)}╗")
-            //appendLine(String.format("║ %-${screenWidth}s ║", "Heart Rate Data"))
-            appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_heart_title)))
-            appendLine("╠${"═".repeat(screenWidth)}╣")
-            appendLine(String.format("║ %-${columnWidth}s │ %s bpm", "HR (5m)", String.format("%.1f", averageBeatsPerMinute)))
-            appendLine(String.format("║ %-${columnWidth}s │ %s bpm", "HR (60m)", String.format("%.1f", averageBeatsPerMinute60)))
-            appendLine("╚${"═".repeat(screenWidth)}╝")
-            appendLine()
-
-            appendLine("╔${"═".repeat(screenWidth)}╗")
-            //appendLine(String.format("║ %-${screenWidth}s ║", "Modes"))
-            appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_manual_modes_title)))
-            appendLine("╠${"═".repeat(screenWidth)}╣")
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Delete Time", if (deleteTime) "Active" else "Inactive"))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Date", deleteEventDate ?: "N/A"))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Sleep", if (sleepTime) "Active" else "Inactive"))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Sport", if (sportTime) "Active" else "Inactive"))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Snack", if (snackTime) "Active" else "Inactive"))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Low Carb", if (lowCarbTime) "Active" else "Inactive"))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "High Carb", if (highCarbTime) "Active" else "Inactive"))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Meal", if (mealTime) "Active" else "Inactive"))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Breakfast", if (bfastTime) "Active" else "Inactive"))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Lunch", if (lunchTime) "Active" else "Inactive"))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Dinner", if (dinnerTime) "Active" else "Inactive"))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Fasting", if (fastingTime) "Active" else "Inactive"))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Calibration", if (iscalibration) "Active" else "Inactive"))
-            appendLine("╚${"═".repeat(screenWidth)}╝")
-            appendLine()
-
-            appendLine("╔${"═".repeat(screenWidth)}╗")
-            //appendLine(String.format("║ %-${screenWidth}s ║", "Miscellaneous"))
-            appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_miscellaneous_title)))
-            appendLine("╠${"═".repeat(screenWidth)}╣")
-            appendLine(String.format("║ %-${columnWidth}s │ %s min", "Last SMB", lastsmbtime))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Hour", hourOfDay))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "Weekend", weekend))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "tags0-60m", tags0to60minAgo))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "tags60-120m", tags60to120minAgo))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "tags120-180m", tags120to180minAgo))
-            appendLine(String.format("║ %-${columnWidth}s │ %s", "tags180-240m", tags180to240minAgo))
-            appendLine("╚${"═".repeat(screenWidth)}╝")
-            appendLine()
-
-            // Fin de l'assemblage du log
-        }
+        // val screenWidth = preferences.get(IntKey.OApsAIMIlogsize)// Largeur d'écran par défaut en caractères si non spécifié
+        // val columnWidth = (screenWidth / 2) - 2 // Calcul de la largeur des colonnes en fonction de la largeur de l'écran
+        //
+        // val aimilog = buildString {
+        //     appendLine("╔${"═".repeat(screenWidth)}╗")
+        //     appendLine(String.format("║ %-${screenWidth}s ║", "AAPS-MASTER-AIMI"))
+        //     appendLine(String.format("║ %-${screenWidth}s ║", "OpenApsAIMI Settings"))
+        //     appendLine(String.format("║ %-${screenWidth}s ║", "16 Mai 2025"))
+        //     // appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_main_title_1)))
+        //     // appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_main_title_2)))
+        //     // appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_main_title_3)))
+        //     appendLine("╚${"═".repeat(screenWidth)}╝")
+        //     appendLine()
+        //
+        //     appendLine("╔${"═".repeat(screenWidth)}╗")
+        //     //appendLine(String.format("║ %-${screenWidth}s ║", "Request"))
+        //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_request_title)))
+        //     appendLine("╠${"═".repeat(screenWidth)}╣")
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Reason", "COB: $cob, Dev: $deviation, BGI: $bgi, ISF: $variableSensitivity, CR: $ci, Target: $target_bg"))
+        //     appendLine("╚${"═".repeat(screenWidth)}╝")
+        //     appendLine()
+        //
+        //     appendLine("╔${"═".repeat(screenWidth)}╗")
+        //     //appendLine(String.format("║ %-${screenWidth}s ║", "SMB Prediction"))
+        //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_smb_prediction_title)))
+        //     appendLine("╠${"═".repeat(screenWidth)}╣")
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s u", "AI Pred.", String.format("%.2f", predictedSMB)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s u", "Req. SMB", String.format("%.2f", smbToGive)))
+        //     appendLine("╚${"═".repeat(screenWidth)}╝")
+        //     appendLine()
+        //
+        //     appendLine("╔${"═".repeat(screenWidth)}╗")
+        //     //appendLine(String.format("║ %-${screenWidth}s ║", "Adjusted Factors"))
+        //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_adjusted_factors_title)))
+        //     appendLine("╠${"═".repeat(screenWidth)}╣")
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Factors", adjustedFactors))
+        //     appendLine("╚${"═".repeat(screenWidth)}╝")
+        //     appendLine()
+        //
+        //     appendLine("╔${"═".repeat(screenWidth)}╗")
+        //     //appendLine(String.format("║ %-${screenWidth}s ║", "Limits & Conditions"))
+        //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_limits_title)))
+        //     appendLine("╠${"═".repeat(screenWidth)}╣")
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s u", "Max IOB", String.format("%.1f", maxIob)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s u", "IOB", String.format("%.1f", iob)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s u", "IOB2", String.format("%.1f", iob2)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s u", "Max SMB", String.format("%.1f", maxSMB)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Safety", conditionResult))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Met", conditionsTrue))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "peakTimeProfile", String.format("%.1f", profile.peakTime)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "currentActivity", String.format("%.1f", profile.currentActivity)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "After IOB Adjustment", String.format("%.1f", peakintermediaire)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Activity Ratio", String.format("%.1f", profile.futureActivity / (profile.currentActivity + 0.0001))))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Final Peak Time after coerceIn", String.format("%.1f", tp)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Adjusted Dia H", String.format("%.1f", adjustedDIAInMinutes/60)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "pumpAgeDays", String.format("%.1f", pumpAgeDays)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "zeroBasalAccumulatedMinutes", String.format("%.1f", zeroBasalAccumulatedMinutes.toDouble())))
+        //     appendLine("╚${"═".repeat(screenWidth)}╝")
+        //     appendLine()
+        //
+        //     appendLine("╔${"═".repeat(screenWidth)}╗")
+        //     //appendLine(String.format("║ %-${screenWidth}s ║", "Glucose Data"))
+        //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_glucose_title)))
+        //     appendLine("╠${"═".repeat(screenWidth)}╣")
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s mg/dL", "Current BG", String.format("%.1f", bg)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s mg/dL", "predictedBg", String.format("%.1f", predictedBg)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s mg/dL", "Target BG", String.format("%.1f", targetBg)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s mg/dL", "Prediction", String.format("%.1f", predictedBg)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s mg/dL", "Eventual BG", String.format("%.1f", eventualBG)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Delta", String.format("%.1f", delta)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "combinedDelta", String.format("%.1f", combinedDelta)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Short Δ", String.format("%.1f", shortAvgDelta)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Long Δ", String.format("%.1f", longAvgDelta)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "slopeFromMaxDeviation", String.format("%.1f", mealData.slopeFromMaxDeviation)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "slopeFromMinDeviation", String.format("%.1f", mealData.slopeFromMinDeviation)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "bgAcceleration", String.format("%.1f", bgAcceleration)))
+        //     appendLine("╚${"═".repeat(screenWidth)}╝")
+        //     appendLine()
+        //
+        //     appendLine("╔${"═".repeat(screenWidth)}╗")
+        //     //appendLine(String.format("║ %-${screenWidth}s ║", "TIR Data"))
+        //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_tir_title)))
+        //     appendLine("╠${"═".repeat(screenWidth)}╣")
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s%%", "TIR Low", String.format("%.1f", currentTIRLow)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s%%", "TIR In Range", String.format("%.1f", currentTIRRange)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s%%", "TIR High", String.format("%.1f", currentTIRAbove)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s%%", "Last Hr TIR Low", String.format("%.1f", lastHourTIRLow)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s%%", "Last Hr TIR >120", String.format("%.1f", lastHourTIRabove120)))
+        //     appendLine("╚${"═".repeat(screenWidth)}╝")
+        //     appendLine()
+        //
+        //     appendLine("╔${"═".repeat(screenWidth)}╗")
+        //     //appendLine(String.format("║ %-${screenWidth}s ║", "Step Data"))
+        //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_steps_title)))
+        //     appendLine("╠${"═".repeat(screenWidth)}╣")
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Steps (5m)", recentSteps5Minutes))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Steps (30m)", recentSteps30Minutes))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Steps (60m)", recentSteps60Minutes))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Steps (180m)", recentSteps180Minutes))
+        //     appendLine("╚${"═".repeat(screenWidth)}╝")
+        //     appendLine()
+        //
+        //     appendLine("╔${"═".repeat(screenWidth)}╗")
+        //     //appendLine(String.format("║ %-${screenWidth}s ║", "Heart Rate Data"))
+        //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_heart_title)))
+        //     appendLine("╠${"═".repeat(screenWidth)}╣")
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s bpm", "HR (5m)", String.format("%.1f", averageBeatsPerMinute)))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s bpm", "HR (60m)", String.format("%.1f", averageBeatsPerMinute60)))
+        //     appendLine("╚${"═".repeat(screenWidth)}╝")
+        //     appendLine()
+        //
+        //     appendLine("╔${"═".repeat(screenWidth)}╗")
+        //     //appendLine(String.format("║ %-${screenWidth}s ║", "Modes"))
+        //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_manual_modes_title)))
+        //     appendLine("╠${"═".repeat(screenWidth)}╣")
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Delete Time", if (deleteTime) "Active" else "Inactive"))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Date", deleteEventDate ?: "N/A"))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Sleep", if (sleepTime) "Active" else "Inactive"))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Sport", if (sportTime) "Active" else "Inactive"))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Snack", if (snackTime) "Active" else "Inactive"))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Low Carb", if (lowCarbTime) "Active" else "Inactive"))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "High Carb", if (highCarbTime) "Active" else "Inactive"))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Meal", if (mealTime) "Active" else "Inactive"))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Breakfast", if (bfastTime) "Active" else "Inactive"))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Lunch", if (lunchTime) "Active" else "Inactive"))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Dinner", if (dinnerTime) "Active" else "Inactive"))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Fasting", if (fastingTime) "Active" else "Inactive"))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Calibration", if (iscalibration) "Active" else "Inactive"))
+        //     appendLine("╚${"═".repeat(screenWidth)}╝")
+        //     appendLine()
+        //
+        //     appendLine("╔${"═".repeat(screenWidth)}╗")
+        //     //appendLine(String.format("║ %-${screenWidth}s ║", "Miscellaneous"))
+        //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_miscellaneous_title)))
+        //     appendLine("╠${"═".repeat(screenWidth)}╣")
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s min", "Last SMB", lastsmbtime))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Hour", hourOfDay))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Weekend", weekend))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "tags0-60m", tags0to60minAgo))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "tags60-120m", tags60to120minAgo))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "tags120-180m", tags120to180minAgo))
+        //     appendLine(String.format("║ %-${columnWidth}s │ %s", "tags180-240m", tags180to240minAgo))
+        //     appendLine("╚${"═".repeat(screenWidth)}╝")
+        //     appendLine()
+        //
+        //     // Fin de l'assemblage du log
+        // }
 
         // eventual BG is at/above target
         // if iob is over max, just cancel any temps
@@ -4011,153 +4050,7 @@ rT.reason.appendLine(
                 targetBG = targetBg,
                 zeroBasalDurationMinutes = zeroBasalAccumulatedMinutes
             )
-            // rT.reason.append(safetyDecision.reason)
-            // val logTemplate = buildString {
-            //     appendLine("╔${"═".repeat(screenWidth)}╗")
-            //     appendLine(String.format("║ %-${screenWidth}s ║", "AAPS-MASTER-AIMI"))
-            //     appendLine(String.format("║ %-${screenWidth}s ║", "OpenApsAIMI Settings"))
-            //     appendLine(String.format("║ %-${screenWidth}s ║", "15 Mai 2025"))
-            //     // appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_main_title_1)))
-            //     // appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_main_title_2)))
-            //     // appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_main_title_3)))
-            //     appendLine("╚${"═".repeat(screenWidth)}╝")
-            //     appendLine()
-            //
-            //     appendLine("╔${"═".repeat(screenWidth)}╗")
-            //     //appendLine(String.format("║ %-${screenWidth}s ║", "Request"))
-            //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_request_title)))
-            //     appendLine("╠${"═".repeat(screenWidth)}╣")
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Reason", "COB: $cob, Dev: $deviation, BGI: $bgi, ISF: $variableSensitivity, CR: $ci, Target: $target_bg"))
-            //     appendLine("╚${"═".repeat(screenWidth)}╝")
-            //     appendLine()
-            //
-            //     appendLine("╔${"═".repeat(screenWidth)}╗")
-            //     //appendLine(String.format("║ %-${screenWidth}s ║", "SMB Prediction"))
-            //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_smb_prediction_title)))
-            //     appendLine("╠${"═".repeat(screenWidth)}╣")
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s u", "AI Pred.", String.format("%.2f", predictedSMB)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s u", "Req. SMB", String.format("%.2f", smbToGive)))
-            //     appendLine("╚${"═".repeat(screenWidth)}╝")
-            //     appendLine()
-            //
-            //     appendLine("╔${"═".repeat(screenWidth)}╗")
-            //     //appendLine(String.format("║ %-${screenWidth}s ║", "Adjusted Factors"))
-            //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_adjusted_factors_title)))
-            //     appendLine("╠${"═".repeat(screenWidth)}╣")
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Factors", adjustedFactors))
-            //     appendLine("╚${"═".repeat(screenWidth)}╝")
-            //     appendLine()
-            //
-            //     appendLine("╔${"═".repeat(screenWidth)}╗")
-            //     //appendLine(String.format("║ %-${screenWidth}s ║", "Limits & Conditions"))
-            //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_limits_title)))
-            //     appendLine("╠${"═".repeat(screenWidth)}╣")
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s u", "Max IOB", String.format("%.1f", maxIob)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s u", "IOB", String.format("%.1f", iob)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s u", "IOB2", String.format("%.1f", iob2)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s u", "Max SMB", String.format("%.1f", maxSMB)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Safety", conditionResult))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Met", conditionsTrue))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "peakTimeProfile", String.format("%.1f", profile.peakTime)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "currentActivity", String.format("%.1f", profile.currentActivity)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "After IOB Adjustment", String.format("%.1f", peakintermediaire)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Activity Ratio", String.format("%.1f", profile.futureActivity / (profile.currentActivity + 0.0001))))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Final Peak Time after coerceIn", String.format("%.1f", tp)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Adjusted Dia H", String.format("%.1f", adjustedDIAInMinutes/60)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "pumpAgeDays", String.format("%.1f", pumpAgeDays)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "zeroBasalAccumulatedMinutes", String.format("%.1f", zeroBasalAccumulatedMinutes.toDouble())))
-            //     appendLine("╚${"═".repeat(screenWidth)}╝")
-            //     appendLine()
-            //
-            //     appendLine("╔${"═".repeat(screenWidth)}╗")
-            //     //appendLine(String.format("║ %-${screenWidth}s ║", "Glucose Data"))
-            //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_glucose_title)))
-            //     appendLine("╠${"═".repeat(screenWidth)}╣")
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s mg/dL", "Current BG", String.format("%.1f", bg)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s mg/dL", "predictedBg", String.format("%.1f", predictedBg)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s mg/dL", "Target BG", String.format("%.1f", targetBg)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s mg/dL", "Prediction", String.format("%.1f", predictedBg)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s mg/dL", "Eventual BG", String.format("%.1f", eventualBG)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Delta", String.format("%.1f", delta)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "combinedDelta", String.format("%.1f", combinedDelta)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Short Δ", String.format("%.1f", shortAvgDelta)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Long Δ", String.format("%.1f", longAvgDelta)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "slopeFromMaxDeviation", String.format("%.1f", mealData.slopeFromMaxDeviation)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "slopeFromMinDeviation", String.format("%.1f", mealData.slopeFromMinDeviation)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "bgAcceleration", String.format("%.1f", bgAcceleration)))
-            //     appendLine("╚${"═".repeat(screenWidth)}╝")
-            //     appendLine()
-            //     //
-            //     // appendLine("╔${"═".repeat(screenWidth)}╗")
-            //     // //appendLine(String.format("║ %-${screenWidth}s ║", "TIR Data"))
-            //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_tir_title)))
-            //     // appendLine("╠${"═".repeat(screenWidth)}╣")
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s%%", "TIR Low", String.format("%.1f", currentTIRLow)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s%%", "TIR In Range", String.format("%.1f", currentTIRRange)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s%%", "TIR High", String.format("%.1f", currentTIRAbove)))
-            //     // appendLine(String.format("║ %-${columnWidth}s │ %s%%", "Last Hr TIR Low", String.format("%.1f", lastHourTIRLow)))
-            //     // appendLine(String.format("║ %-${columnWidth}s │ %s%%", "Last Hr TIR >120", String.format("%.1f", lastHourTIRabove120)))
-            //     appendLine("╚${"═".repeat(screenWidth)}╝")
-            //     appendLine()
-            //
-            //     appendLine("╔${"═".repeat(screenWidth)}╗")
-            //     //appendLine(String.format("║ %-${screenWidth}s ║", "Step Data"))
-            //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_steps_title)))
-            //     appendLine("╠${"═".repeat(screenWidth)}╣")
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Steps (5m)", recentSteps5Minutes))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Steps (30m)", recentSteps30Minutes))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Steps (60m)", recentSteps60Minutes))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Steps (180m)", recentSteps180Minutes))
-            //     appendLine("╚${"═".repeat(screenWidth)}╝")
-            //     appendLine()
-            //
-            //     appendLine("╔${"═".repeat(screenWidth)}╗")
-            //     //appendLine(String.format("║ %-${screenWidth}s ║", "Heart Rate Data"))
-            //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_heart_title)))
-            //     appendLine("╠${"═".repeat(screenWidth)}╣")
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s bpm", "HR (5m)", String.format("%.1f", averageBeatsPerMinute)))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s bpm", "HR (60m)", String.format("%.1f", averageBeatsPerMinute60)))
-            //     appendLine("╚${"═".repeat(screenWidth)}╝")
-            //     appendLine()
-            //
-            //     appendLine("╔${"═".repeat(screenWidth)}╗")
-            //     //appendLine(String.format("║ %-${screenWidth}s ║", "Modes"))
-            //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_manual_modes_title)))
-            //     appendLine("╠${"═".repeat(screenWidth)}╣")
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Delete Time", if (deleteTime) "Active" else "Inactive"))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Date", deleteEventDate ?: "N/A"))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Sleep", if (sleepTime) "Active" else "Inactive"))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Sport", if (sportTime) "Active" else "Inactive"))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Snack", if (snackTime) "Active" else "Inactive"))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Low Carb", if (lowCarbTime) "Active" else "Inactive"))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "High Carb", if (highCarbTime) "Active" else "Inactive"))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Meal", if (mealTime) "Active" else "Inactive"))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Breakfast", if (bfastTime) "Active" else "Inactive"))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Lunch", if (lunchTime) "Active" else "Inactive"))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Dinner", if (dinnerTime) "Active" else "Inactive"))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Fasting", if (fastingTime) "Active" else "Inactive"))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Calibration", if (iscalibration) "Active" else "Inactive"))
-            //     appendLine("╚${"═".repeat(screenWidth)}╝")
-            //     appendLine()
-            //
-            //     appendLine("╔${"═".repeat(screenWidth)}╗")
-            //     //appendLine(String.format("║ %-${screenWidth}s ║", "Miscellaneous"))
-            //     appendLine(String.format("║ %-${screenWidth}s ║", context.getString(R.string.table_plugin_miscellaneous_title)))
-            //     appendLine("╠${"═".repeat(screenWidth)}╣")
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s min", "Last SMB", lastsmbtime))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Hour", hourOfDay))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "Weekend", weekend))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "tags0-60m", tags0to60minAgo))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "tags60-120m", tags60to120minAgo))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "tags120-180m", tags120to180minAgo))
-            //     appendLine(String.format("║ %-${columnWidth}s │ %s", "tags180-240m", tags180to240minAgo))
-            //     appendLine("╚${"═".repeat(screenWidth)}╝")
-            //     appendLine()
-            //
-            //     //Fin de l'assemblage du log
-            // }
-            // rT.reason.append(logTemplate)
-            // Ajustement de la dose SMB proposée en fonction du bolusFactor calculé
+
             insulinReq = insulinReq * safetyDecision.bolusFactor
             insulinReq = round(insulinReq, 3)
             rT.insulinReq = insulinReq
