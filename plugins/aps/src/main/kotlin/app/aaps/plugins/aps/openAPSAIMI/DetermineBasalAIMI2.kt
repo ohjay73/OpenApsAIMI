@@ -3466,8 +3466,8 @@ fun appendCompactLog(
             )
         ) {
             rT.reason.appendLine(
-                "🛑 Hypo guard+hystérèse: BG=${convertBG(bg)} " +
-                    "≤ Th=${convertBG(threshold)} → SMB=0 (attente > ${HYPO_RELEASE_MARGIN.toInt()} mg/dL pendant ${HYPO_RELEASE_HOLD_MIN} min)"
+                "🛑 Hypo guard+hystérèse: minBG=${convertBG(minBg)} " +
+                    "≤ Th=${convertBG(threshold)} (BG=${convertBG(bg)}, pred=${convertBG(predictedBg.toDouble())}, ev=${convertBG(eventualBG)}) → SMB=0"
             )
             this.predictedSMB = 0f
         } else {
