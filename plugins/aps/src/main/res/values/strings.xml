@@ -440,4 +440,15 @@
     <string name="table_plugin_heart_title">Heart Rate Data</string>
     <string name="table_plugin_manual_modes_title">Modes</string>
     <string name="table_plugin_miscellaneous_title">Miscellaneous</string>
+    <string name="wcycle_preferences">Menstrual Cycle Adjustments</string>
+    <string name="wcycle_preferences_title_menu">Menstrual Cycle Adjustments</string>
+    <string name="oaps_aimi_enablewcycle_title">Enable women cycle</string>
+    <string name="wcycledateday_summary">Write only the first day of the periode, format dd</string>
+    <string name="wcycledateday_title">First day of periode</string>
+    <string name="wcyclemenstruation_summary">During the periode, this number will be the % of reduction apply to the basal(study show an average reduction of 5 to 10%</string>
+    <string name="wcyclemenstruation_title">First 5 days of periode, basal reduction in %</string>
+    <string name="wcycleovulation_summary">Ovulation cycle show in differents studies the need to reduce the smb and basal about 5%</string>
+    <string name="wcycleovulation_title">Ovulation % reduction</string>
+    <string name="wcycleluteal_summary">"Luteal phase required between 8 and 15 % more insuline "</string>
+    <string name="wcycleluteal_title">Luetal phase, set the % to apply on basal and smb</string>
 </resources>

@@ -956,6 +956,18 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                 addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIAutodriveDeviation, dialogMessage = R.string.oaps_aimi_AutodriveDeviation_summary, title = R.string.oaps_aimi_AutodriveDeviation_title))
                 //addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIAutodriveAcceleration, dialogMessage = R.string.oaps_aimi_AutodriveAcceleration_summary, title = R.string.oaps_aimi_AutodriveAcceleration_title))
             })
+            addPreference(preferenceManager.createPreferenceScreen(context).apply {
+                key = "Women_Cycle"
+                title = rh.gs(R.string.wcycle_preferences)
+                addPreference(PreferenceCategory(context).apply {
+                    title = rh.gs(R.string.wcycle_preferences_title_menu)
+                })
+                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.OApsAIMIwcycle, title = R.string.oaps_aimi_enablewcycle_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIwcycledateday, dialogMessage = R.string.wcycledateday_summary, title = R.string.wcycledateday_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIwcyclemenstruation, dialogMessage = R.string.wcyclemenstruation_summary, title = R.string.wcyclemenstruation_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIwcycleovulation, dialogMessage = R.string.wcycleovulation_summary, title = R.string.wcycleovulation_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIwcycleluteal, dialogMessage = R.string.wcycleluteal_summary, title = R.string.wcycleluteal_title))
+            })
         }
     }
 }
