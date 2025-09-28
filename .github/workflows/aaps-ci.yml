@@ -205,6 +205,25 @@ jobs:
           mv app/build/outputs/apk/${{ env.VARIANT_FLAVOR }}/${{ env.VARIANT_TYPE }}/*.apk aaps-${{ env.VERSION }}${{ env.VERSION_SUFFIX }}.apk
           mv wear/build/outputs/apk/${{ env.VARIANT_FLAVOR }}/${{ env.VARIANT_TYPE }}/*.apk aaps-wear-${{ env.VERSION }}${{ env.VERSION_SUFFIX }}.apk
 
+      # 8. Optionnel : Upload des APKs en tant qu'artefacts
+      - name: Upload App APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-full-release.apk
+          path: ${{ env.APP_APK_PATH }}
+
+      - name: Upload Wear APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: wear-full-release.apk
+          path: ${{ env.WEAR_APK_PATH }}
+
+      - name: Upload AAPS Client APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-aapsclient-release.apk
+          path: ${{ env.CLIENT_APK_PATH }}
+          
       - name: Upload APKs to Google Drive
         run: |
           set -e
