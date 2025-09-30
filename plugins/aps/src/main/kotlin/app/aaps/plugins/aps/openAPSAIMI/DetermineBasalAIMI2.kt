@@ -4177,15 +4177,23 @@ rT.reason.appendLine(
             if (safetyDecision.stopBasal) {
                 return setTempBasal(0.0, 30, profile, rT, currenttemp)
             }
-            if (safetyDecision.basalLS && combinedDelta in -1.0..3.0 && predictedBg > 130 && iob > 0.1) {
-                return setTempBasal(profile_current_basal, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
-            }
 
             // ------------------------------
 // 1️⃣ Préparation des variables
             var overrideSafety = false
             var chosenRate: Double? = null
+// Utilitaire: détecter si un mode "repas" est actif depuis <30 min
+            val mealModeActiveFirst30 =
+                (mealTime && mealruntime in 0..30) ||
+                    (bfastTime && bfastruntime in 0..30) ||
+                    (lunchTime && lunchruntime in 0..30) ||
+                    (dinnerTime && dinnerruntime in 0..30) ||
+                    (highCarbTime && highCarbrunTime in 0..30)
 
+// ⚠️ Ne pas laisser basalLS écraser un mode repas dans sa fenêtre de 30 min
+            if (safetyDecision.basalLS && combinedDelta in -1.0..3.0 && predictedBg > 130 && iob > 0.1 && !mealModeActiveFirst30) {
+                return setTempBasal(profile_current_basal, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+            }
 // ------------------------------
 // 2️⃣ Early‐meal detection → bypass sécurité, forçage vers `forcedBasal`
             if (detectMealOnset(delta, predicted.toFloat(), bgAcceleration.toFloat())
@@ -4203,34 +4211,11 @@ rT.reason.appendLine(
                         calculateRate(basal, profile_current_basal, 4.0, "SnackTime", currenttemp, rT).toDouble()
                     }
 
-                    mealTime && mealruntime in 0..30 && delta < 10          -> {
-                        // meal forcé → bypass
+                    // ✅ Repas : pendant les 30 premières minutes → TBR = forcedBasalmealmodes (FORCÉE)
+                    mealModeActiveFirst30 -> {
                         overrideSafety = true
-                        calculateRate(forcedBasalmealmodes, profile_current_basal, 1.0, "MealTime", currenttemp, rT).toDouble()
-                    }
-
-                    bfastTime && bfastruntime in 0..30 && delta < 10        -> {
-                        // breakfast forcé → bypass
-                        overrideSafety = true
-                        calculateRate(forcedBasalmealmodes, profile_current_basal, 1.0, "Breakfast", currenttemp, rT).toDouble()
-                    }
-
-                    lunchTime && lunchruntime in 0..30 && delta < 10        -> {
-                        // lunch forcé → bypass
-                        overrideSafety = true
-                        calculateRate(forcedBasalmealmodes, profile_current_basal, 1.0, "Lunch", currenttemp, rT).toDouble()
-                    }
-
-                    dinnerTime && dinnerruntime in 0..30 && delta < 10      -> {
-                        // dinner forcé → bypass
-                        overrideSafety = true
-                        calculateRate(forcedBasalmealmodes, profile_current_basal, 1.0, "Dinner", currenttemp, rT).toDouble()
-                    }
-
-                    highCarbTime && highCarbrunTime in 0..30 && delta < 10  -> {
-                        // highCarb forcé → bypass
-                        overrideSafety = true
-                        calculateRate(forcedBasalmealmodes, profile_current_basal, 1.0, "HighCarb", currenttemp, rT).toDouble()
+                        rT.reason.append("Mode repas <30m → TBR forcée à ${forcedBasalmealmodes}U/h (override).\n")
+                        forcedBasalmealmodes.toDouble()
                     }
 
                     fastingTime                                             ->
@@ -4352,6 +4337,8 @@ rT.reason.appendLine(
                 )
                 for ((meal, runtime) in mealConditions) {
                     if (meal && runtime in 0..30) {
+                        // Si on arrive ici c’est que le cas "forcé" n’a pas été déclenché (ex: delta≥10)
+                        // On applique tout de même un coup d’accélérateur, mais SANS écraser la logique forcée précédente.
                         chosenRate = calculateBasalRate(finalBasalRate, profile_current_basal, 10.0)
                         rT.reason.append("Repas/snack <30m → basale x10.\n")
                         break
@@ -4424,7 +4411,7 @@ rT.reason.appendLine(
 // ------------------------------
 // 1️⃣3️⃣ Appel unique à setTempBasal()
             return setTempBasal(
-                _rate = finalRate,
+                _rate = (chosenRate ?: profile_current_basal.toDouble()),
                 duration = 30,
                 profile = profile,
                 rT = rT,
