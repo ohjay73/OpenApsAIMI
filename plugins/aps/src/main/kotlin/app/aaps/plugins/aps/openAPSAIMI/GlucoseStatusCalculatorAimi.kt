@@ -9,10 +9,12 @@ import app.aaps.core.interfaces.aps.GlucoseStatusAIMI
 import app.aaps.plugins.aps.openAPS.DeltaCalculator
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.DoubleKey
+import app.aaps.core.keys.IntKey
 import app.aaps.plugins.aps.openAPSAIMI.extensions.asRounded
 import dagger.Reusable
 import javax.inject.Inject
 import kotlin.math.max
+import kotlin.math.min
 
 /** Features additionnels pour AIMI, calculés en même temps que GlucoseStatusAIMI. */
 data class AimiBgFeatures(
@@ -42,8 +44,8 @@ class GlucoseStatusCalculatorAimi @Inject constructor(
     private object Defaults {
         const val FRESHNESS_MIN = 7L
         const val SERIES_GAP_MIN = 13L
-        const val FIT_GAP_MIN = 11L
-        const val CUTOFF_MIN = 47.5
+        const val FIT_GAP_MIN = 9L
+        const val CUTOFF_MIN = 30.0
         const val BW_FRACTION = 0.05
         const val CACHE_TTL_MS = 30_000L
     }
@@ -63,6 +65,12 @@ class GlucoseStatusCalculatorAimi @Inject constructor(
     /** API AIMI: renvoie les features (accélération, deltas paraboliques, etc.). */
     fun getAimiFeatures(allowOldData: Boolean): AimiBgFeatures? =
         (if (shouldRecompute(allowOldData)) compute(allowOldData) else last)?.features
+
+    /** Renvoie l'historique récent des glycémies (pour safetyAdjustment). */
+    fun getRecentGlucose(): List<Float> {
+        val data = iobCobCalculator.ads.getBucketedDataTableCopy()
+        return data?.map { it.recalculated.toFloat() } ?: emptyList()
+    }
 
     /** Recalcule et renvoie (GS AIMI + features). */
     fun compute(allowOldData: Boolean): Result {
@@ -123,7 +131,8 @@ class GlucoseStatusCalculatorAimi @Inject constructor(
         )
 
         // 5) Heuristique Night-Growth
-        val ngrSlopeMin = preferences.getOr(DoubleKey.OApsAIMINightGrowthMinRiseSlope, 5.0)
+        val pediatricAge = runCatching { preferences.get(IntKey.OApsAIMINightGrowthAgeYears) }.getOrNull() ?: 12
+        val ngrSlopeMin = deriveNightSlopeThreshold(pediatricAge, minutesDur)
         val isNg = (fit?.deltaPl ?: 0.0) >= ngrSlopeMin || (fit?.accel ?: 0.0) > 0.0
 
         // 6) GS AIMI + features
@@ -193,6 +202,16 @@ class GlucoseStatusCalculatorAimi @Inject constructor(
     private fun Preferences.getOr(key: DoubleKey, default: Double): Double =
         runCatching { this.get(key) }.getOrNull() ?: default
 
+    private fun deriveNightSlopeThreshold(age: Int, stabilityMinutes: Double): Double {
+        val ageBase = when {
+            age <= 7 -> 3.5
+            age <= 12 -> 4.5
+            else -> 5.0
+        }
+        val stabilityBonus = min(1.0, stabilityMinutes / 60.0)
+        return max(2.5, ageBase - stabilityBonus)
+    }
+
     private fun combineDelta(d: Double, s: Double, l: Double, wD: Double, wS: Double, wL: Double): Double {
         val sumW = max(1e-9, wD + wS + wL)
         return (wD * d + wS * s + wL * l) / sumW
@@ -210,7 +229,7 @@ private object QuadraticFit {
         val a1: Double,
         val a2: Double
     )
-
+    private var accelFiltered = 0.0
     fun <T> fit5min(
         data: List<T>,
         cutoffMin: Double,
@@ -286,7 +305,14 @@ private object QuadraticFit {
                 val r2 = if (ssTot != 0.0) 1 - ssRes / ssTot else 0.0
 
                 val dt = 5 * 60 / SCALE_TIME
-                val accel = 2 * a * SCALE_BG / 60.0
+                val accelCurrent = 2 * a * SCALE_BG / 60.0  // mg/dL/min²
+
+// --- Nouveau : filtrage exponentiel léger pour stabiliser ---
+                accelFiltered = 0.6 * accelFiltered + 0.4 * accelCurrent
+
+// --- Affectation finale ---
+                val accel = accelFiltered
+
                 val deltaPl = -SCALE_BG * (a * (-dt) * (-dt) - b * dt)
                 val deltaPn =  SCALE_BG * (a * ( dt) * ( dt) + b * dt)
 

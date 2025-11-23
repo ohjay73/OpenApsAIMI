@@ -505,17 +505,17 @@
     <string name="meal_modes_max_basal_title_genericmeal">Fixed basal 30 min at meal start (U/h)</string>
     <string name="meal_modes_max_basal_summary_genericmeal">Manual mode: fixed TBR, after pre-bolus 1 set a fixed TBR for 30 minutes for generic meal</string>
 
-    <string name="wcycle_preferences">Menstrual Cycle Adjustments</string>
-    <string name="wcycle_preferences_title_menu">Menstrual Cycle Adjustments - Settings</string>
-    <string name="oaps_aimi_enablewcycle_title">Enable menstrual cycle</string>
-    <string name="wcycledateday_summary">Enter only the first day of the cycle, format dd</string>
-    <string name="wcycledateday_title">First day of cycle</string>
-    <string name="wcyclemenstruation_summary">During the first days of the cycle, this percentage will be applied as a basal reduction (studies show an average reduction of 5–10%)</string>
-    <string name="wcyclemenstruation_title">First 5 days of cycle, basal reduction in %</string>
-    <string name="wcycleovulation_summary">During ovulation, several studies show the need to reduce SMB and basal by about 5%</string>
-    <string name="wcycleovulation_title">Ovulation % reduction</string>
-    <string name="wcycleluteal_summary">The luteal phase requires about 8–15% more insulin</string>
-    <string name="wcycleluteal_title">Luteal phase, set the % to apply on basal and SMB</string>
+<!--    <string name="wcycle_preferences">Menstrual Cycle Adjustments</string>-->
+<!--    <string name="wcycle_preferences_title_menu">Menstrual Cycle Adjustments - Settings</string>-->
+<!--    <string name="oaps_aimi_enablewcycle_title">Enable menstrual cycle</string>-->
+<!--    <string name="wcycledateday_summary">Enter only the first day of the cycle, format dd</string>-->
+<!--    <string name="wcycledateday_title">First day of cycle</string>-->
+<!--    <string name="wcyclemenstruation_summary">During the first days of the cycle, this percentage will be applied as a basal reduction (studies show an average reduction of 5–10%)</string>-->
+<!--    <string name="wcyclemenstruation_title">First 5 days of cycle, basal reduction in %</string>-->
+<!--    <string name="wcycleovulation_summary">During ovulation, several studies show the need to reduce SMB and basal by about 5%</string>-->
+<!--    <string name="wcycleovulation_title">Ovulation % reduction</string>-->
+<!--    <string name="wcycleluteal_summary">The luteal phase requires about 8–15% more insulin</string>-->
+<!--    <string name="wcycleluteal_title">Luteal phase, set the % to apply on basal and SMB</string>-->
     <!-- Night growth resistance -->
     <string name="oaps_aimi_ngr_title">Night growth resistance</string>
     <string name="oaps_aimi_ngr_enabled_title">Enable night growth resistance monitor</string>
@@ -538,8 +538,8 @@
     <string name="oaps_aimi_ngr_basal_multiplier_summary">Multiplier applied to basal adjustments while resistance is active.</string>
     <string name="oaps_aimi_ngr_max_smb_title">Maximum boosted SMB (U)</string>
     <string name="oaps_aimi_ngr_max_smb_summary">Upper clamp applied to boosted SMB values.</string>
-    <string name="oaps_aimi_ngr_max_iob_title">Extra IOB headroom (U)</string>
-    <string name="oaps_aimi_ngr_max_iob_summary">Additional IOB allowed during a detected episode.</string>
+    <string name="oaps_aimi_ngr_max_iob_title">Extra IOB per 30 min slot (U)</string>
+    <string name="oaps_aimi_ngr_max_iob_summary">Amount of additional IOB granted for each 30‑minute block while NGR is active.</string>
     <string name="oaps_aimi_ngr_decay_title">Decay duration (minutes)</string>
     <string name="oaps_aimi_ngr_decay_summary">Minutes used to smoothly return multipliers to baseline.</string>
     <string name="oaps_aimi_ngr_headroom">NGR headroom: +%1$.2fU (limit %2$.2fU).</string>
@@ -873,7 +873,7 @@
     <string name="reason_steps_adjustment">  • Steps (%1$d) ➝ +%2$.2f\n</string>
     <string name="reason_few_steps">  • Few steps (%1$d) ➝ x0.9\n</string>
     <string name="reason_high_hr">  • High HR (%1$d) ➝ x1.15\n</string>
-    <string name="reason_low_hr"> • Low HR (%1$d) ➝ x0.85\n</string>
+    <string name="reason_low_hr"> • Low HR (%1$d) ➝ x0.65\n</string>
     <string name="reason_high_activity">  • Intense activity ➝ x1.2\n</string>
     <string name="reason_total_rest">  • Total rest ➝ x0.75\n</string>
     <string name="reason_sensor_lag">  • SensorLag > Historic ➝ x0.85\n</string>
@@ -921,6 +921,9 @@
     <string name="console_max_bg_unchanged">max_bg unchanged: %.2f</string>
     <string name="reason_hypo_guard">🛑 Hypo protection + safety margin: minBG=%1$s ≤ Threshold=%2$s (BG=%3$s, predicted=%4$s, eventual=%5$s) → SMB=0</string>
     <string name="reason_tail_damping">Tail-aware damping: %1$.2fU → %2$.2fU (tail %3$.0f%%)</string>
+    <string name="reason_meal_aggression_boost">🍽️ Meal weighting: %1$.2fU → %2$.2fU (x%3$.2f)</string>
+    <string name="reason_safety_sport_meal_reduction">🏃‍♂️ Sport safety softened by meal: %1$.2fU → %2$.2fU</string>
+    <string name="reason_meal_tail_bypass">🍽️ Meal context bypassed PK/PD damping (+%1$.0f mg/dL predicted)</string>
     <string name="reason_ai_file">🧠 A.I. file: %1$s Prediction : %2$s U</string>
     <string name="reason_boost_hyper">⚡ Hyper boost: x1.7 (BG=%1$d, Δ=%2$.1f)</string>
     <string name="reason_boost_hyper_2">⚡ Hyper boost: x1.5 (BG=%1$d, Δ=%2$.1f)</string>
@@ -974,6 +977,7 @@
     <string name="meal_snack_30_60m_rising_basal_delta">Meal/snack 30&#8211;60m &amp; rising → basal Δ.</string>
     <string name="eventual_bg_over_180_hyper_basalaimi">Eventual BG&gt;180 &amp; hyper → basalaimi adjustment.</string>
     <string name="bg_over_180_stable_basal_factor">BG&gt;180 stable → basal x adjustment factor.</string>
+    <string name="reason_strong_rise_basal">Strong rise (Δmax=%1$.1f) → basal x%2$.2f.</string>
     <string name="honeymoon_bg_140_169_profile">Honeymoon BG 140&#8211;169 → profile.</string>
     <string name="honeymoon_bg_over_170_adjustment">Honeymoon BG&gt;170 → adjustment.</string>
     <string name="honeymoon_delta_over_2_bg_90_119_profile">Honeymoon Δ&gt;2 &amp; BG 90&#8211;119 → profile.</string>
@@ -1013,4 +1017,5 @@
     <string name="oaps_aimi_delta_pos_release_title">Positive Δ to release (mg/dL/5 min)</string>
     <string name="oaps_aimi_delta_pos_release_summary">If Δ exceeds this value, reduce/relax the intensification.</string>
 
+    <string name="hypo_risk_notification_text">Hypo risk detected: Rapid drop!</string>
 </resources>
