@@ -10,6 +10,8 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.round
+import android.content.Context
+import app.aaps.plugins.aps.R
 
 /**
  * Planificateur basal (pré-filtre sécurité/plateau) basé sur LoopContext du package model.
@@ -18,7 +20,8 @@ import kotlin.math.round
 @Reusable
 class BasalPlanner @Inject constructor(
     private val adaptiveBasal: AIMIAdaptiveBasal,
-    private val log: AAPSLogger
+    private val log: AAPSLogger,
+    private val context: Context
 ) {
     // ===== Paramètres par défaut (prudence) =====
     private val HYPO_SUSPEND_MGDL = 75.0      // seuil direct suspend
@@ -66,7 +69,8 @@ class BasalPlanner @Inject constructor(
             return BasalPlan(
                 rateUph = 0.0,
                 durationMin = HYPO_SUSPEND_MIN,
-                reason = "Hypo guard: BG=$mgdl, Δ=${fmt1(d5)} → suspend ${HYPO_SUSPEND_MIN}m"
+              //reason = "Hypo guard: BG=$mgdl, Δ=${fmt1(d5)} → suspend ${HYPO_SUSPEND_MIN}m"
+                reason = context.getString(R.string.basal_planner_hypo_guard, mgdl, fmt1(d5), HYPO_SUSPEND_MIN)
             )
         }
 
@@ -78,7 +82,8 @@ class BasalPlanner @Inject constructor(
             return BasalPlan(
                 rateUph = rate,
                 durationMin = dur,
-                reason = "Micro-resume after ${zeroSinceMin}m @0U/h → ${fmt2(rate)}U/h × ${dur}m"
+              //reason = "Micro-resume after ${zeroSinceMin}m @0U/h → ${fmt2(rate)}U/h × ${dur}m"
+                reason = context.getString(R.string.basal_planner_micro_resume, zeroSinceMin, fmt2(rate), dur)
             )
         }
 
@@ -91,7 +96,8 @@ class BasalPlanner @Inject constructor(
             return BasalPlan(
                 rateUph = rate,
                 durationMin = dur,
-                reason = "High-flat kicker @${mgdl.toInt()}mg/dL (Δ≈0) → ${fmt2(rate)}U/h × ${dur}m"
+              //reason = "High-flat kicker @${mgdl.toInt()}mg/dL (Δ≈0) → ${fmt2(rate)}U/h × ${dur}m"
+                reason = context.getString(R.string.basal_planner_high_flat_kicker, mgdl.toInt(), fmt2(rate), dur)
             )
         }
 
@@ -103,7 +109,8 @@ class BasalPlanner @Inject constructor(
             return BasalPlan(
                 rateUph = rate,
                 durationMin = minDur,
-                reason = "Anti-stall (Δ≈0) → ${fmt2(rate)}U/h × ${minDur}m"
+              //reason = "Anti-stall (Δ≈0) → ${fmt2(rate)}U/h × ${minDur}m"
+                reason = context.getString(R.string.basal_planner_anti_stall, fmt2(rate), minDur)
             )
         }
 
