@@ -160,7 +160,16 @@ object SmbInstructionExecutor {
                 basal = hooks.roundBasal(basal)
             }
         } else {
-            input.rT.reason.appendLine(input.context.getString(R.string.reason_ml_training))
+            //input.rT.reason.appendLine(input.context.getString(R.string.reason_ml_training))
+            if (!trainingEnabled) {
+                input.rT.reason.appendLine(
+                    input.context.getString(R.string.reason_ml_training)
+                )
+            } else if (!input.csvFile.exists()) {
+                input.rT.reason.appendLine(
+                    input.context.getString(R.string.reason_ml_no_file)
+                )
+            }
         }
 
         var smbToGive = if (input.bg > 130 && input.delta > 2 && predictedSmb == 0.0f) {
@@ -316,24 +325,31 @@ object SmbInstructionExecutor {
         // --- Mix MPC / PI : MPC plus dominant pour BG > cible ---
         val alphaRaw = 0.5 + 0.5 * deltaScore  // 0.3 → 0.5 de base
         val alpha = alphaRaw.coerceIn(0.3, 0.9)
-
+        // Calculation mpcShare + alpha
+        val mpcUsed = max(0.0, alpha * optimalBasalMpc)
+        val piUsed  = max(0.0, (1 - alpha) * finalInsulinDose)
+        val denom = mpcUsed + piUsed
+        val mpcShare = if (denom > 1e-6) 100.0 * mpcUsed / denom else 0.0
+        val piShare  = if (denom > 1e-6) 100.0 * piUsed / denom else 0.0
         //val alpha = 0.4 + 0.5 * deltaScore
         input.rT.reason.appendLine(
             input.context.getString(
-                R.string.reason_mpc_pi,
+                R.string.reason_mpc_pi_utile,
                 optimalBasalMpc,
                 alpha * 100,
                 finalInsulinDose,
-                (1 - alpha) * 100
+                (1 - alpha) * 100,
+                mpcShare,
+                piShare
             )
         )
-        run {
+       /*run {
             val mpcUsed = kotlin.math.max(0.0, alpha * optimalBasalMpc)
             val piUsed  = kotlin.math.max(0.0, (1 - alpha) * finalInsulinDose)
             val denom = mpcUsed + piUsed
             val mpcShare = if (denom > 1e-6) 100.0 * mpcUsed / denom else 0.0
             input.rT.reason.append(" | MPC utile: %.0f%% (alpha=%.0f%%)".format(mpcShare, 100 * alpha))
-        }
+        }*/
         var smbDecision = (alpha * optimalBasalMpc + (1 - alpha) * finalInsulinDose).toFloat()
 
         val suspectedLateFatMeal = input.highCarbTime && hooks.runtimeToMinutes(input.highCarbRunTime) > 90
@@ -386,7 +402,8 @@ object SmbInstructionExecutor {
                                 val boostFactor = 1.20
                                 val boosted = smbAfterDamping * boostFactor
                                 input.rT.reason.append(
-                                        "\nHighBG PKPD boost: tail=%.0f%%, scale=%.2f → SMB ×%.2f (%.2f→%.2f)".format(
+                                      //"\nHighBG PKPD boost: tail=%.0f%%, scale=%.2f → SMB ×%.2f (%.2f→%.2f)".format(
+                                        input.context.getString(R.string.console_pkpd_log_2,
                                                 runtime.tailFraction * 100.0,
                                                 runtime.pkpdScale,
                                                 boostFactor,
@@ -426,16 +443,39 @@ object SmbInstructionExecutor {
         )
 
         val quantized = finalSmb.toDouble()
+        val diaMin = input.pkpdRuntime?.params?.diaHrs?.let { it * 60.0 }
+        val diaText = when {
+            diaMin == null || diaMin.isNaN() -> "n/a"
+            diaMin < 60.0 -> "%.0fm".format(diaMin)
+            else -> {
+                val h = diaMin.toInt() / 60
+                val m = diaMin.toInt() % 60
+                if (m == 0) "${h}h" else "${h}h${m}m"
+            }
+        }
 
+        val peakMin = input.pkpdRuntime?.params?.peakMin
+        val peakText = when {
+            peakMin == null || peakMin.isNaN() -> "n/a"
+            peakMin < 60.0 -> "%.0fm".format(peakMin)
+            else -> {
+                val h = peakMin.toInt() / 60
+                val m = peakMin.toInt() % 60
+                if (m == 0) "${h}h" else "${h}h${m}m"
+            }
+        }
         val activity = input.pkpdRuntime?.activity
         val activityPct = (activity?.relativeActivity ?: 0.0) * 100.0
         val anticipationPct = (activity?.anticipationWeight ?: 0.0) * 100.0
         val freshnessPct = (activity?.let { (1.0 - it.postWindowFraction).coerceIn(0.0, 1.0) } ?: 0.0) * 100.0
         val activityStage = activity?.stage?.name ?: "n/a"
         input.rT.reason.append(
-            "\nPKPD: DIA=%s min, Peak=%s min, Tail=%.0f%%, Activity=%.0f%% (%s, anticip=%.0f%%, fresh=%.0f%%), ISF(fused)=%s (profile=%s, TDD=%s, scale=%.2f)".format(
-                input.pkpdRuntime?.params?.diaHrs?.let { "%.0f".format(it * 60.0) } ?: "n/a",
-                input.pkpdRuntime?.params?.peakMin?.let { "%.0f".format(it) } ?: "n/a",
+            //"\nPKPD: DIA=%s min, Peak=%s min, Tail=%.0f%%, Activity=%.0f%% (%s, anticip=%.0f%%, fresh=%.0f%%), ISF(fused)=%s (profile=%s, TDD=%s, scale=%.2f)".format(
+              input.context.getString(R.string.console_pkpd_log,
+              //input.pkpdRuntime?.params?.diaHrs?.let { "%.0f".format(it * 60.0) } ?: "n/a",
+                diaText,
+              //input.pkpdRuntime?.params?.peakMin?.let { "%.0f".format(it) } ?: "n/a",
+                peakText,
                 (input.pkpdRuntime?.tailFraction ?: 0.0) * 100.0,
                 activityPct,
                 activityStage,
@@ -449,10 +489,12 @@ object SmbInstructionExecutor {
         )
 
         val bypassTag = if (audit?.mealBypass == true) " [BYPASS]" else ""
-        val highBgTag = if (highBgOverrideFlag) " (HighBG override)" else ""
+      //val highBgTag = if (highBgOverrideFlag) " (HighBG override)" else ""
+        val highBgTag = if (highBgOverrideFlag) input.context.getString(R.string.console_high_bg_override) else ""
         if (audit != null) {
             input.rT.reason.append(
-                "\nSMB: proposed=%.2f → damped=%.2f [tail%s×%.2f (relief=%.0f%%, %s), ex%s×%.2f, late%s×%.2f] → quantized=%.2f%s%s".format(
+              //"\nSMB: proposed=%.2f → damped=%.2f [tail%s×%.2f (relief=%.0f%%, %s), ex%s×%.2f, late%s×%.2f] → quantized=%.2f%s%s".format(
+                input.context.getString(R.string.console_smb_log,
                     smbDecision,
                     dampedRaw,
                     if (audit.tailApplied) "✔" else "✘", audit.tailMult,
@@ -463,22 +505,23 @@ object SmbInstructionExecutor {
                     quantized,
                     highBgTag,
                     bypassTag,
-                    smbAfterDamping,     // après override
-                    quantized,
-                    highBgTag
+                  //smbAfterDamping,     // après override
+                  //quantized,
+                  //highBgTag
                 )
             )
         } else {
             input.rT.reason.append(
-                "\nSMB: proposed=%.2f → damped=%.2f → quantized=%.2f%s%s".format(
+              //"\nSMB: proposed=%.2f → damped=%.2f → quantized=%.2f%s%s".format(
+                input.context.getString(R.string.console_smb_log_2,
                     smbDecision,
                     dampedRaw,
                     quantized,
                     highBgTag,
                     bypassTag,
-                    smbAfterDamping,     // après override
-                    quantized,
-                    highBgTag
+                  //smbAfterDamping,     // après override
+                  //quantized,
+                  //highBgTag
                 )
             )
         }

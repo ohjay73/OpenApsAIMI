@@ -10,9 +10,12 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import java.util.Locale
+import android.content.Context
+import app.aaps.plugins.aps.R
 
 @Reusable
 class AIMIAdaptiveBasal @Inject constructor(
+    private val context: Context,
     private val log: AAPSLogger,
     private val fmt: DecimalFormatter
 ) {
@@ -86,12 +89,14 @@ class AIMIAdaptiveBasal @Inject constructor(
         val antiStallBias = settings.antiStallBias
         val deltaPosRelease = settings.deltaPosRelease
 
-        if (input.profileBasal <= 0.0) return Decision(null, 0, "profile basal = 0")
+       //if (input.profileBasal <= 0.0) return Decision(null, 0, "profile basal = 0")
+        if (input.profileBasal <= 0.0) return Decision(null, 0, context.getString(R.string.aimi_profile_basal_zero))
 
         if (input.lastTempIsZero && input.zeroSinceMin >= zeroResumeMin) {
             val rate = max(kickerMinUph, input.profileBasal * zeroResumeRateFrac)
             val dur = min(zeroResumeMax, max(10, input.minutesSinceLastChange / 2))
-            val r = "micro-resume after ${input.zeroSinceMin}m @0U/h → ${fmt.to2Decimal(rate)}U/h × ${dur}m"
+          //val r = "micro-resume after ${input.zeroSinceMin}m @0U/h → ${fmt.to2Decimal(rate)}U/h × ${dur}m"
+            val r = context.getString(R.string.aimi_micro_resume,input.zeroSinceMin,fmt.to2Decimal(rate),dur)
             log.debug(LTag.APS, "AIMI+ $r")
             return Decision(rate, dur, r)
         }
@@ -109,7 +114,8 @@ class AIMIAdaptiveBasal @Inject constructor(
                 input.minutesSinceLastChange < 15 -> (kickerStartMin + 10)
                 else                              -> kickerMaxMin
             }
-            val r = "plateau kicker (BG=${fmt.to0Decimal(input.bg)}, Δ≈0, R2=${fmt.to2Decimal(input.r2)}) → ${fmt.to2Decimal(target)}U/h × ${dur}m"
+          //val r = "plateau kicker (BG=${fmt.to0Decimal(input.bg)}, Δ≈0, R2=${fmt.to2Decimal(input.r2)}) → ${fmt.to2Decimal(target)}U/h × ${dur}m"
+            val r = context.getString(R.string.aimi_plateau_kicker,fmt.to0Decimal(input.bg),fmt.to2Decimal(input.r2),fmt.to2Decimal(target),dur)
             log.debug(LTag.APS, "AIMI+ $r")
             return Decision(target, dur, r)
         }
@@ -118,12 +124,14 @@ class AIMIAdaptiveBasal @Inject constructor(
         if (glued && input.bg > highBg && input.delta < deltaPosRelease) {
             val rate = min(input.profileBasal * (1.0 + antiStallBias), input.profileBasal * maxMult)
             val dur = 10
-            val r = "anti-stall bias (+${(antiStallBias*100).toInt()}%) because R2=${fmt.to2Decimal(input.r2)} & Δ≈0"
+          //val r = "anti-stall bias (+${(antiStallBias*100).toInt()}%) because R2=${fmt.to2Decimal(input.r2)} & Δ≈0"
+            val r = context.getString(R.string.aimi_anti_stall_bias,(antiStallBias * 100).toInt(),fmt.to2Decimal(input.r2))
             log.debug(LTag.APS, "AIMI+ $r")
             return Decision(rate, dur, r)
         }
 
-        return Decision(null, 0, "no AIMI+ action")
+        //return Decision(null, 0, "no AIMI+ action")
+        return Decision(null, 0, context.getString(R.string.aimi_no_action))
     }
 
     // helpers
@@ -133,9 +141,10 @@ class AIMIAdaptiveBasal @Inject constructor(
          * Utilise uniquement les Defaults. Utile pour tests ou appels outils.
          */
         @JvmStatic
-        fun pureSuggest(input: Input): Decision {
+        fun pureSuggest(context: Context,input: Input): Decision {
             val settings = buildSettings(input)
-            if (input.profileBasal <= 0.0) return Decision(null, 0, "profile basal = 0")
+          //if (input.profileBasal <= 0.0) return Decision(null, 0, "profile basal = 0")
+            if (input.profileBasal <= 0.0) return Decision(null, 0, context.getString(R.string.aimi_profile_basal_zero))
 
             fun d0(v: Double) = String.format(Locale.US, "%.0f", v)
             fun d2(v: Double) = String.format(Locale.US, "%.2f", v)
@@ -143,7 +152,8 @@ class AIMIAdaptiveBasal @Inject constructor(
             if (input.lastTempIsZero && input.zeroSinceMin >= settings.zeroResumeMin) {
                 val rate = max(settings.kickerMinUph, input.profileBasal * settings.zeroResumeRateFrac)
                 val dur = min(settings.zeroResumeMax, max(10, input.minutesSinceLastChange / 2))
-                val r = "micro-resume after ${input.zeroSinceMin}m @0U/h → ${d2(rate)}U/h × ${dur}m"
+              //val r = "micro-resume after ${input.zeroSinceMin}m @0U/h → ${d2(rate)}U/h × ${dur}m"
+                val r = context.getString(R.string.aimi_micro_resume, input.zeroSinceMin, d2(rate), dur)
                 return Decision(rate, dur, r)
             }
 
@@ -165,7 +175,8 @@ class AIMIAdaptiveBasal @Inject constructor(
                     input.minutesSinceLastChange < 15 -> (settings.kickerStartMin + 10)
                     else                              -> settings.kickerMaxMin
                 }
-                val r = "plateau kicker (BG=${d0(input.bg)}, Δ≈0, R2=${d2(input.r2)}) → ${d2(target)}U/h × ${dur}m"
+              //val r = "plateau kicker (BG=${d0(input.bg)}, Δ≈0, R2=${d2(input.r2)}) → ${d2(target)}U/h × ${dur}m"
+                val r = context.getString(R.string.aimi_plateau_kicker, d0(input.bg), d2(input.r2), d2(target), dur)
                 return Decision(target, dur, r)
             }
 
@@ -178,11 +189,13 @@ class AIMIAdaptiveBasal @Inject constructor(
                     input.profileBasal * settings.maxMultiplier
                 )
                 val dur = 10
-                val r = "anti-stall bias (+${(settings.antiStallBias*100).toInt()}%) because R2=${d2(input.r2)} & Δ≈0"
+              //val r = "anti-stall bias (+${(settings.antiStallBias*100).toInt()}%) because R2=${d2(input.r2)} & Δ≈0"
+                val r = context.getString(R.string.aimi_anti_stall_bias, (settings.antiStallBias*100).toInt(), d2(input.r2))
                 return Decision(rate, dur, r)
             }
 
-            return Decision(null, 0, "no AIMI+ action")
+          //return Decision(null, 0, "no AIMI+ action")
+            return Decision(null, 0, context.getString(R.string.aimi_no_action))
         }
 
         private fun buildSettings(input: Input): PlateauSettings {
