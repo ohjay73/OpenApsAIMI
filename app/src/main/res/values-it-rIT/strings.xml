@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="nav_preferences_plugin">%1$s Preferenze</string>
+    <string name="nav_dashboard_preview">AIMI - Anteprima nuova grafica</string>
+    <string name="dashboard_preview_title">AIMI - Anteprima nuova grafica</string>
     <string name="nav_exit">Esci</string>
     <string name="delta">Delta</string>
     <string name="save">Salva</string>
