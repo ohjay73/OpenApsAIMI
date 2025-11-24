@@ -4087,6 +4087,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             //console.error(iob_data.lastBolusTime);
             // minutes since last bolus
             val lastBolusAge = round((systemTime - iob_data.lastBolusTime) / 60000.0, 1)
+            val lastBolusAgeLog = if (lastBolusAge >= 60) {
+                val hours = (lastBolusAge / 60).toInt()
+                val minutes = (lastBolusAge % 60).toInt()
+                "${hours}h${minutes}m"
+            } else {
+                "${lastBolusAge.toInt()}m"
+            }
             //console.error(lastBolusAge);
             //console.error(profile.temptargetSet, target_bg, rT.COB);
             // only allow microboluses with COB or low temp targets, or within DIA hours of a bolus
@@ -4108,11 +4115,15 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 val intervalStr = String.format(java.util.Locale.US, "%.1f", smbInterval.toDouble())
                 val lastBolusStr = String.format(java.util.Locale.US, "%.1f", lastBolusAge)
                 val deltaStr = String.format(java.util.Locale.US, "%.1f", delta.toDouble())
-                rT.reason.append(" [SMB interval=")
+              //rT.reason.append(" [SMB interval=")
+                rT.reason.append(context.getString(R.string.smb_interval))
                 rT.reason.append(intervalStr)
-                rT.reason.append(" min, lastBolusAge=")
-                rT.reason.append(lastBolusStr)
-                rT.reason.append(" min, Δ=")
+              //rT.reason.append(" min, lastBolusAge=")
+                rT.reason.append(context.getString(R.string.lastBolusAge))
+              //rT.reason.append(lastBolusStr)
+                rT.reason.append(lastBolusAgeLog)
+              //rT.reason.append(" min, Δ=")
+                rT.reason.append(", Δ=")
                 rT.reason.append(deltaStr)
                 rT.reason.append(", BG=")
                 rT.reason.append(bg.toInt().toString())
