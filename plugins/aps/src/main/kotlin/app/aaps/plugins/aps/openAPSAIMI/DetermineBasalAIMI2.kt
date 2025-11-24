@@ -1890,12 +1890,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         if (honeymoon && bg < 170 && delta < 5) return smbAmount / 2
 
-        if (preferences.get(BooleanKey.OApsAIMInight) && currentHour == 23 && delta < 10 && iob < maxSMB) {
-            return smbAmount * 0.8f
-        }
-        if (currentHour in 0..7 && delta < 10 && iob < maxSMB) {
-            return smbAmount * 0.8f
-        }
+        //if (preferences.get(BooleanKey.OApsAIMInight) && currentHour == 23 && delta < 10 && iob < maxSMB) {
+        //    return smbAmount * 0.8f
+        //}
+        //if (currentHour in 0..7 && delta < 10 && iob < maxSMB) {
+        //    return smbAmount * 0.8f
+        //}
 
         return smbAmount
     }
@@ -2224,7 +2224,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         bgAdjustment *= 1.2f
 
         val dynamicCorrection = when {
-            hourOfDay in 0..11 || hourOfDay in 15..19 || hourOfDay >= 22 -> 0.7f
+            //hourOfDay in 0..11 || hourOfDay in 15..19 || hourOfDay >= 22 -> 0.7f
             combinedDelta > 11f  -> 2.5f   // Très forte montée, on augmente très agressivement
             combinedDelta > 8f  -> 2.0f   // Montée forte
             combinedDelta > 4f  -> 1.5f   // Montée modérée à forte
@@ -2822,9 +2822,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         }
 
 // ⚠ Réduction nocturne pour éviter une surcorrection pendant le sommeil (0h - 6h)
-        if (hourOfDay in 0..11 || hourOfDay in 15..19 || hourOfDay >= 22) {
-            DynMaxSmb *= 0.6f
-        }
+        //if (hourOfDay in 0..11 || hourOfDay in 15..19 || hourOfDay >= 22) {
+        //    DynMaxSmb *= 0.6f
+        //}
 
 // ⚠ Alignement avec `maxSMB` et `profile.peakTime`
         DynMaxSmb = DynMaxSmb.coerceAtMost(maxSMBHB.toFloat() * (tp / 60.0).toFloat())
@@ -2912,7 +2912,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         this.decceleratingDown = if (delta < 0 && (delta > shortAvgDelta || delta > longAvgDelta)) 1 else 0
         this.stable = if (delta > -3 && delta < 3 && shortAvgDelta > -3 && shortAvgDelta < 3 && longAvgDelta > -3 && longAvgDelta < 3 && bg < 180) 1 else 0
         val nightbis = hourOfDay <= 7
-        val modesCondition = !mealTime && !lunchTime && !bfastTime && !dinnerTime && !sportTime && !snackTime && !highCarbTime && !sleepTime && !lowCarbTime
+        val modesCondition = (!mealTime || mealruntime > 30) && (!lunchTime || lunchruntime > 30) && (!bfastTime || bfastruntime > 30) && (!dinnerTime || dinnerruntime > 30) && !sportTime && (!snackTime || snackrunTime > 30) && (!highCarbTime || highCarbrunTime > 30) && !sleepTime && !lowCarbTime
         val pbolusAS: Double = preferences.get(DoubleKey.OApsAIMIautodrivesmallPrebolus)
         val reason = StringBuilder()
         val recentBGs = getRecentBGs()
