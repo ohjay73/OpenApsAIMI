@@ -76,6 +76,13 @@ class BasalPlanner @Inject constructor(
 
         // 2) Micro-resume après 0 basal prolongé
         if (lastTempIsZero && zeroSinceMin >= ZERO_RESUME_MIN) {
+            val zeroSinceLog = if (zeroSinceMin >= 60) {
+                val hours = zeroSinceMin / 60
+                val minutes = zeroSinceMin % 60
+                "${hours}h${minutes}m"
+            } else {
+                "${zeroSinceMin}m"
+            }
             val base = max(KICK_MIN_UPH, profileBasal * ZERO_RESUME_FRAC)
             val rate = clampAndQuantize(base, profileBasal, maxBasal, step)
             val dur = min(ZERO_RESUME_MAX_MIN, max(minDur, minutesSinceLastChange / 2))
@@ -83,7 +90,7 @@ class BasalPlanner @Inject constructor(
                 rateUph = rate,
                 durationMin = dur,
               //reason = "Micro-resume after ${zeroSinceMin}m @0U/h → ${fmt2(rate)}U/h × ${dur}m"
-                reason = context.getString(R.string.basal_planner_micro_resume, zeroSinceMin, fmt2(rate), dur)
+                reason = context.getString(R.string.basal_planner_micro_resume, zeroSinceLog, fmt2(rate), dur)
             )
         }
 
