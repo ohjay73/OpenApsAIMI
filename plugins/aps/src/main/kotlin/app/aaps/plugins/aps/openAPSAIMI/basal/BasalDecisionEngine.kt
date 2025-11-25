@@ -155,7 +155,8 @@ class BasalDecisionEngine @Inject constructor(
 
             basalPlanner.plan(ctx)?.let { plan ->
                 rT.duration = plan.durationMin
-                rT.reason.append(" | BasalPlanner: ").append(plan.reason)
+              //rT.reason.append(" | BasalPlanner: ").append(plan.reason)
+                rT.reason.append(context.getString(R.string.basalplanner_reason, plan.reason))
                 return Decision(
                     rate = plan.rateUph,
                     duration = plan.durationMin,
@@ -207,7 +208,8 @@ class BasalDecisionEngine @Inject constructor(
                     chosenRate = candidate
                     val currentDuration = rT.duration ?: dur
                     rT.duration = minOf(currentDuration, dur)
-                    rT.reason.append(" | override by AIMI+: ").append(aimiDecision.reason)
+                  //rT.reason.append(" | override by AIMI+: ").append(aimiDecision.reason)
+                    rT.reason.append(context.getString(R.string.override_aimi, aimiDecision.reason))
                 }
                 val hardCap = 1.8 * input.profileCurrentBasal
                 chosenRate = min(chosenRate!!, hardCap)
@@ -242,16 +244,24 @@ class BasalDecisionEngine @Inject constructor(
         } else {
             chosenRate = when {
                 input.snackTime && input.snackRuntimeMin in 0..30 && input.delta < 10 -> {
-                    helpers.calculateRate(input.basalEstimate, input.profileCurrentBasal, 4.0, "SnackTime")
+                  //helpers.calculateRate(input.basalEstimate, input.profileCurrentBasal, 4.0, "SnackTime")
+                    helpers.calculateRate(input.basalEstimate, input.profileCurrentBasal, 4.0, context.getString(R.string.reason_snacktime))
                 }
-                input.fastingTime -> helpers.calculateRate(input.profileCurrentBasal, input.profileCurrentBasal, input.delta, "FastingTime")
-                input.sportTime && input.bg > 169 && input.delta > 4 -> helpers.calculateRate(input.profileCurrentBasal, input.profileCurrentBasal, 1.3, "SportTime")
-                input.honeymoon && input.delta in 0.0..6.0 && input.bg in 99.0..141.0 -> helpers.calculateRate(input.profileCurrentBasal, input.profileCurrentBasal, input.delta, "Honeymoon")
-                input.bg in 81.0..99.0 && input.delta in 3.0..7.0 && input.honeymoon -> helpers.calculateRate(input.basalEstimate, input.profileCurrentBasal, 1.0, "Honeymoon small-rise")
-                input.bg > 120 && input.delta > 0 && input.smbToGive == 0.0 && input.honeymoon -> helpers.calculateRate(input.basalEstimate, input.profileCurrentBasal, 5.0, "Honeymoon corr.")
+              //input.fastingTime -> helpers.calculateRate(input.profileCurrentBasal, input.profileCurrentBasal, input.delta, "FastingTime")
+                input.fastingTime -> helpers.calculateRate(input.profileCurrentBasal, input.profileCurrentBasal, input.delta, context.getString(R.string.reason_fastingtime))
+              //input.sportTime && input.bg > 169 && input.delta > 4 -> helpers.calculateRate(input.profileCurrentBasal, input.profileCurrentBasal, 1.3, "SportTime")
+                input.sportTime && input.bg > 169 && input.delta > 4 -> helpers.calculateRate(input.profileCurrentBasal, input.profileCurrentBasal, 1.3, context.getString(R.string.reason_sporttime))
+              //input.honeymoon && input.delta in 0.0..6.0 && input.bg in 99.0..141.0 -> helpers.calculateRate(input.profileCurrentBasal, input.profileCurrentBasal, input.delta, "Honeymoon")
+                input.honeymoon && input.delta in 0.0..6.0 && input.bg in 99.0..141.0 -> helpers.calculateRate(input.profileCurrentBasal, input.profileCurrentBasal, input.delta, context.getString(R.string.reason_honeymoon))
+              //input.bg in 81.0..99.0 && input.delta in 3.0..7.0 && input.honeymoon -> helpers.calculateRate(input.basalEstimate, input.profileCurrentBasal, 1.0, "Honeymoon small-rise")
+                input.bg in 81.0..99.0 && input.delta in 3.0..7.0 && input.honeymoon -> helpers.calculateRate(input.basalEstimate, input.profileCurrentBasal, 1.0, context.getString(R.string.reason_honeymoon_smallrise))
+              //input.bg > 120 && input.delta > 0 && input.smbToGive == 0.0 && input.honeymoon -> helpers.calculateRate(input.basalEstimate, input.profileCurrentBasal, 5.0, "Honeymoon corr.")
+                input.bg > 120 && input.delta > 0 && input.smbToGive == 0.0 && input.honeymoon -> helpers.calculateRate(input.basalEstimate, input.profileCurrentBasal, 5.0, context.getString(R.string.reason_honeymoon_correction))
                 else -> chosenRate
             }
         }
+
+
 
         if (chosenRate == null) {
             val predictedLow = input.predictedBg < 80 && input.mealData.slopeFromMaxDeviation <= 0
@@ -265,12 +275,14 @@ class BasalDecisionEngine @Inject constructor(
                 } else {
                     chosenRate = input.profileCurrentBasal * 0.25
                     overrideSafety = false
-                    rT.reason.append("PredLow 65-80: 25% basal")
+                  //rT.reason.append("PredLow 65-80: 25% basal")
+                    rT.reason.append(context.getString(R.string.predlow_65_80))
                 }
             } else if (highIobStop) {
                 chosenRate = input.profileCurrentBasal * 0.5
                 overrideSafety = false
-                rT.reason.append("HighIOB: 50% basal")
+              //rT.reason.append("HighIOB: 50% basal")
+                rT.reason.append(context.getString(R.string.high_iob_50))
             } else if (input.iob > input.maxIob && input.allowMealHighIob) {
                 chosenRate = max(input.profileCurrentBasal, input.currentTemp.rate)
                 rT.reason.append(context.getString(R.string.reason_meal_hold_profile_basal,
@@ -291,7 +303,8 @@ class BasalDecisionEngine @Inject constructor(
                         rT.reason.append(context.getString(R.string.bg_80_90_fall))
                     } else {
                         chosenRate = input.profileCurrentBasal * 0.25
-                        rT.reason.append("BG 80-90 falling slow: 25%")
+                      //rT.reason.append("BG 80-90 falling slow: 25%")
+                        rT.reason.append(context.getString(R.string.bg_80_90_fall_slow))
                     }
                 }
                 input.bg in 80.0..90.0 &&
@@ -305,7 +318,8 @@ class BasalDecisionEngine @Inject constructor(
                     input.slopeFromMinDeviation <= 0.3 && input.iob > 0.1 && !input.sportTime &&
                     input.bgAcceleration > 0.0 -> {
                     chosenRate = input.profileCurrentBasal * 0.5
-                    rT.reason.append("BG 90-100 moderate: 50%")
+                  //rT.reason.append("BG 90-100 moderate: 50%")
+                    rT.reason.append(context.getString(R.string.bg_90_100_moderate_50))
                 }
                 input.bg in 90.0..100.0 &&
                     input.slopeFromMinDeviation >= 0.3 && input.combinedDelta in -1.0..2.0 && !input.sportTime &&
@@ -343,7 +357,8 @@ class BasalDecisionEngine @Inject constructor(
                 rT.reason.append(context.getString(R.string.calm_meal_and_timing))
             } else if (input.timenow > input.sixAmHour && input.recentSteps5Minutes > 100) {
                 chosenRate = input.profileCurrentBasal * 0.5
-                rT.reason.append("Morning activity: 50%")
+              //rT.reason.append("Morning activity: 50%")
+                rT.reason.append(context.getString(R.string.morning_activity_50))
             } else if (input.timenow <= input.sixAmHour && input.delta > 0 && input.bgAcceleration > 0.0) {
                 chosenRate = input.profileCurrentBasal
                 rT.reason.append(context.getString(R.string.morning_rise_profile_basal))

@@ -997,6 +997,7 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="reason_max_smb">; maxBolus %1$.2f</string>
     <string name="reason_microbolus">Microbolusing %1$.2fU.</string>
     <string name="reason_wait_microbolus">Waiting %1$.0fmin %2$.0fs to microbolus again.</string>
+    <string name="basalplanner_reason"> | BasalPlanner: %1$s</string>
     <string name="override_aimi"> | override by AIMI+: %1$s</string>
     <string name="meal_mode_meal">generic meal(%1$dm)</string>
     <string name="meal_mode_bfast">breakfast(%1$dm)</string>
@@ -1016,14 +1017,19 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="reason_honeymoon_correction">Honeymoon corr.</string>
 
     <string name="safety_cut_tbr">Safety cut: predicted BG&lt;100 or IOB>%1$.2f → basal to 0.\n</string>
+    <string name="predlow_65_80">PredLow 65&#8211;80: 25%% basal.\n</string>
+    <string name="high_iob_50">HighIOB: 50%% basal.\n</string>
     <string name="bg_below_80">BG&lt;80 → basal to 0.\n</string>
     <string name="bg_80_90_fall">BG 80&#8211;90 &amp; free fall → basal to 0.\n</string>
+    <string name="bg_80_90_fall_slow">BG 80&#8211;90 falling slow: 25%%.\n</string>
     <string name="bg_80_90_stable">BG 80&#8211;90 stable → basal x0.2.\n</string>
     <string name="bg_90_100_moderate">BG 90&#8211;100 &amp; moderate risk → basal to 0.\n</string>
+    <string name="bg_90_100_moderate_50">BG 90&#8211;100 moderate: 50%%.\n</string>
     <string name="bg_90_100_slight_gain">BG 90&#8211;100 &amp; slight increase → basal x0.5.\n</string>
     <string name="slow_rise_proportional_adjustment">Slow rise → proportional adjustment.</string>
     <string name="eventual_bg_over_110_hyper_factor">Eventual BG&gt;110 &amp; hyper → factor adjustment.</string>
     <string name="calm_meal_and_timing">Calm meal &amp; timing → basal x1.5.</string>
+    <string name="morning_activity_50">Morning activity: 50%%.</string>
     <string name="morning_activity_basal_zero">Physical activity → basal 0.</string>
     <string name="morning_rise_profile_basal">Morning rise → profile basal.</string>
     <string name="meal_snack_under_30m_basal_10">Meal/snack &lt;30m → basal x10.</string>
@@ -1095,4 +1101,8 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="basal_planner_anti_stall">Anti-stall (Δ≈0) → %1$sU/h × %2$d m</string>
     <string name="smb_interval"> [SMB interval=</string>
     <string name="lastBolusAge"> min, lastBolusAge=</string>
+
+    <!--AIMI REFACTORING TRANSLATION CODE CONSOLE LOG -->
+
+
 </resources>
