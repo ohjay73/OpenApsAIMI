@@ -256,7 +256,7 @@
 
     <!--    AIMI START TRANSLATION MENU , SUBMENU AND PREFERENCES - FILE OpenAPSAIMIPlugin.kt   -->
 
-    <string name="openapsaimi">"AIMI 3.3"</string>
+    <string name="openapsaimi">"AIMI"</string>
     <string name="openapsaimi_maxsmb_summary">Max SMB value when BG is below 120</string>
     <string name="openapsaimi_maxsmb_title">Max SMB LOW BG</string>
     <string name="description_openapsaimi">Small micro-boluses based on Artificial Intelligence and Machine Learning.</string>

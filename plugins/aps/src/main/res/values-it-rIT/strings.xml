@@ -242,7 +242,7 @@
 
     <!--    AIMI INIZIO TRADUZIONE MENU, SOTTOMENU e PREFERENZE - FILE OpenAPSAIMIPlugin.kt   -->
 
-    <string name="openapsaimi">"AIMI 3.3"</string>
+    <string name="openapsaimi">"AIMI"</string>
     <string name="openapsaimi_maxsmb_summary">Max SMB value quando BG è minore di 120</string>
     <string name="openapsaimi_maxsmb_title">Dimensione massima SMB (U)</string>
     <string name="description_openapsaimi">Piccoli micro-bolus basati su Intelligenza Artificiale e Apprendimento Automatico.</string>
