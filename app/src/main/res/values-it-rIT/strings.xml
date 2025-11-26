@@ -32,4 +32,20 @@
     <string name="simple_mode">Modalità semplice</string>
     <string name="select">Seleziona</string>
     <string name="set">Imposta</string>
+
+    <!-- Comparator -->
+    <string name="menu_comparator">Comparatore Plugin AIMI-SMB</string>
+    <string name="comparator_title">Analisi delle Prestazioni</string>
+    <string name="comparator_no_data">Nessun dato disponibile. Il file CSV verrà creato dopo il primo confronto.</string>
+    <string name="comparator_summary">Riepilogo</string>
+    <string name="comparator_total_entries">Numero di voci</string>
+    <string name="comparator_avg_rate_diff">Diff. basale media</string>
+    <string name="comparator_avg_smb_diff">Diff. SMB media</string>
+    <string name="comparator_agreement">Tasso di concordanza</string>
+    <string name="comparator_aimi_win_rate">AIMI più aggressivo</string>
+    <string name="comparator_smb_win_rate">SMB più aggressivo</string>
+    <string name="comparator_rate_chart_title">Basi Basali Confrontate</string>
+    <string name="comparator_rate_chart_desc">AIMI vs SMB - Basi Basali (U/h)</string>
+    <string name="comparator_smb_chart_title">SMB Confrontati</string>
+    <string name="comparator_smb_chart_desc">AIMI vs SMB - Super Micro Bolus (U)</string>
 </resources>
