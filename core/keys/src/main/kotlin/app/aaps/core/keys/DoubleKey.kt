@@ -80,7 +80,7 @@ enum class DoubleKey(
     OApsAIMIPkpdStatePeakMin("aimi_pkpd_state_peak_min", 180.0, 40.0, 300.0),
     OApsAIMIIsfFusionMinFactor("aimi_isf_fusion_min_factor", 0.7, 0.3, 1.0),
     OApsAIMIIsfFusionMaxFactor("aimi_isf_fusion_max_factor", 2.0, 1.0, 2.0),
-    OApsAIMIIsfFusionMaxChangePerTick("aimi_isf_fusion_max_change_per_tick", 0.5, 0.0, 0.2),
+    OApsAIMIIsfFusionMaxChangePerTick("aimi_isf_fusion_max_change_per_tick", 0.5, 0.0, 0.5),
     OApsAIMISmbTailThreshold("aimi_smb_tail_threshold", 0.35, 0.0, 1.0),
     OApsAIMISmbTailDamping("aimi_smb_tail_damping", 0.6, 0.0, 1.0),
     OApsAIMISmbExerciseDamping("aimi_smb_exercise_damping", 0.5, 0.0, 1.0),
