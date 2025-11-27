@@ -186,12 +186,10 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
                         true
                     }
 
-
                     R.id.nav_historybrowser     -> {
                         startActivity(Intent(this@MainActivity, HistoryBrowseActivity::class.java).setAction("info.nightscout.androidaps.MainActivity"))
                         true
                     }
-
 
                     R.id.nav_treatments         -> {
                         startActivity(Intent(this@MainActivity, TreatmentsActivity::class.java).setAction("info.nightscout.androidaps.MainActivity"))
@@ -205,7 +203,7 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
                         true
                     }
 
-                   R.id.nav_dashboard_preview  -> {
+                    R.id.nav_dashboard_preview  -> {
                         startActivity(Intent(this@MainActivity, DashboardPreviewActivity::class.java))
                         true
                     }

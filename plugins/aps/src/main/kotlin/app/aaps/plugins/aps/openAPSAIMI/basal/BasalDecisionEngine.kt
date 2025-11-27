@@ -261,8 +261,6 @@ class BasalDecisionEngine @Inject constructor(
             }
         }
 
-
-
         if (chosenRate == null) {
             val predictedLow = input.predictedBg < 80 && input.mealData.slopeFromMaxDeviation <= 0
             val highIobStop = input.iob > input.maxIob && !input.allowMealHighIob
