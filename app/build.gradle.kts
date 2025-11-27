@@ -18,6 +18,7 @@ plugins {
 repositories {
     mavenCentral()
     google()
+    maven("https://jitpack.io")
 }
 
 // -----------------------------------------------------------------------------
@@ -267,6 +268,8 @@ dependencies {
 
     // MainApp
     api(libs.com.uber.rxdogtag2.rxdogtag)
+    // MPAndroidChart for comparator
+    implementation("com.github.PhilJay:MPAndroidChart:v3.1.0")
     // Remote config
     api(libs.com.google.firebase.config)
 }

@@ -53,6 +53,7 @@ import app.aaps.plugins.aps.openAPSAIMI.smb.SmbDampingUsecase
 import app.aaps.plugins.aps.openAPSAIMI.smb.SmbInstructionExecutor
 import app.aaps.plugins.aps.openAPSAIMI.smb.computeMealHighIobDecision
 import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCycleFacade
+import app.aaps.plugins.aps.openAPSAIMI.comparison.AimiSmbComparator
 import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCycleInfo
 import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCycleLearner
 import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCyclePreferences
@@ -115,6 +116,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     @Inject lateinit var activePlugin: ActivePlugin
     @Inject lateinit var basalDecisionEngine: BasalDecisionEngine
     @Inject lateinit var glucoseStatusCalculatorAimi: GlucoseStatusCalculatorAimi
+    @Inject lateinit var comparator: AimiSmbComparator
+    @Inject lateinit var basalLearner: app.aaps.plugins.aps.openAPSAIMI.learning.BasalLearner
+    @Inject lateinit var reactivityLearner: app.aaps.plugins.aps.openAPSAIMI.learning.ReactivityLearner
     init {
         // Branche l’historique basal (TBR) sur la persistence réelle
         BasalHistoryUtils.installHistoryProvider(
@@ -3365,7 +3369,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             consoleLog.add("ISF réduit de 10% (tendance FC anormale).")
         }
         if (tdd7Days.toFloat() != 0.0f) {
-            basalaimi = (tdd7Days / preferences.get(DoubleKey.OApsAIMIweight)).toFloat()
+            val learnedBasalMultiplier = basalLearner.getMultiplier()
+            basalaimi = ((tdd7Days / preferences.get(DoubleKey.OApsAIMIweight)) * learnedBasalMultiplier).toFloat()
+            if (learnedBasalMultiplier != 1.0) {
+                consoleLog.add("Basal adjusted by learner (x${"%.2f".format(learnedBasalMultiplier)})")
+            }
         }
         this.basalaimi = basalDecisionEngine.smoothBasalRate(tdd7P.toFloat(), tdd7Days.toFloat(), basalaimi)
         if (tdd7Days.toFloat() != 0.0f) {
@@ -3390,12 +3398,14 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
                 timenow < sixAMHour                               -> {
                     val multiplier = if (honeymoon) 1.2 else 1.4
-                    (basalaimi * multiplier).toFloat()
+                    val reactivity = reactivityLearner.getFactor(LocalTime.now())
+                    (basalaimi * multiplier * reactivity).toFloat()
                 }
 
                 timenow > sixAMHour                               -> {
                     val multiplier = if (honeymoon) 1.4 else 1.6
-                    (basalaimi * multiplier).toFloat()
+                    val reactivity = reactivityLearner.getFactor(LocalTime.now())
+                    (basalaimi * multiplier * reactivity).toFloat()
                 }
 
                 tirbasal3B <= 5 && tirbasal3IR in 70.0..80.0      -> (basalaimi * 1.1).toFloat()
@@ -4045,12 +4055,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         if (iob_data.iob > maxIobLimit && !allowMealHighIob) {
             //rT.reason.append("IOB ${round(iob_data.iob, 2)} > maxIobLimit maxIobLimit")
             rT.reason.append(context.getString(R.string.reason_iob_max, round(iob_data.iob, 2), round(maxIobLimit, 2)))
-            if (delta < 0) {
+            val finalResult = if (delta < 0) {
                 //rT.reason.append(", BG is dropping (delta $delta), setting basal to 0. ")
                 rT.reason.append(context.getString(R.string.reason_bg_dropping, delta))
-                return setTempBasal(0.0, 30, profile, rT, currenttemp, overrideSafetyLimits = false) // Basal à 0 pendant 30 minutes
-            }
-            return if (currenttemp.duration > 15 && (roundBasal(basal) == roundBasal(currenttemp.rate))) {
+                setTempBasal(0.0, 30, profile, rT, currenttemp, overrideSafetyLimits = false) // Basal à 0 pendant 30 minutes
+            } else if (currenttemp.duration > 15 && (roundBasal(basal) == roundBasal(currenttemp.rate))) {
                 rT.reason.append(", temp ${currenttemp.rate} ~ req ${round(basal, 2).withoutZeros()}U/hr. ")
                 rT
             } else {
@@ -4058,6 +4067,20 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 rT.reason.append(context.getString(R.string.reason_set_temp_basal, round(basal, 2)))
                 setTempBasal(basal, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
             }
+            comparator.compare(
+                aimiResult = finalResult,
+                glucoseStatus = glucose_status,
+                currentTemp = currenttemp,
+                iobData = iob_data_array,
+                profileAimi = profile,
+                autosens = autosens_data,
+                mealData = mealData,
+                microBolusAllowed = microBolusAllowed,
+                currentTime = currentTime,
+                flatBGsDetected = flatBGsDetected,
+                dynIsfMode = dynIsfMode
+            )
+            return finalResult
         } else {
             var insulinReq = smbToGive.toDouble()
             // 📝 SMB autorisés mais atténués lorsque le repas impose un IOB > max raisonnable.
@@ -4140,6 +4163,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 tdd7P = tdd7P,
                 tdd7Days = tdd7Days,
                 variableSensitivity = variableSensitivity.toDouble(),
+                profileSens = profile.sens,
                 predictedBg = predictedBg.toDouble(),
                 eventualBg = eventualBG,
                 iob = iob.toDouble(),
@@ -4200,7 +4224,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 round = { value, digits -> round(value, digits) }
             )
             val basalDecision = basalDecisionEngine.decide(basalInput, rT, helpers)
-            return setTempBasal(
+            val finalResult = setTempBasal(
                 _rate = basalDecision.rate,
                 duration = basalDecision.duration,
                 profile = profile,
@@ -4208,6 +4232,40 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 currenttemp = currenttemp,
                 overrideSafetyLimits = basalDecision.overrideSafety
             )
+            comparator.compare(
+                aimiResult = finalResult,
+                glucoseStatus = glucose_status,
+                currentTemp = currenttemp,
+                iobData = iob_data_array,
+                profileAimi = profile,
+                autosens = autosens_data,
+                mealData = mealData,
+                microBolusAllowed = microBolusAllowed,
+                currentTime = currentTime,
+                flatBGsDetected = flatBGsDetected,
+                dynIsfMode = dynIsfMode
+            )
+
+            // --- Update Learners ---
+            val currentHour = LocalTime.now().hour
+            val anyMealActive = mealTime || bfastTime || lunchTime || dinnerTime || highCarbTime
+            val isNight = currentHour >= 22 || currentHour <= 6
+            
+            basalLearner.process(
+                currentBg = bg,
+                currentDelta = delta.toDouble(),
+                tdd7Days = tdd7Days,
+                tdd30Days = tdd7Days, // Placeholder as tdd30Days is not readily available in this scope yet
+                isFastingTime = isNight && !anyMealActive
+            )
+
+            reactivityLearner.process(
+                currentBg = bg,
+                isMealActive = anyMealActive,
+                time = LocalTime.now()
+            )
+
+            return finalResult
         }
     }
 }
