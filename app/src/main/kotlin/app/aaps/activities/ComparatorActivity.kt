@@ -108,9 +108,11 @@ class ComparatorActivity : DaggerAppCompatActivityWithResult() {
         binding.totalInsulinSmbValue.text = String.format(Locale.US, "%.1f U", impact.totalInsulinSmb)
         
         val diffText = if (impact.cumulativeDiff > 0) {
-            String.format(Locale.US, "+%.1f U (AIMI plus agressif)", impact.cumulativeDiff)
+          //String.format(Locale.US, "+%.1f U (AIMI plus agressif)", impact.cumulativeDiff)
+            getString(R.string.cumulative_diff_aimi, impact.cumulativeDiff)
         } else {
-            String.format(Locale.US, "%.1f U (SMB plus agressif)", impact.cumulativeDiff)
+          //String.format(Locale.US, "%.1f U (SMB plus agressif)", impact.cumulativeDiff)
+            getString(R.string.cumulative_diff_smb, impact.cumulativeDiff)
         }
         binding.cumulativeDiffValue.text = diffText
     }

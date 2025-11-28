@@ -911,7 +911,5 @@
     <string name="comparison_safety_high_variability">⚠️ Variabilité importante détectée</string>
     <string name="comparison_safety_large_diff">⚠️ Grande différence d\'insuline totale</string>
     <string name="comparison_safety_ok">Profil de sécurité acceptable</string>
-
-
 </resources>
 

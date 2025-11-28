@@ -67,6 +67,9 @@
     <string name="comparator_recommended_algorithm">Algorithme recommandé: %1$s</string>
     <string name="comparator_confidence">Confiance: %1$s</string>
 
+    <string name="cumulative_diff_aimi">+%.1f U (AIMI plus agressif)</string>
+    <string name="cumulative_diff_smb">%.1f U (SMB plus agressif)</string>
+
 
 </resources>
 
