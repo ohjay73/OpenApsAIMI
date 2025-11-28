@@ -1109,7 +1109,7 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="comparison_high">High</string>
     <string name="comparison_equivalent">Equivalent</string>
     <string name="comparison_smb_more_reactive">More reactive to glucose variations</string>
-    <string name="comparison_smb_aggressive">%1$.1fx more aggressive with variability %2$s</string>
+    <string name="comparison_smb_aggressive">SMB is %1$.1fx more aggressive than AIMI with variability %2$s → higher hypo risk</string>
     <string name="comparison_conservative_approach">More conservative approach with variability %1$s</string>
     <string name="comparison_both_algorithms_similar">Both algorithms show similar performance (%1$.1f%% agreement)</string>
     <string name="comparison_safety_high_risk">⚠️ Increased monitoring recommended</string>

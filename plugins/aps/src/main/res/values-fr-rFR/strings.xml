@@ -904,7 +904,7 @@
     <string name="comparison_high">Élevé</string>
     <string name="comparison_equivalent">Équivalent</string>
     <string name="comparison_smb_more_reactive">Plus réactif aux variations glycémiques</string>
-    <string name="comparison_smb_aggressive">%1$.1fx plus agressif avec variabilité %2$s</string>
+    <string name="comparison_smb_aggressive">SMB est %1$.1fx plus agressif qu’AIMI avec une variabilité de %2$s → risque d’hypo plus élevé</string>
     <string name="comparison_conservative_approach">Approche plus conservatrice avec variabilité %1$s</string>
     <string name="comparison_both_algorithms_similar">Les deux algorithmes montrent des performances similaires (%1$.1f%% d\'accord)</string>
     <string name="comparison_safety_high_risk">⚠️ Surveillance accrue recommandée</string>
