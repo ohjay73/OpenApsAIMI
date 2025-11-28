@@ -1084,7 +1084,21 @@
     <string name="smb_interval"> [SMB intervallo=</string>
     <string name="lastBolusAge"> min, ultimoSMB=</string>
 
-    <!--AIMI REFACTORING TRANSLATION CODE CONSOLE LOG -->
+
+    <!--AIMI REFACTORING TRANSLATION ComparisonCsvParser.kt -->
+
+    <string name="comparison_low">Basso</string>
+    <string name="comparison_moderate">Moderato</string>
+    <string name="comparison_high">Alto</string>
+    <string name="comparison_equivalent">Equivalente</string>
+    <string name="comparison_smb_more_reactive">Più reattivo alle variazioni glicemiche</string>
+    <string name="comparison_smb_aggressive">%1$.1fx più aggressivo con variabilità %2$s</string>
+    <string name="comparison_conservative_approach">Approccio più conservativo con variabilità %1$s</string>
+    <string name="comparison_both_algorithms_similar">I due algoritmi mostrano prestazioni simili (%1$.1f%% d'accordo)</string>
+    <string name="comparison_safety_high_risk">⚠️ Sorveglianza aumentata consigliata</string>
+    <string name="comparison_safety_high_variability">⚠️ Variabilità significativa rilevata</string>
+    <string name="comparison_safety_large_diff">⚠️ Grande differenza di insulina totale</string>
+    <string name="comparison_safety_ok">Profilo di sicurezza accettabile</string>
 
 </resources>
 

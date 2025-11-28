@@ -897,5 +897,21 @@
     <string name="honeymoon_meal_slope">Lune de miel pente repas.</string>
     <string name="pregnancy_delta_over_0_adjustment">Grossesse &amp; Δ&gt;0 → ajustement.</string>
 
+    <!--AIMI REFACTORING TRANSLATION ComparisonCsvParser.kt -->
+
+    <string name="comparison_low">Faible</string>
+    <string name="comparison_moderate">Modéré</string>
+    <string name="comparison_high">Élevé</string>
+    <string name="comparison_equivalent">Équivalent</string>
+    <string name="comparison_smb_more_reactive">Plus réactif aux variations glycémiques</string>
+    <string name="comparison_smb_aggressive">%1$.1fx plus agressif avec variabilité %2$s</string>
+    <string name="comparison_conservative_approach">Approche plus conservatrice avec variabilité %1$s</string>
+    <string name="comparison_both_algorithms_similar">Les deux algorithmes montrent des performances similaires (%1$.1f%% d'accord)</string>
+    <string name="comparison_safety_high_risk">⚠️ Surveillance accrue recommandée</string>
+    <string name="comparison_safety_high_variability">⚠️ Variabilité importante détectée</string>
+    <string name="comparison_safety_large_diff">⚠️ Grande différence d'insuline totale</string>
+    <string name="comparison_safety_ok">Profil de sécurité acceptable</string>
+
+
 </resources>
 

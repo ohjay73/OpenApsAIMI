@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.openAPSAIMI.comparison
-
+import android.content.Context
+import app.aaps.plugins.aps.R
 import java.io.File
 import kotlin.math.abs
 
@@ -101,9 +102,10 @@ class ComparisonCsvParser {
         )
     }
 
-    fun calculateSafetyMetrics(entries: List<ComparisonEntry>): SafetyMetrics {
+    fun calculateSafetyMetrics(context:Context,entries: List<ComparisonEntry>): SafetyMetrics {
         if (entries.isEmpty()) {
-            return SafetyMetrics(0.0, "Faible", "Faible", 0.0, 0.0)
+          //return SafetyMetrics(0.0, "Faible", "Faible", 0.0, 0.0)
+            return SafetyMetrics(0.0, context.getString(R.string.comparison_low), context.getString(R.string.comparison_low), 0.0, 0.0)
         }
 
         // Calculate rate variability (standard deviation)
@@ -123,9 +125,12 @@ class ComparisonCsvParser {
         val variabilityScore = ((smbVariability / (aimiVariability + 0.1)) * 50).coerceIn(0.0, 100.0)
         
         val variabilityLabel = when {
-            variabilityScore < 30 -> "Faible"
-            variabilityScore < 60 -> "Modéré"
-            else -> "Élevé"
+          //variabilityScore < 30 -> "Faible"
+            variabilityScore < 30 -> context.getString(R.string.comparison_low)
+          //variabilityScore < 60 -> "Modéré"
+            variabilityScore < 60 -> context.getString(R.string.comparison_moderate)
+          //else -> "Élevé"
+            else -> context.getString(R.string.comparison_high)
         }
 
         // Estimate hypo risk based on aggressive low basal decisions
@@ -135,9 +140,12 @@ class ComparisonCsvParser {
         val hypoRiskPercent = (aggressiveLowCount.toDouble() / entries.size) * 100
 
         val estimatedHypoRisk = when {
-            hypoRiskPercent < 20 -> "Faible"
-            hypoRiskPercent < 40 -> "Modéré"
-            else -> "Élevé"
+          //hypoRiskPercent < 20 -> "Faible"
+            hypoRiskPercent < 20 -> context.getString(R.string.comparison_low)
+          //hypoRiskPercent < 40 -> "Modéré"
+            hypoRiskPercent < 40 -> context.getString(R.string.comparison_moderate)
+          //else -> "Élevé"
+            else -> context.getString(R.string.comparison_high)
         }
 
         return SafetyMetrics(
@@ -208,7 +216,8 @@ class ComparisonCsvParser {
     fun generateRecommendation(
         stats: ComparisonStats,
         safety: SafetyMetrics,
-        impact: ClinicalImpact
+        impact: ClinicalImpact,
+        context: Context
     ): Recommendation {
         val aggressivenessRatio = if (stats.aimiWinRate > 0) {
             stats.smbWinRate / stats.aimiWinRate
@@ -217,36 +226,49 @@ class ComparisonCsvParser {
         }
 
         val preferredAlgorithm = when {
-            stats.agreementRate > 70 -> "Équivalent"
+          //stats.agreementRate > 70 -> "Équivalent"
+            stats.agreementRate > 70 -> context.getString(R.string.comparison_equivalent)
             impact.cumulativeDiff > 2.0 -> "SMB" // AIMI delivered significantly more
             impact.cumulativeDiff < -2.0 && safety.variabilityScore < 50 -> "AIMI" // SMB more aggressive but stable
             impact.cumulativeDiff < -2.0 && safety.variabilityScore >= 50 -> "AIMI" // SMB more aggressive and variable
-            else -> "Équivalent"
+          //else -> "Équivalent"
+            else -> context.getString(R.string.comparison_equivalent)
         }
 
         val reason = when (preferredAlgorithm) {
             "AIMI" -> {
                 if (aggressivenessRatio > 2.0) {
-                    "SMB ${String.format("%.1f", aggressivenessRatio)}x plus agressif avec variabilité ${safety.variabilityLabel.lowercase()}"
+                  //"SMB ${String.format("%.1f", aggressivenessRatio)}x plus agressif avec variabilité ${safety.variabilityLabel.lowercase()}"
+                    context.getString(R.string.comparison_smb_aggressive, aggressivenessRatio, safety.variabilityLabel.lowercase())
                 } else {
-                    "Approche plus conservatrice avec variabilité ${safety.variabilityLabel.lowercase()}"
+                  //"Approche plus conservatrice avec variabilité ${safety.variabilityLabel.lowercase()}"
+                    context.getString(R.string.comparison_conservative_approach, safety.variabilityLabel.lowercase())
                 }
             }
-            "SMB" -> "Plus réactif aux variations glycémiques"
-            else -> "Les deux algorithmes montrent des performances similaires (${String.format("%.1f", stats.agreementRate)}% d'accord)"
+          //"SMB" -> "Plus réactif aux variations glycémiques"
+            "SMB" -> context.getString(R.string.comparison_smb_more_reactive)
+          //else -> "Les deux algorithmes montrent des performances similaires (${String.format("%.1f", stats.agreementRate)}% d'accord)"
+            else -> context.getString(R.string.comparison_both_algorithms_similar, stats.agreementRate)
         }
 
         val confidenceLevel = when {
-            stats.totalEntries < 10 -> "Faible"
-            stats.totalEntries < 30 -> "Modérée"
-            else -> "Élevée"
+          //stats.totalEntries < 10 -> "Faible"
+            stats.totalEntries < 10 -> context.getString(R.string.comparison_low)
+          //stats.totalEntries < 30 -> "Modérée"
+            stats.totalEntries < 30 -> context.getString(R.string.comparison_moderate)
+          //else -> "Élevée"
+            else -> context.getString(R.string.comparison_high)
         }
 
         val safetyNote = when {
-            safety.estimatedHypoRisk == "Élevé" -> "⚠️ Surveillance accrue recommandée"
-            safety.variabilityScore > 70 -> "⚠️ Variabilité importante détectée"
-            impact.cumulativeDiff < -5.0 -> "⚠️ Grande différence d'insuline totale"
-            else -> "Profil de sécurité acceptable"
+          //safety.estimatedHypoRisk == "Élevé" -> "⚠️ Surveillance accrue recommandée"
+            safety.estimatedHypoRisk == context.getString(R.string.comparison_high) -> context.getString(R.string.comparison_safety_high_risk)
+          //safety.variabilityScore > 70 -> "⚠️ Variabilité importante détectée"
+            safety.variabilityScore > 70 -> context.getString(R.string.comparison_safety_high_variability)
+          //impact.cumulativeDiff < -5.0 -> "⚠️ Grande différence d'insuline totale"
+            impact.cumulativeDiff < -5.0 -> context.getString(R.string.comparison_safety_large_diff)
+          //else -> "Profil de sécurité acceptable"
+            else -> context.getString(R.string.comparison_safety_ok)
         }
 
         return Recommendation(
