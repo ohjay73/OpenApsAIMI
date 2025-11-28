@@ -36,41 +36,40 @@
     <string name="set">Set</string>
 
     <!-- Comparator -->
-    <string name="menu_comparator">Comparateur Plugin AIMI-SMB</string>
-    <string name="comparator_title">Analyse de Performance</string>
-    <string name="comparator_no_data">Aucune donnée disponible. Le fichier CSV sera créé après la première comparaison.</string>
-    <string name="comparator_summary">Résumé</string>
-    <string name="comparator_total_entries">Nombre d\'entrées</string>
-    <string name="comparator_avg_rate_diff">Diff. basale moyenne</string>
-    <string name="comparator_avg_smb_diff">Diff. SMB moyenne</string>
-    <string name="comparator_agreement">Taux d\'accord</string>
-    <string name="comparator_aimi_win_rate">AIMI plus agressif</string>
-    <string name="comparator_smb_win_rate">SMB plus agressif</string>
-    <string name="comparator_rate_chart_title">Débits Basaux Comparés</string>
-    <string name="comparator_rate_chart_desc">AIMI vs SMB - Débits Basaux (U/h)</string>
-    <string name="comparator_smb_chart_title">SMB Comparés</string>
-    <string name="comparator_smb_chart_desc">AIMI vs SMB - Super Micro Bolus (U)</string>
-    
-    <!-- Safety Analysis -->
-    <string name="comparator_safety_title">Analyse de Sécurité</string>
-    <string name="comparator_variability_score">Score de variabilité</string>
-    <string name="comparator_hypo_risk">Risque d\'hypo estimé</string>
-    
-    <!-- Clinical Impact -->
-    <string name="comparator_clinical_impact_title">Impact Clinique</string>
-    <string name="comparator_total_insulin_aimi">Insuline totale AIMI</string>
-    <string name="comparator_total_insulin_smb">Insuline totale SMB</string>
-    <string name="comparator_cumulative_diff">Différence cumulée</string>
-    
-    <!-- Critical Moments -->
-    <string name="comparator_critical_moments_title">Moments Critiques</string>
-    <string name="comparator_critical_moment_entry">Entrée #%1$d - BG: %2$.0f mg/dL, IOB: %3$.1f U</string>
-    <string name="comparator_critical_moment_divergence">Divergence: Basal %1$s U/h, SMB %2$s U</string>
-    
-    <!-- Recommendation -->
-    <string name="comparator_recommendation_title">Recommandation</string>
-    <string name="comparator_recommended_algorithm">Algorithme recommandé: %1$s</string>
-    <string name="comparator_confidence">Confiance: %1$s</string>
+    <string name="menu_comparator">AIMI-SMB Comparator</string>
+    <string name="comparator_title">Performance Analysis</string>
+    <string name="comparator_no_data">No data available. The CSV file will be created after the first comparison.</string>
+    <string name="comparator_summary">Summary</string>
+    <string name="comparator_total_entries">Number of entries</string>
+    <string name="comparator_avg_rate_diff">Avg. basal diff.</string>
+    <string name="comparator_avg_smb_diff">Avg. SMB diff.</string>
+    <string name="comparator_agreement">Percentage of similar values</string>
+    <string name="comparator_aimi_win_rate">Total (U) % AIMI</string>
+    <string name="comparator_smb_win_rate">Total (U) % SMB</string>
+    <string name="comparator_rate_chart_title">Basal Rate Comparison (U/h)</string>
+    <string name="comparator_rate_chart_desc">AIMI vs SMB - Basal rates (U/h)</string>
+    <string name="comparator_smb_chart_title">SMB Comparison</string>
+    <string name="comparator_smb_chart_desc">AIMI vs SMB - Super Micro Boluses delivered (U)</string>
 
+    <!-- Safety Analysis -->
+    <string name="comparator_safety_title">Safety Analysis</string>
+    <string name="comparator_variability_score">Algorithm variability</string>
+    <string name="comparator_hypo_risk">Estimated hypo risk</string>
+
+    <!-- Clinical Impact -->
+    <string name="comparator_clinical_impact_title">Clinical Impact</string>
+    <string name="comparator_total_insulin_aimi">Total AIMI insulin (U)</string>
+    <string name="comparator_total_insulin_smb">Total SMB insulin (U)</string>
+    <string name="comparator_cumulative_diff">Total AIMI-SMB difference (U)</string>
+
+    <!-- Critical Moments -->
+    <string name="comparator_critical_moments_title">Critical Moments</string>
+    <string name="comparator_critical_moment_entry">Entry #%1$d - BG: %2$.0f mg/dL, IOB: %3$.1f U</string>
+    <string name="comparator_critical_moment_divergence">Divergence: Basal %1$s U/h, SMB %2$s U</string>
+
+    <!-- Recommendation -->
+    <string name="comparator_recommendation_title">Recommendation</string>
+    <string name="comparator_recommended_algorithm">Recommended algorithm: %1$s</string>
+    <string name="comparator_confidence">Confidence in the chosen algorithm: %1$s</string>
 
 </resources>
