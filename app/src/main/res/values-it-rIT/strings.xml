@@ -42,8 +42,8 @@
     <string name="comparator_avg_rate_diff">Diff. basale media</string>
     <string name="comparator_avg_smb_diff">Diff. SMB media</string>
     <string name="comparator_agreement">Percentuale valori simili</string>
-    <string name="comparator_aimi_win_rate">Tot (U) % AIMI</string>
-    <string name="comparator_smb_win_rate">Tot (U) % SMB</string>
+    <string name="comparator_aimi_win_rate">Tot (U) %% AIMI</string>
+    <string name="comparator_smb_win_rate">Tot (U) %% SMB</string>
     <string name="comparator_rate_chart_title">Confronto Basali erogate (U/h)</string>
     <string name="comparator_rate_chart_desc">AIMI vs SMB - Basali erogate (U/h)</string>
     <string name="comparator_smb_chart_title">Comparazione SMB</string>
@@ -68,9 +68,6 @@
     <!-- Recommendation -->
     <string name="comparator_recommendation_title">Raccomandazione</string>
     <string name="comparator_recommended_algorithm">Algoritmo consigliato: %1$s</string>
-    <string name="comparator_confidence">Fiducia nell'algoritmo scelto: %1$s</string>
-
-
-
+    <string name="comparator_confidence">Fiducia nell\'algoritmo scelto: %1$s</string>
 
 </resources>
