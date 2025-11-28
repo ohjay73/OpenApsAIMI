@@ -1087,9 +1087,9 @@
 
     <!--AIMI REFACTORING TRANSLATION ComparisonCsvParser.kt -->
 
-    <string name="comparison_low">Basso</string>
-    <string name="comparison_moderate">Moderato</string>
-    <string name="comparison_high">Alto</string>
+    <string name="comparison_low">Bassa</string>
+    <string name="comparison_moderate">Moderata</string>
+    <string name="comparison_high">Alta</string>
     <string name="comparison_equivalent">Equivalente</string>
     <string name="comparison_smb_more_reactive">Più reattivo alle variazioni glicemiche</string>
     <string name="comparison_smb_aggressive">%1$.1fx più aggressivo con variabilità %2$s</string>
