@@ -87,10 +87,10 @@ class ComparatorActivity : DaggerAppCompatActivityWithResult() {
 
     private fun displayAnalytics() {
         val stats = parser.calculateStats(entries)
-        val safetyMetrics = parser.calculateSafetyMetrics(entries)
+        val safetyMetrics = parser.calculateSafetyMetrics(this,entries)
         val clinicalImpact = parser.calculateClinicalImpact(entries)
         val criticalMoments = parser.findCriticalMoments(entries)
-        val recommendation = parser.generateRecommendation(stats, safetyMetrics, clinicalImpact)
+        val recommendation = parser.generateRecommendation(stats, safetyMetrics, clinicalImpact, this)
 
         displaySafetyAnalysis(safetyMetrics)
         displayClinicalImpact(clinicalImpact)
