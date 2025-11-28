@@ -2,8 +2,8 @@
 <resources>
     <string name="default_lang" translatable="false">System default</string>
     <string name="nav_preferences_plugin">%1$s Preferences</string>
-    <string name="nav_dashboard_preview">Dashboard preview</string>
-    <string name="dashboard_preview_title">Dashboard</string>
+    <string name="nav_dashboard_preview">AIMI - Dashboard preview</string>
+    <string name="dashboard_preview_title">AIMI - Dashboard</string>
     <string name="nav_exit">Exit</string>
     <string name="delta">Delta</string>
     <string name="language" translatable="false">Language</string>
@@ -74,6 +74,5 @@
 
     <string name="cumulative_diff_aimi">+%.1f U (AIMI more aggressive)</string>
     <string name="cumulative_diff_smb">%.1f U (SMB more aggressive)</string>
-
 
 </resources>

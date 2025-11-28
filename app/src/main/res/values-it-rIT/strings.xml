@@ -34,7 +34,7 @@
     <string name="set">Imposta</string>
 
     <!-- Comparator -->
-    <string name="menu_comparator">Comparatore AIMI-SMB</string>
+    <string name="menu_comparator">AIMI - Comparatore SMB</string>
     <string name="comparator_title">Analisi prestazioni</string>
     <string name="comparator_no_data">Nessun dato disponibile. Il file CSV verrà creato dopo il primo confronto.</string>
     <string name="comparator_summary">Riepilogo</string>
@@ -61,7 +61,7 @@
     <string name="comparator_cumulative_diff">Diff. totale erogato AIMI-SMB (U)</string>
 
     <!-- Critical Moments -->
-    <string name="comparator_critical_moments_title">Momenti Critici</string>
+    <string name="comparator_critical_moments_title">Momenti critici</string>
     <string name="comparator_critical_moment_entry">Voce #%1$d - BG: %2$.0f mg/dL, IOB: %3$.1f U</string>
     <string name="comparator_critical_moment_divergence">Divergenza: Basale %1$s U/h, SMB %2$s U</string>
 
