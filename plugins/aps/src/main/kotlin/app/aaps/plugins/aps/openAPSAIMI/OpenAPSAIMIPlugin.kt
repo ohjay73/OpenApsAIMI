@@ -1224,7 +1224,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                         validatorParams = hhmmValidator
                     )
                 )
-                addPreference(
+      /*          addPreference(
                     AdaptiveDoublePreference(
                         ctx = context,
                         doubleKey = DoubleKey.OApsAIMINightGrowthMinRiseSlope,
@@ -1271,7 +1271,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                         dialogMessage = R.string.oaps_aimi_ngr_max_smb_summary,
                         title = R.string.oaps_aimi_ngr_max_smb_title
                     )
-                )
+                )*/
                 addPreference(
                     AdaptiveDoublePreference(
                         ctx = context,
@@ -1279,7 +1279,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                         dialogMessage = R.string.oaps_aimi_ngr_max_iob_summary,
                         title = R.string.oaps_aimi_ngr_max_iob_title
                     )
-                )
+                )/*
                 addPreference(
                     AdaptiveIntPreference(
                         ctx = context,
@@ -1287,7 +1287,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                         dialogMessage = R.string.oaps_aimi_ngr_decay_summary,
                         title = R.string.oaps_aimi_ngr_decay_title
                     )
-                )
+                )*/
 
             })
 
@@ -1528,14 +1528,12 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                 addPreference(PreferenceCategory(context).apply {
                        title = rh.gs(R.string.bg_over_120_preferences_title_menu)
                 })
-
-
                 // ❌ HYPER FACTOR REMOVED (replaced by UnifiedReactivityLearner)
                 // addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIHyperFactor...))
                 addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.OApsAIMIHighBGinterval, dialogMessage = R.string.oaps_aimi_HIGHBG_interval_summary, title = R.string.oaps_aimi_HIGHBG_interval_title))
                 addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIHighBGMaxSMB, dialogMessage = R.string.openapsaimi_highBG_maxsmb_summary, title = R.string.openapsaimi_highBG_maxsmb_title))
           //})
-          //addPreference(preferenceManager.createPreferenceScreen(context).apply {
+          /*//addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 addPreference(PreferenceCategory(context).apply {
                 key = "aimi_plateau_settings"
               //title = rh.gs(R.string.aimi_plateau_prefs)
@@ -1672,7 +1670,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                             title = R.string.oaps_aimi_delta_pos_release_title
                         )
                     )
-                })
+                })*/
         })        /*
                 // Intensification (“kicker”) et plafonds
                 addPreference(
