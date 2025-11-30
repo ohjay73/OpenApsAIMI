@@ -1494,20 +1494,24 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
 
             })
 
+          //addPreference(preferenceManager.createPreferenceScreen(context).apply {
+          //    key = "Reactivity"
+          //    //title = "Reactivity BG < 120"
+          //    title = rh.gs(R.string.reactivity_preferences)
+          //    addPreference(PreferenceCategory(context).apply {
+          //        title = rh.gs(R.string.bg_under_120_preferences_title_menu)
+          //    })
+          //    addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIMorningFactor, dialogMessage = R.string.oaps_aimi_morning_factor_summary, title = R.string.oaps_aimi_morning_factor_title))
+            //    addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIAfternoonFactor, dialogMessage = R.string.oaps_aimi_afternoon_factor_summary, title = R.string.oaps_aimi_afternoon_factor_title))
+            //    addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIEveningFactor, dialogMessage = R.string.oaps_aimi_evening_factor_summary, title = R.string.oaps_aimi_evening_factor_title))
+            //    addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsMaxSmbFrequency, title = R.string.smb_interval_summary))
+            //    addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIMaxSMB, dialogMessage = R.string.openapsaimi_maxsmb_summary, title = R.string.openapsaimi_maxsmb_title))
+            //})
+            // ❌ TIME-BASED REACTIVITY REMOVED (replaced by UnifiedReactivityLearner)
+            // Previously: morning/afternoon/evening/hyper factors
+            // Now: UnifiedReactivityLearner.globalFactor handles all reactivity adaptation
+
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
-                key = "Reactivity"
-                //title = "Reactivity BG < 120"
-                title = rh.gs(R.string.reactivity_preferences)
-                addPreference(PreferenceCategory(context).apply {
-                    title = rh.gs(R.string.bg_under_120_preferences_title_menu)
-                })
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIMorningFactor, dialogMessage = R.string.oaps_aimi_morning_factor_summary, title = R.string.oaps_aimi_morning_factor_title))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIAfternoonFactor, dialogMessage = R.string.oaps_aimi_afternoon_factor_summary, title = R.string.oaps_aimi_afternoon_factor_title))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIEveningFactor, dialogMessage = R.string.oaps_aimi_evening_factor_summary, title = R.string.oaps_aimi_evening_factor_title))
-                addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsMaxSmbFrequency, title = R.string.smb_interval_summary))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIMaxSMB, dialogMessage = R.string.openapsaimi_maxsmb_summary, title = R.string.openapsaimi_maxsmb_title))
-            })
-                addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key = "high_BG_settings"
                 //title = "High BG Preferences (BG > 120)"
                 title = rh.gs(R.string.high_BG_preferences)
