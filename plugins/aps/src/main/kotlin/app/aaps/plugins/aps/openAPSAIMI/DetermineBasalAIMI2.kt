@@ -118,7 +118,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     @Inject lateinit var glucoseStatusCalculatorAimi: GlucoseStatusCalculatorAimi
     @Inject lateinit var comparator: AimiSmbComparator
     @Inject lateinit var basalLearner: app.aaps.plugins.aps.openAPSAIMI.learning.BasalLearner
-    @Inject lateinit var reactivityLearner: app.aaps.plugins.aps.openAPSAIMI.learning.ReactivityLearner
+    @Inject lateinit var unifiedReactivityLearner: app.aaps.plugins.aps.openAPSAIMI.learning.UnifiedReactivityLearner  // 🎯 NEW
+    // ❌ OLD reactivityLearner removed - UnifiedReactivityLearner is now the only one
     init {
         // Branche l’historique basal (TBR) sur la persistence réelle
         BasalHistoryUtils.installHistoryProvider(
@@ -3392,19 +3393,32 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val pregnancyEnable = preferences.get(BooleanKey.OApsAIMIpregnancy)
 
         if (tirbasal3B != null && pregnancyEnable && tirbasal3IR != null) {
+            // 🎯 UnifiedReactivityLearner is now used exclusively
+            val useUnified = preferences.get(BooleanKey.OApsAIMIUnifiedReactivityEnabled)
+            
             this.basalaimi = when {
                 tirbasalhAP != null && tirbasalhAP >= 5           -> (basalaimi * 2.0).toFloat()
                 lastHourTIRAbove != null && lastHourTIRAbove >= 2 -> (basalaimi * 1.8).toFloat()
 
                 timenow < sixAMHour                               -> {
                     val multiplier = if (honeymoon) 1.2 else 1.4
-                    val reactivity = reactivityLearner.getFactor(LocalTime.now())
+                    val reactivity = if (useUnified) {
+                        unifiedReactivityLearner.globalFactor
+                    } else {
+                        1.0  // Fallback to neutral if disabled
+                    }
+                    consoleLog.add("Reactivity (< 6AM): enabled=$useUnified, factor=${"%.3f".format(reactivity)}")
                     (basalaimi * multiplier * reactivity).toFloat()
                 }
 
                 timenow > sixAMHour                               -> {
                     val multiplier = if (honeymoon) 1.4 else 1.6
-                    val reactivity = reactivityLearner.getFactor(LocalTime.now())
+                    val reactivity = if (useUnified) {
+                        unifiedReactivityLearner.globalFactor
+                    } else {
+                        1.0  // Fallback to neutral if disabled
+                    }
+                    consoleLog.add("Reactivity (> 6AM): enabled=$useUnified, factor=${"%.3f".format(reactivity)}")
                     (basalaimi * multiplier * reactivity).toFloat()
                 }
 
@@ -3723,6 +3737,46 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         highBgOverrideUsed = smbExecution.highBgOverrideUsed
         smbExecution.newSmbInterval?.let { intervalsmb = it }
         var smbToGive = smbExecution.finalSmb
+        
+        // 🎯 Appliquer le globalFactor du UnifiedReactivityLearner au SMB
+        // Cela permet de couvrir les hyperglyc\u00e9mies prolongées >180
+        if (preferences.get(BooleanKey.OApsAIMIUnifiedReactivityEnabled)) {
+            val beforeReactivity = smbToGive
+            smbToGive = (smbToGive * unifiedReactivityLearner.globalFactor).toFloat()
+            
+            if (smbToGive != beforeReactivity) {
+                // 📊 Enriched log with evolution and metrics
+                val snapshot = unifiedReactivityLearner.lastAnalysis
+                val factorStr = "%.3f".format(unifiedReactivityLearner.globalFactor)
+                
+                if (snapshot != null) {
+                    val hoursSince = (dateUtil.now() - snapshot.timestamp) / (60 * 60 * 1000)
+                    val trend = when {
+                        snapshot.globalFactor > snapshot.previousFactor -> "↑"
+                        snapshot.globalFactor < snapshot.previousFactor -> "↓"
+                        else -> "→"
+                    }
+                    
+                    consoleLog.add(
+                        "UnifiedLearner: SMB ${"%.2f".format(beforeReactivity)}U → ${"%.2f".format(smbToGive)}U " +
+                        "(factor=$factorStr $trend, analyzed ${hoursSince}h ago)"
+                    )
+                    consoleLog.add(
+                        "  ├─ TIR=${"%.0f".format(snapshot.tir70_180)}%, CV=${"%.0f".format(snapshot.cv_percent)}%, Hypos=${snapshot.hypo_count}"
+                    )
+                    consoleLog.add("  └─ ${snapshot.adjustmentReason}")
+                    
+                    rT.reason.append(
+                        " | Reactivity $factorStr $trend (TIR=${"%.0f".format(snapshot.tir70_180)}%, " +
+                        "CV=${"%.0f".format(snapshot.cv_percent)}%, H=${snapshot.hypo_count})"
+                    )
+                } else {
+                    // Fallback if no analysis yet
+                    consoleLog.add("UnifiedLearner: SMB ${"%.2f".format(beforeReactivity)}U → ${"%.2f".format(smbToGive)}U (factor=$factorStr)")
+                    rT.reason.append(" | Reactivity factor $factorStr")
+                }
+            }
+        }
         val savedReason = rT.reason.toString()
         rT = RT(
             algorithm = APSResult.Algorithm.AIMI,
@@ -4259,11 +4313,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 isFastingTime = isNight && !anyMealActive
             )
 
-            reactivityLearner.process(
-                currentBg = bg,
-                isMealActive = anyMealActive,
-                time = LocalTime.now()
-            )
+            // 🎯 Process UnifiedReactivityLearner (old learner removed)
+            unifiedReactivityLearner.processIfNeeded()  // Analyze & adjust every 6h
 
             return finalResult
         }

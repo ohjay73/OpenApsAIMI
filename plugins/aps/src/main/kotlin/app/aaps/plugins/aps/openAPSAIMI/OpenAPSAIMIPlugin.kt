@@ -1158,6 +1158,20 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.OApsAIMIpregnancy, title = R.string.OApsAIMI_Enable_pregnancy))
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.OApsAIMIhoneymoon, title = R.string.OApsAIMI_Enable_honeymoon))
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.OApsAIMInight, title = R.string.OApsAIMI_Enable_night_title))
+                
+                // 🎯 Learners Section
+                addPreference(PreferenceCategory(context).apply {
+                    title = rh.gs(R.string.oaps_aimi_learners_title)
+                })
+                addPreference(
+                    AdaptiveSwitchPreference(
+                        ctx = context,
+                        booleanKey = BooleanKey.OApsAIMIUnifiedReactivityEnabled,
+                        title = R.string.unified_reactivity_title,
+                        summary = R.string.unified_reactivity_summary
+                    )
+                )
+                
                 addPreference(PreferenceCategory(context).apply {
                     title = rh.gs(R.string.oaps_aimi_ngr_title)
                 })
@@ -1212,18 +1226,19 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
 
             })
 
-            addPreference(preferenceManager.createPreferenceScreen(context).apply {
-                key = "Reactivity"
-                //title = "Reactivity BG < 120"
-                title = rh.gs(R.string.reactivity_preferences)
-                addPreference(PreferenceCategory(context).apply {
-                    title = rh.gs(R.string.bg_under_120_preferences_title_menu)
-                })
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIMorningFactor, dialogMessage = R.string.oaps_aimi_morning_factor_summary, title = R.string.oaps_aimi_morning_factor_title))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIAfternoonFactor, dialogMessage = R.string.oaps_aimi_afternoon_factor_summary, title = R.string.oaps_aimi_afternoon_factor_title))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIEveningFactor, dialogMessage = R.string.oaps_aimi_evening_factor_summary, title = R.string.oaps_aimi_evening_factor_title))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIMaxSMB, dialogMessage = R.string.openapsaimi_maxsmb_summary, title = R.string.openapsaimi_maxsmb_title))
-            })
+            // addPreference(preferenceManager.createPreferenceScreen(context).apply {
+            //     key = "AIMI_Manual_Modes"
+            //     title = rh.gs(R.string.training_ml_modes_preferences)
+            //
+            //     // ❌ TIME-BASED REACTIVITY REMOVED (replaced by UnifiedReactivityLearner)
+            //     // Previously: morning/afternoon/evening/hyper factors
+            //     // Now: UnifiedReactivityLearner.globalFactor handles all reactivity adaptation
+            //
+            //     addPreference(PreferenceCategory(context).apply {
+            //         title = rh.gs(R.string.high_BG_preferences)
+            //     })
+            //
+            // })
                 addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key = "high_BG_settings"
                 //title = "High BG Preferences (BG > 120)"
@@ -1231,7 +1246,8 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                 addPreference(PreferenceCategory(context).apply {
                        title = rh.gs(R.string.bg_over_120_preferences_title_menu)
                 })
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIHyperFactor, dialogMessage = R.string.oaps_aimi_hyper_factor_summary, title = R.string.oaps_aimi_hyper_factor_title))
+                // ❌ HYPER FACTOR REMOVED (replaced by UnifiedReactivityLearner)
+                // addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIHyperFactor...))
                 addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.OApsAIMIHighBGinterval, dialogMessage = R.string.oaps_aimi_HIGHBG_interval_summary, title = R.string.oaps_aimi_HIGHBG_interval_title))
                 addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIHighBGMaxSMB, dialogMessage = R.string.openapsaimi_highBG_maxsmb_summary, title = R.string.openapsaimi_highBG_maxsmb_title))
             })

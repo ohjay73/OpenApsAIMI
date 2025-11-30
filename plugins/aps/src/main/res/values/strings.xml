@@ -237,10 +237,7 @@
     <string name="key_B30_upperBG">key_B30_upperBG</string>
     <string name="key_B30_upperdelta">key_B30_upperdelta</string>
     <string name="key_B30_duration">key_B30_duration</string>
-    <string name="key_oaps_aimi_evening_factor">key_oaps_aimi_evening_factor</string>
-    <string name="key_oaps_aimi_morning_factor">key_oaps_aimi_morning_factor</string>
-    <string name="key_oaps_aimi_afternoon_factor">key_oaps_aimi_afternoon_factor</string>
-    <string name="key_oaps_aimi_hyper_factor">key_oaps_aimi_hyper_factor</string>
+    <!-- ❌ TIME-BASED REACTIVITY KEYS REMOVED -->
     <string name="key_DynISFAdjusthyper">key_DynISFAdjusthyper</string>
     <string name="key_DynISF_Adjust">key_DynISF_Adjust</string>
     <string name="key_enable_basal">key_enable_basal</string>
@@ -260,14 +257,7 @@
     <string name="openapsaimi_maxsmb_summary">Max SMB value when BG is below 120</string>
     <string name="openapsaimi_maxsmb_title">Max SMB LOW BG</string>
     <string name="description_openapsaimi">Small micro-boluses based on Artificial Intelligence and Machine Learning.</string>
-    <string name="oaps_aimi_evening_factor_summary">% of plugin reactivity between 6 PM and midnight</string>
-    <string name="oaps_aimi_evening_factor_title">Evening Reactivity 18:00&#8211;24:00</string>
-    <string name="oaps_aimi_afternoon_factor_title">Afternoon Reactivity 12:00&#8211;18:00</string>
-    <string name="oaps_aimi_morning_factor_title">Morning Reactivity 00:00&#8211;11:00</string>
-    <string name="oaps_aimi_morning_factor_summary">Morning Reactivity Percentage between midnight and 11 AM</string>
-    <string name="oaps_aimi_afternoon_factor_summary">Afternoon Reactivity Percentage between 12 PM and 6 PM</string>
-    <string name="oaps_aimi_hyper_factor_summary"><![CDATA[Reactivity when BG > 120]]></string>
-    <string name="oaps_aimi_hyper_factor_title"><![CDATA[Reactivity BG > 120, for child BG > 180]]></string>
+    <!-- ❌ TIME-BASED REACTIVITY TITLES/SUMMARIES REMOVED -->
     <string name="DynISFAdjusthyper_summary"><![CDATA[Increasing this value will increase the speed to send SMB when BG > 120]]></string>
     <string name="DynISFAdjusthyper_title"><![CDATA[DynISF Adjustment factor % BG > 120]]></string>
     <string name="prebolus_meal_mode_summary">If you set a note on the action page with the word "meal", you will receive this value one time as a pre-bolus.</string>
@@ -376,6 +366,13 @@
     <string name="openapsaimi_highBG_maxsmb_summary">Max SMB value when BG is above 120</string>
     <string name="openapsaimi_highBG_maxsmb_title">Max SMB High BG</string>
     <string name="OApsAIMI_Enable_night_title">Night Mode (SMB/2)</string>
+    
+    <!-- Learners Section -->
+    <string name="oaps_aimi_learners_title">🎓 Learners</string>
+    <string name="unified_reactivity_title">Unified Reactivity Learner</string>
+    <string name="unified_reactivity_summary">Analyzes TIR/CV%/Hypo every 6h to adapt reactivity (0.6-1.5). Replaces time-bucket reactivity. Exports to CSV in Documents/AAPS.</string>
+    
+    <!-- Night Growth Restriction -->
     <string name="prebolus_lunch_mode_summary">Lunch Mode Prebolus 1/2</string>
     <string name="prebolus2_lunch_mode_summary">Lunch Mode Prebolus 2/2</string>
     <string name="prebolus_lunch_mode_title">Prebolus 1/2</string>
