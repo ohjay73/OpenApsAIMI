@@ -286,8 +286,8 @@
     <string name="oaps_aimi_weight_title">Peso in kg</string>
     <string name="oaps_aimi_tdd7_summary">TDD media 7 giorni</string>
     <string name="oaps_aimi_tdd7_title">Insulina giornaliera media per 7 giorni (TDD 7 giorni)</string>
-    <string name="oaps_aimi_pkpd_section_title">DIA e Picco azione insulina adattivi</string>
-    <string name="oaps_aimi_pkpd_overview_title">Panoramica PKPD</string>
+    <string name="oaps_aimi_pkpd_section_title">DIA, Picco insulina, ISF, Smorzamento adattivi</string>
+    <string name="oaps_aimi_pkpd_overview_title">DIA, Picco insulina, ISF, Smorzamento adattiv - Impostazioni</string>
     <string name="oaps_aimi_pkpd_sections_title">Opzioni PKPD</string>
     <string name="oaps_aimi_pkpd_enabled_title">Abilita adaptive PK/PD</string>
     <string name="oaps_aimi_pkpd_dia_section_title">DIA</string>
@@ -337,7 +337,7 @@
     <string name="user_preferences">Dati utente</string>
     <string name="user_modes_preferences_title_menu">Preferenze utente - Modalità</string>
     <string name="reactivity_preferences"><![CDATA[Reattività glicemia < 120]]></string>
-    <string name="high_BG_preferences">Reattività glicemia > 120</string>
+    <string name="high_BG_preferences">Reattività glicemia</string>
     <string name="training_ml_modes_preferences">Modalità manuale pasti/attività</string>
     <string name="autodrive_preferences">Autodrive</string>
     <string name="AAPS_SMB_Settings">Sensibilità insulina</string>
