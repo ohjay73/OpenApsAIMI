@@ -225,10 +225,11 @@
     <string name="key_B30_upperdelta">key_B30_upperdelta</string>
     <string name="key_B30_duration">key_B30_duration</string>
     <string name="count_steps_watch">count_steps_watch</string>
+    <!-- ❌ TIME-BASED REACTIVITY KEYS REMOVED
     <string name="key_oaps_aimi_evening_factor">key_oaps_aimi_evening_factor</string>
     <string name="key_oaps_aimi_morning_factor">key_oaps_aimi_morning_factor</string>
     <string name="key_oaps_aimi_afternoon_factor">key_oaps_aimi_afternoon_factor</string>
-    <string name="key_oaps_aimi_hyper_factor">key_oaps_aimi_hyper_factor</string>
+    <string name="key_oaps_aimi_hyper_factor">key_oaps_aimi_hyper_factor</string>-->
     <string name="key_DynISFAdjusthyper">key_DynISFAdjusthyper</string>
     <string name="key_DynISF_Adjust">key_DynISF_Adjust</string>
     <string name="key_enable_basal">key_enable_basal</string>
