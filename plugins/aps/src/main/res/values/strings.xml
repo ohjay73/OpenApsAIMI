@@ -381,6 +381,7 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="openapsaimi_highBG_maxsmb_summary">Max SMB value when BG is above 120</string>
     <string name="openapsaimi_highBG_maxsmb_title">Max SMB High BG</string>
     <string name="OApsAIMI_Enable_night_title">Night Mode (SMB/2)</string>
+
     <!-- Learners Section -->
     <string name="oaps_aimi_learners_title">🎓 Learners</string>
     <string name="unified_reactivity_title">Unified Reactivity Learner</string>
