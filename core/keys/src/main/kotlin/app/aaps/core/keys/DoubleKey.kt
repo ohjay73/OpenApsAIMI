@@ -87,7 +87,7 @@ enum class DoubleKey(
     OApsAIMISmbLateFatDamping("aimi_smb_late_fat_damping", 0.5, 0.0, 1.0),
     // ❌ TIME-BASED REACTIVITY REMOVED - replaced by UnifiedReactivityLearner.globalFactor
     // Previously: OApsAIMIMorningFactor, OApsAIMIAfternoonFactor, OApsAIMIEveningFactor
-    
+
     OApsAIMIMealFactor("key_oaps_aimi_meal_factor", 50.0, 1.0, 150.0),
     OApsAIMIFCLFactor("key_oaps_aimi_FCL_factor", 50.0, 1.0, 150.0),
     OApsAIMIBFFactor("key_oaps_aimi_BF_factor", 50.0, 1.0, 150.0),
