@@ -101,7 +101,7 @@ enum class DoubleKey(
     OApsAIMISnackFactor("key_oaps_aimi_snack_factor", 50.0, 1.0, 150.0),
     // ❌ HYPER REACTIVITY REMOVED - replaced by UnifiedReactivityLearner.globalFactor
     // Previously: OApsAIMIHyperFactor
-
+    
     OApsAIMIsleepFactor("key_oaps_aimi_sleep_factor", 60.0, 1.0, 150.0),
 
     OApsAIMIMealPrebolus("key_prebolus_meal_mode", 2.0, 0.1, 10.0),
