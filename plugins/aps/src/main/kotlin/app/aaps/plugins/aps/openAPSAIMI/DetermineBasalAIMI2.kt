@@ -3765,8 +3765,16 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     }
                     
                     rT.reason.append(
-                        " | Reactivity $factorStr $trend (TIR=${"%.0f".format(snapshot.tir70_180)}%, " +
-                        "CV=${"%.0f".format(snapshot.cv_percent)}%, H=${snapshot.hypo_count})"
+                       //" | Reactivity $factorStr $trend (TIR=${"%.0f".format(snapshot.tir70_180)}%, " +
+                      //"CV=${"%.0f".format(snapshot.cv_percent)}%, H=${snapshot.hypo_count})"
+                        " | " + context.getString(
+                            R.string.react_reactivity_entry,
+                            factorStr,
+                            trend,
+                            snapshot.tir70_180,
+                            snapshot.cv_percent,
+                            snapshot.hypo_count
+                        )
                     )
                 } else {
                     // Fallback if no analysis yet
