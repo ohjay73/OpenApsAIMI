@@ -1101,7 +1101,7 @@
     <string name="comparison_safety_large_diff">⚠️ Grande differenza di insulina totale</string>
     <string name="comparison_safety_ok">Profilo di sicurezza accettabile</string>
 
-    <string name="react_reactivity_entry">📈📉Reatt. %1$s %2$s (TIR=%3$.0f%%, Variab.glic. CV=%4$.0f%%, Ipoglicemie=%5$d)</string>
+    <string name="react_reactivity_entry">📈Reatt. %1$s %2$s📉(TIR=%3$.0f%%, Variab.glic. CV=%4$.0f%%, Ipoglicemie=%5$d)</string>
 
 
 

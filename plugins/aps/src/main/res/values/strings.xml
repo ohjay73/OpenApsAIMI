@@ -1114,6 +1114,6 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="comparison_safety_ok">Safety profile acceptable</string>
 
 
-    <string name="react_reactivity_entry">📈📉React. %1$s %2$s (TIR=%3$.0f%%, Glyc. var. CV=%4$.0f%%, Hypos=%5$d)</string>
+    <string name="react_reactivity_entry">📈React. %1$s %2$s📉 (TIR=%3$.0f%%, Glyc. var. CV=%4$.0f%%, Hypos=%5$d)</string>
 
 </resources>
