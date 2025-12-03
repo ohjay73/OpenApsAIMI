@@ -33,10 +33,13 @@ import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.AapsSchedulers
 import app.aaps.core.interfaces.rx.bus.RxBus
+import app.aaps.core.interfaces.rx.events.EventPreferenceChange
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.interfaces.utils.TrendCalculator
 import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
+import app.aaps.core.keys.BooleanNonKey
+import app.aaps.core.keys.IntNonKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.ui.UIRunnable
@@ -45,8 +48,7 @@ import app.aaps.plugins.main.databinding.FragmentDashboardBinding
 import app.aaps.plugins.main.general.dashboard.viewmodel.AdjustmentCardState
 import app.aaps.plugins.main.general.dashboard.viewmodel.OverviewViewModel
 import app.aaps.plugins.main.general.overview.graphData.GraphData
-import app.aaps.plugins.main.general.overview.notifications.NotificationStore
-import app.aaps.plugins.main.general.overview.notifications.events.EventUpdateOverviewNotification
+import app.aaps.plugins.main.general.overview.notifications.NotificationUiBinder
 import androidx.recyclerview.widget.LinearLayoutManager
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
@@ -83,12 +85,12 @@ class DashboardFragment : DaggerFragment() {
     @Inject lateinit var automation: Automation
     @Inject lateinit var xDripSource: XDripSource
     @Inject lateinit var dexcomBoyda: DexcomBoyda
-    @Inject lateinit var calculationWorkflow: app.aaps.core.interfaces.workflow.CalculationWorkflow
-    @Inject lateinit var notificationStore: NotificationStore
+    @Inject lateinit var notificationUiBinder: NotificationUiBinder
 
     private val disposables = CompositeDisposable()
     private var _binding: FragmentDashboardBinding? = null
     private val binding get() = _binding!!
+    private var currentRange = 0
     private fun sensor(): Boolean {
         val ctx = context ?: return false
 
@@ -183,7 +185,8 @@ class DashboardFragment : DaggerFragment() {
         }
 
         binding.overviewNotifications.layoutManager = LinearLayoutManager(context)
-        notificationStore.updateNotifications(binding.overviewNotifications)
+
+        syncGraphRange(preferences.get(IntNonKey.RangeToDisplay), false)
 
         viewModel.statusCardState.observe(viewLifecycleOwner) { binding.statusCard.update(it) }
         viewModel.adjustmentState.observe(viewLifecycleOwner) { state ->
@@ -222,22 +225,19 @@ class DashboardFragment : DaggerFragment() {
 
         val gestureDetector = android.view.GestureDetector(context, object : android.view.GestureDetector.SimpleOnGestureListener() {
             override fun onDoubleTap(e: android.view.MotionEvent): Boolean {
-                var currentRange = overviewData.rangeToDisplay
-                currentRange += 3
-                if (currentRange > 24) currentRange = 3
-                overviewData.rangeToDisplay = currentRange
-                overviewData.initRange()
-                calculationWorkflow.runOnScaleChanged(iobCobCalculator, overviewData)
-                // Removed manual updateGraph() to avoid showing empty data before worker completes.
-                app.aaps.core.ui.toast.ToastUtils.infoToast(context, getString(R.string.graph_range_updated, currentRange))
+                val nextRange = when (overviewData.rangeToDisplay) {
+                    6    -> 9
+                    9    -> 12
+                    12   -> 18
+                    18   -> 24
+                    else -> 6
+                }
+                syncGraphRange(nextRange)
                 return true
             }
 
             override fun onLongPress(e: android.view.MotionEvent) {
-                overviewData.rangeToDisplay = 6
-                overviewData.initRange()
-                calculationWorkflow.runOnScaleChanged(iobCobCalculator, overviewData)
-                app.aaps.core.ui.toast.ToastUtils.infoToast(context, getString(R.string.graph_range_updated, 6))
+                syncGraphRange(6)
             }
         })
 
@@ -247,19 +247,39 @@ class DashboardFragment : DaggerFragment() {
             false
         }
         binding.glucoseGraph.graph.gridLabelRenderer?.reloadStyles()
+
+        // Setup range selection button
+        binding.glucoseGraph.rangeButton.setOnClickListener {
+            val popup = androidx.appcompat.widget.PopupMenu(requireContext(), it)
+            popup.menu.add(android.view.Menu.NONE, 6, android.view.Menu.NONE, getString(R.string.graph_long_scale_6h))
+            popup.menu.add(android.view.Menu.NONE, 9, android.view.Menu.NONE, getString(R.string.graph_long_scale_9h))
+            popup.menu.add(android.view.Menu.NONE, 12, android.view.Menu.NONE, getString(R.string.graph_long_scale_12h))
+            popup.menu.add(android.view.Menu.NONE, 18, android.view.Menu.NONE, getString(R.string.graph_long_scale_18h))
+            popup.menu.add(android.view.Menu.NONE, 24, android.view.Menu.NONE, getString(R.string.graph_long_scale_24h))
+            popup.setOnMenuItemClickListener { item ->
+                syncGraphRange(item.itemId)
+                true
+            }
+            popup.show()
+        }
     }
 
     override fun onResume() {
         super.onResume()
         viewModel.start()
-        disposables += activePlugin.activeOverview.overviewBus
-            .toObservable(EventUpdateOverviewNotification::class.java)
+        notificationUiBinder.bind(
+            overviewBus = activePlugin.activeOverview.overviewBus,
+            notificationsView = binding.overviewNotifications,
+            disposable = disposables,
+        )
+        disposables += rxBus
+            .toObservable(EventPreferenceChange::class.java)
             .observeOn(aapsSchedulers.main)
-            .subscribe({
-                notificationStore.updateNotifications(binding.overviewNotifications)
-            }, {
-                aapsLogger.error(LTag.UI, "Error updating notifications", it)
-            })
+            .subscribe({ event ->
+                if (event.isChanged(IntNonKey.RangeToDisplay.key)) {
+                    syncGraphRange(preferences.get(IntNonKey.RangeToDisplay), false)
+                }
+            }, fabricPrivacy::logException)
     }
 
     override fun onPause() {
@@ -340,6 +360,28 @@ class DashboardFragment : DaggerFragment() {
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
         startActivity(intent)
         return true
+    }
+
+    private fun syncGraphRange(hours: Int, userInitiated: Boolean = true) {
+        val clampedHours = when (hours) {
+            6, 9, 12, 18, 24 -> hours
+            else             -> 6
+        }
+        if (!userInitiated && clampedHours == currentRange) {
+            binding.glucoseGraph.rangeButton.text = overviewMenus.scaleString(clampedHours)
+            return
+        }
+
+        currentRange = clampedHours
+        overviewData.rangeToDisplay = clampedHours
+        overviewData.initRange()
+        binding.glucoseGraph.rangeButton.text = overviewMenus.scaleString(clampedHours)
+        preferences.put(IntNonKey.RangeToDisplay, clampedHours)
+        preferences.put(BooleanNonKey.ObjectivesScaleUsed, true)
+        rxBus.send(EventPreferenceChange(IntNonKey.RangeToDisplay.key))
+        if (userInitiated) {
+            app.aaps.core.ui.toast.ToastUtils.infoToast(context, getString(R.string.graph_range_updated, clampedHours))
+        }
     }
 
     private fun updateGraph() {
