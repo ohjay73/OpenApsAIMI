@@ -3781,7 +3781,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     if (smbToGive != beforeReactivity) {
                         consoleLog.add("UnifiedLearner: SMB ${"%.2f".format(beforeReactivity)}U → ${"%.2f".format(smbToGive)}U (factor=$factorStr)")
                     }
-                    rT.reason.append(" | Reactivity factor $factorStr")
+                  //rT.reason.append(" | Reactivity factor $factorStr")
+                    rT.reason.append(
+                        " | " + context.getString(
+                            R.string.react_reactivity_fallback,
+                            factorStr,
+                        )
+                    )
                 }
             }
         }
