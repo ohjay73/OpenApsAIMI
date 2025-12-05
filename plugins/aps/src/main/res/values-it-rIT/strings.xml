@@ -1078,7 +1078,10 @@
     <!--AIMI REFACTORING TRANSLATION CODE -->
 
     <string name="hypo_risk_notification_text">Rischio ipo rilevato : Calo rapido!</string>
-    <string name="basal_planner_hypo_guard">Protezione ipo: BG=%1$.0f, Δ=%2$s → sospensione basale %3$dm</string>
+    <string name="basal_planner_hard_hypo_guard">Protezione ipoglicemia severa: BG=%1$.0f ≤ %2$.0f</string>
+    <string name="basal_planner_soft_hypo_guard_suspend">Protezione ipoglicemia lieve: BG=%1$.0f, Δ=%2$s &lt; 0 → sospensione</string>
+    <string name="basal_planner_soft_hypo_guard_rising">Protezione ipoglicemia lieve (in aumento): BG=%1$.0f, Δ=%2$s ≥ 0 → basale di sicurezza %3$sU/h</string>
+
     <string name="basal_planner_micro_resume">Micro-ripristino basale dopo %1$s a 0U/h → %2$sU/h × %3$dm</string>
     <string name="basal_planner_high_flat_kicker">Correzione glicemia alta e piatta %1$dmg/dL (Δ≈0) → %2$sU/h × %3$dm</string>
     <string name="basal_planner_anti_stall">Anti-stallo glicemia (Δ≈0) → %1$sU/h × %2$dm</string>

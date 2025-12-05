@@ -72,7 +72,7 @@ class BasalPlanner @Inject constructor(
                 rateUph = 0.0,
                 durationMin = HYPO_SUSPEND_MIN,
               //reason = "reason = "Hard Hypo guard: BG=$mgdl <= $HYPO_HARD_LIMIT"
-                reason = context.getString(R.string.basal_planner_hypo_guard, mgdl, fmt1(d5), HYPO_HARD_LIMIT)
+                reason = context.getString(R.string.basal_planner_hard_hypo_guard, mgdl,HYPO_HARD_LIMIT)
             )
         }
 
@@ -84,7 +84,8 @@ class BasalPlanner @Inject constructor(
                 return BasalPlan(
                     rateUph = 0.0,
                     durationMin = HYPO_SUSPEND_MIN,
-                    reason = "Soft Hypo guard: BG=$mgdl, Δ=${fmt1(d5)} < 0 -> suspend"
+                  //reason = "Soft Hypo guard: BG=$mgdl, Δ=${fmt1(d5)} < 0 -> suspend"
+                    reason = context.getString(R.string.basal_planner_soft_hypo_guard_suspend, mgdl, fmt1(d5))
                 )
             } else {
                 // Trend positif ou plat -> on maintient un filet de basal
@@ -93,7 +94,8 @@ class BasalPlanner @Inject constructor(
                 return BasalPlan(
                     rateUph = rate,
                     durationMin = HYPO_SUSPEND_MIN,
-                    reason = "Soft Hypo guard (rising): BG=$mgdl, Δ=${fmt1(d5)} >= 0 -> safe basal ${fmt2(rate)}U/h"
+                  //reason = "Soft Hypo guard (rising): BG=$mgdl, Δ=${fmt1(d5)} >= 0 -> safe basal ${fmt2(rate)}U/h"
+                    reason = context.getString(R.string.basal_planner_soft_hypo_guard_rising, mgdl, fmt1(d5), fmt2(rate))
                 )
             }
         }
