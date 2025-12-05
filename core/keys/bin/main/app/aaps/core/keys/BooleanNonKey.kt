@@ -20,5 +20,4 @@ enum class BooleanNonKey(
     ObjectivesReconnectUsed("ObjectivesReconnectUsed", false),
     ObjectivesTempTargetUsed("ObjectivesTempTargetUsed", false),
     AutosensUsedOnMainPhone("used_autosens_on_main_phone", false),
-    InsulinConcentrationRequested("InsulinConcentrationRequested",false, false)
 }
