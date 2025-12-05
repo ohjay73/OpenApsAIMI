@@ -10,6 +10,5 @@ enum class IntNonKey(
 ) : IntNonPreferenceKey {
 
     ObjectivesManualEnacts("ObjectivesmanualEnacts", 0),
-    RangeToDisplay("rangetodisplay", 6),
-    InsulinConcentration("insulin_concentration", 100),
+    RangeToDisplay("rangetodisplay", 6)
 }
