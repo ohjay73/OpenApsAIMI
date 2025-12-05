@@ -336,7 +336,7 @@
     <string name="aimi_preferences">AIMI impostazioni</string>
     <string name="user_preferences">Dati utente</string>
     <string name="user_modes_preferences_title_menu">Preferenze utente - Modalità</string>
-    <string name="reactivity_preferences"><![CDATA[Reattività glicemia < 120]]></string>
+    <string name="reactivity_preferences">Reattività glicemia - Impostazioni</string>
     <string name="high_BG_preferences">Reattività glicemia</string>
     <string name="training_ml_modes_preferences">Modalità manuale pasti/attività</string>
     <string name="autodrive_preferences">Autodrive</string>
@@ -1103,6 +1103,10 @@
 
     <string name="react_reactivity_entry">📈📉Reatt. %1$s %2$s (TIR=%3$.0f%%, Variab. CV=%4$.0f%%, Ipo=%5$d)</string>
     <string name="react_reactivity_fallback">📈📉Reatt. fattore %1$s)</string>
+    <string name="oaps_aimi_learners_title">🎓 Learners</string>
+    <string name="unified_reactivity_title">Apprendimento reattività adattivo</string>
+    <string name="unified_reactivity_summary">Analizza TIR/CV%/Ipoglicemie ogni 6 ore per adattare la reattività (0.6&#8211;1.5). Sostituisce la reattività per fasce orarie. Esporta nel file CSV in Documenti\AAPS.</string>
+
 
 
 

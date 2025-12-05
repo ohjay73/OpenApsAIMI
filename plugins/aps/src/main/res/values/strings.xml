@@ -342,7 +342,7 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="aimi_preferences">AIMI Settings</string>
     <string name="user_preferences">User preferences</string>
     <string name="user_modes_preferences_title_menu">User preferences - Modes</string>
-    <string name="reactivity_preferences"><![CDATA[BG < 120]]></string>
+    <string name="reactivity_preferences">Reactivity - Settings</string>
     <string name="high_BG_preferences">Reactivity</string>
     <string name="training_ml_modes_preferences">Manual Mode</string>
     <string name="autodrive_preferences">Autodrive</string>
@@ -385,7 +385,7 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <!-- Learners Section -->
     <string name="oaps_aimi_learners_title">🎓 Learners</string>
     <string name="unified_reactivity_title">Unified Reactivity Learner</string>
-    <string name="unified_reactivity_summary">Analyzes TIR/CV%/Hypo every 6h to adapt reactivity (0.6-1.5). Replaces time-bucket reactivity. Exports to CSV in Documents/AAPS.</string>
+    <string name="unified_reactivity_summary">Analyzes TIR/CV%/Hypo every 6h to adapt reactivity (0.6&#8211;1.5). Replaces time-bucket reactivity. Exports to CSV in Documents\AAPS.</string>
     <string name="prebolus_lunch_mode_summary">Lunch Mode Prebolus 1 of 2</string>
     <string name="prebolus2_lunch_mode_summary">Lunch Mode Prebolus 2 of 2</string>
     <string name="prebolus_lunch_mode_title">Prebolus 1 of 2</string>
