@@ -3,6 +3,8 @@ package app.aaps.plugins.aps.openAPSAIMI.comparison
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.io.File
+import android.content.Context
+import app.aaps.plugins.aps.R
 
 class ComparisonCsvParserTest {
 

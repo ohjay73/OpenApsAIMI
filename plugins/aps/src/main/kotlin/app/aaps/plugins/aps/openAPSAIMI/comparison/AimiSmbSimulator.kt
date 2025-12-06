@@ -12,6 +12,8 @@ import app.aaps.plugins.aps.openAPSSMB.DetermineBasalSMB
 import app.aaps.plugins.aps.openAPSAIMI.DetermineBasalaimiSMB2
 import app.aaps.core.interfaces.ui.UiInteraction
 import javax.inject.Inject
+import android.content.Context
+import app.aaps.plugins.aps.R
 
 /**
  * Data structure representing a single point in history to be replayed.
@@ -67,10 +69,11 @@ class AimiSmbSimulator @Inject constructor(
     private val aimiLogic: DetermineBasalaimiSMB2,
     private val smbLogic: DetermineBasalSMB,
     private val comparator: AimiSmbComparator, // Used for converting profiles/Logging if needed
-    private val uiInteraction: UiInteraction
+    private val uiInteraction: UiInteraction,
+    private val context: Context
 ) {
 
-    fun runSimulation(inputs: List<SimulationInput>): FullComparisonReport {
+    fun runSimulation(inputs: List<SimulationInput>,context: Context): FullComparisonReport {
         val entries = mutableListOf<ComparisonEntry>()
 
         inputs.forEach { input ->
@@ -103,7 +106,8 @@ class AimiSmbSimulator @Inject constructor(
         }
 
         // Parse metrics from the collected entries (in a real implementation, we'd collect them)
-        return ComparisonCsvParser().analyze(entries)
+        //return ComparisonCsvParser().analyze(entries)
+        return ComparisonCsvParser().analyze(context,entries)
     }
 
     private fun createEntryFromAimi(input: SimulationInput, aimiResult: RT): ComparisonEntry {
