@@ -1282,7 +1282,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                 //title = "High BG Preferences (BG > 120)"
                 title = rh.gs(R.string.high_BG_preferences)
                 addPreference(PreferenceCategory(context).apply {
-                    title = rh.gs(R.string.bg_under_120_preferences_title_menu)
+                    title = rh.gs(R.string.reactivity_preferences)
                 })
                 // 🎯 Learners Section
                 //addPreference(PreferenceCategory(context).apply {
