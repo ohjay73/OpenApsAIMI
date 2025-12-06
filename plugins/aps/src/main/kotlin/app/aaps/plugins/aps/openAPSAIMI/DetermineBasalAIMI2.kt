@@ -117,6 +117,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     @Inject lateinit var iobCobCalculator: IobCobCalculator
     @Inject lateinit var activePlugin: ActivePlugin
     @Inject lateinit var basalDecisionEngine: BasalDecisionEngine
+    @Inject lateinit var activityManager: app.aaps.plugins.aps.openAPSAIMI.activity.ActivityManager // Agnostic injection
     @Inject lateinit var glucoseStatusCalculatorAimi: GlucoseStatusCalculatorAimi
     @Inject lateinit var comparator: AimiSmbComparator
     @Inject lateinit var basalLearner: app.aaps.plugins.aps.openAPSAIMI.learning.BasalLearner
@@ -686,11 +687,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     fun calculateAdjustedDIA(
         baseDIAHours: Float,
         currentHour: Int,
-        recentSteps5Minutes: Int,
-        currentHR: Float,
-        averageHR60: Float,
         pumpAgeDays: Float,
-        iob: Double = 0.0 // Ajout du paramètre IOB
+        iob: Double = 0.0,
+        activityContext: app.aaps.plugins.aps.openAPSAIMI.activity.ActivityContext
     ): Double {
         val reasonBuilder = StringBuilder()
 
@@ -713,26 +712,27 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             reasonBuilder.append(context.getString(R.string.night_adjustment))
         }
 
-        // 3. Ajustement en fonction de l'activité physique
-        if (recentSteps5Minutes > 200 && currentHR > averageHR60) {
-            // Exercice : absorption accélérée, réduction du DIA de 30%
-            diaMinutes *= 0.7f
-            //reasonBuilder.append("Physical activity detected: reduced by 30%\n")
-            reasonBuilder.append(context.getString(R.string.physical_activity_detected))
-        } else if (recentSteps5Minutes == 0 && currentHR > averageHR60) {
-            // Aucune activité mais HR élevée (stress) : absorption potentiellement plus lente, augmentation du DIA de 30%
-            diaMinutes *= 1.3f
-            //reasonBuilder.append("High HR without activity (stress): increased by 30%\n")
-            reasonBuilder.append(context.getString(R.string.high_hr_no_activity))
+    
+    // 3. Ajustement en fonction de l'activité physique (Via ActivityContext)
+    when (activityContext.state) {
+        app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.INTENSE -> {
+             diaMinutes *= 0.7f
+             reasonBuilder.append(context.getString(R.string.reason_high_activity))
         }
-
-        // 4. Ajustement en fonction du niveau absolu de fréquence cardiaque
-        if (currentHR > 130f) {
-            // HR très élevée : circulation rapide, réduction du DIA de 30%
-            diaMinutes *= 0.7f
-            //reasonBuilder.append("High HR (>130bpm): reduced by 30%\n")
-            reasonBuilder.append(context.getString(R.string.high_hr_over_130))
+        app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.MODERATE -> {
+             diaMinutes *= 0.8f
+             reasonBuilder.append(" • Moderate Activity ➝ x0.8\n")
         }
+        app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.LIGHT -> {
+             diaMinutes *= 0.9f
+        }
+        else -> {
+            // REST
+            if (activityContext.isRecovery) {
+                // Recovery might imply lasting effects? For now, keep normal.
+            }
+        }
+    }    
 
         // 5. Ajustement en fonction de l'IOB (Insulin on Board)
         // Si le patient a déjà beaucoup d'insuline active, il faut réduire le DIA pour éviter l'hypoglycémie
@@ -3516,6 +3516,24 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             val boostFactor = 1.2f // Boost de 20%
             this.basalaimi = (this.basalaimi * boostFactor).coerceAtMost(profile.max_basal.toFloat())
             consoleLog.add("Basal boosté (+20%) pour accélération BG.")
+        } else if (bg in 80.0..115.0 && glucoseStatus.delta > 1.0) {
+            // 🚀 EARLY BASAL: Réactivité précoce pour les montées douces (80-115 mg/dL)
+            // L'objectif est de ne pas attendre 130 mg/dL pour réagir.
+            
+            var earlyFactor = 1.0f
+            if (deltaAcceleration > 0.5) { 
+                // Accélération détectée (même faible)
+                earlyFactor = 1.25f // +25%
+                consoleLog.add("Early Basal: Accélération détectée en zone basse (+25%)")
+            } else { 
+                // Montée linéaire simple
+                earlyFactor = 1.15f // +15%
+                consoleLog.add("Early Basal: Montée progressive (+15%)")
+            }
+
+            // Application sécurisée : Max 1.5x le profil (restons modérés en zone basse)
+            val safeCap = (profile_current_basal * 1.5).toFloat()
+            this.basalaimi = (this.basalaimi * earlyFactor).coerceAtMost(safeCap)
         }
         // this.variableSensitivity = if (honeymoon) {
         //     if (bg < 150) {
@@ -3582,38 +3600,49 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
 // --- FIN DE LA NOUVELLE LOGIQUE ---
 
-// 🔹 On conserve les ajustements existants pour l'activité physique,
-// mais ils s'appliquent à la sensibilité déjà modulée par le PAI.
-        if (recentSteps5Minutes > 100 && recentSteps10Minutes > 200 && bg < 130 && delta < 10
-            || recentSteps180Minutes > 1500 && bg < 130 && delta < 10
-        ) {
-            this.variableSensitivity *= 1.3f
-        }
-        if (recentSteps30Minutes > 500 && recentSteps5Minutes in 1..99 && bg < 130 && delta < 10) {
-            this.variableSensitivity *= 1.2f
-        }
+        // --- 🏃 ACTIVITY MANAGER INTEGRATION ---
+        
+        // 1. Process Data through Manager
+        val activityContext = activityManager.process(
+            steps5min = recentSteps5Minutes,
+            steps10min = recentSteps10Minutes,
+            avgHr = averageBeatsPerMinute,
+            avgHrResting = averageBeatsPerMinute60 // Using 60min avg as proxy for baseline/resting for now
+        )
 
-// 🔹 Et on conserve la sécurisation finale des bornes
-        this.variableSensitivity = this.variableSensitivity.coerceIn(5.0f, 300.0f)
-
-// On met à jour la variable `sens` pour que le reste de la fonction l'utilise
-        sens = variableSensitivity.toDouble()
-        consoleError.add("Final ISF after PAI & activity: ${"%.1f".format(sens)}")
-
-// 🔹 Ajustement basé sur l'activité physique : correction plus fine des valeurs
-        if (recentSteps5Minutes > 100 && recentSteps10Minutes > 200 && bg < 130 && delta < 10
-            || recentSteps180Minutes > 1500 && bg < 130 && delta < 10
-        ) {
-
-            this.variableSensitivity *= 1.3f // Réduction du facteur d’augmentation
+        // 2. Log Decision
+        if (activityContext.state != app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.REST || activityContext.isRecovery) {
+            consoleLog.add("Activity: ${activityContext.description} → ISF x${"%.2f".format(activityContext.isfMultiplier)}")
         }
 
-// 🔹 Réduction du boost si l’activité est modérée pour éviter une ISF excessive
-        if (recentSteps30Minutes > 500 && recentSteps5Minutes in 1..99 && bg < 130 && delta < 10) {
-            this.variableSensitivity *= 1.2f
+        // 3. Apply Multiplier to Sensitivity (ISF)
+        // Note: activityContext.isfMultiplier is >= 1.0 (Boosts ISF aka lowers resistance)
+        this.variableSensitivity *= activityContext.isfMultiplier.toFloat()
+        
+        // 4. Handle Recovery / Protection
+        if (activityContext.protectionMode) {
+             consoleLog.add("Activity Protection Mode Active (Recovery/Intense)")
         }
 
-// 🔹 Sécurisation des bornes minimales et maximales
+        // 5. Basal Modulation (Physiological Protection)
+        // Reduire la basale SI activité significative (évite accumulation IOB)
+        // Light: 100%, Moderate: 80%, Intense: 60%
+        val basalFactor = when (activityContext.state) {
+            app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.REST -> 1.0f
+            app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.LIGHT -> 1.0f 
+            app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.MODERATE -> 0.8f
+            app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.INTENSE -> 0.6f
+        }
+        if (basalFactor < 1.0f) {
+            this.basalaimi *= basalFactor
+            consoleLog.add("Basal Activity Redux: x${"%.2f".format(basalFactor)} -> ${"%.2f".format(this.basalaimi)}U/h")
+        }
+
+        // 🔹 Legacy Steps Logic (Removed/Replaced by ActivityManager above)
+        // if (recentSteps5Minutes > 100 ...) { ... } 
+        // -> All handled by activityManager.process() now.
+
+        // 🔹 Sécurisation des bornes minimales et maximales
         this.variableSensitivity = this.variableSensitivity.coerceIn(5.0f, 300.0f)
 
 
@@ -3782,13 +3811,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     } else {
                         // 🔙 Sinon on garde toute ta logique dynamique legacy
                         calculateAdjustedDIA(
-                            baseDia,
-                            currentHour,
-                            steps5,
-                            currentHr,
-                            avgHr60,
-                            pumpAge,
-                            iobValue
+                            baseDIAHours = baseDia,
+                            currentHour = currentHour,
+                            pumpAgeDays = pumpAge,
+                            iob = iobValue,
+                            activityContext = activityContext
                         )
                     }
                 },
@@ -4229,6 +4256,18 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             return finalResult
         } else {
             var insulinReq = smbToGive.toDouble()
+
+            // ⚡ ACTIVITY SAFETY CLAMP
+            // Si mode protection (Recovery ou Intense), on bride les SMB pour éviter l'hypo tardive
+            if (activityContext.protectionMode || activityContext.state == app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.INTENSE) {
+                val safetyMax = maxSMB * 0.5 // 50% du MaxSMB autorisé
+                if (insulinReq > safetyMax) {
+                    insulinReq = safetyMax
+                    rT.reason.append(context.getString(R.string.reason_activity_cap, safetyMax)) // Ensure string exists or use plain text if risky
+                    consoleLog.add("SMB capped by Activity/Recovery (Limit: ${"%.2f".format(safetyMax)})")
+                }
+            }
+
             // 📝 SMB autorisés mais atténués lorsque le repas impose un IOB > max raisonnable.
             if (allowMealHighIob) {
                 insulinReq *= mealHighIobDamping
