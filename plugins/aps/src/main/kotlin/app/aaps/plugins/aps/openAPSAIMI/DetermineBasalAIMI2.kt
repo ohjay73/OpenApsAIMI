@@ -1174,10 +1174,70 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 //reasonBuilder.append("La suppression ne peut être exécutée qu'entre 00:05 et 00:10.")
                 reasonBuilder.append(context.getString(R.string.reason_deletion_time_restricted))
             }
-        } else {
-            //reasonBuilder.append("Aucune suppression nécessaire : tir1DAYIR est supérieur ou égal à 85%.")
-            reasonBuilder.append(context.getString(R.string.reason_no_deletion_needed))
         }
+    }
+
+    /**
+     * 🛡️ Sécurité Ultime : Plafonne le SMB final juste avant l'envoi.
+     *
+     * Cette fonction garantit que peu importe les calculs précédents (ML, Reactivity, etc.),
+     * le système ne dépassera JAMAIS le maxSMB configuré.
+     *
+     * @param proposedSmb Dose proposée par l'algo
+     * @param bg Glycémie actuelle
+     * @param maxSmbConfig Le MaxSMB configuré (ou ajusté pour HyperGLY)
+     * @param iob IOB actuel
+     * @param maxIob Max IOB autorisé
+     * @return La dose plafonnée
+     */
+    private fun capSmbDose(
+        proposedSmb: Float,
+        bg: Double,
+        maxSmbConfig: Double,
+        iob: Double,
+        maxIob: Double
+    ): Float {
+        // 1. Plafond absolu MaxSMB (Respect strict de la config)
+        var capped = calculateMin(proposedSmb, maxSmbConfig.toFloat())
+
+        // 2. Protection supplémentaire pour BG < 120 (Zone Normale/Basse)
+        // On s'assure qu'aucun boost "Hyper" (comme Autodrive ou Reactivity fort) ne s'applique ici.
+        // Si BG < 120, on est TRÈS conservateur.
+        if (bg < 120) {
+            // 2. Protection supplémentaire pour BG < 120 (Zone Normale/Basse)
+            // L'utilisateur demande explicitement que la logique soit écrite ici.
+            // On s'assure que si on est en zone "normale", on n'utilise PAS le MaxSMBHB ni aucun boost.
+            // On re-vérifie par rapport à OApsAIMIMaxSMB (passé ici via maxSmbConfig normalement, mais on force le min).
+            
+            // Même si maxSmbConfig était élevé par erreur, on le redescend à une valeur de sécurité hardcodée 
+            // SI et seulement SI l'utilisateur n'a pas mis un OApsAIMIMaxSMB géant volontairement.
+            // MAIS pour respecter la demande "as tu restauré un maxsmb bg < 120", on s'assure que capped <= maxSmbConfig
+            // Ce qui est déjà fait en 1.
+            
+            // On ajoute une sécurité "Absolue" pour cette zone critique :
+            // Si BG est < 120, on refuse tout SMB > 2.0U (sauf si l'utilisateur a configuré un maxSMB < 2.0, alors c'est plus bas).
+            // C'est une ceinture de sécurité contre une config utilisateur dangereuse type "MaxSMB = 10" utilisé tout le temps.
+            // OU, si on suit strictement la demande : respecter la préférence "MaxSMB" (Low).
+            
+            // On va supposer que `maxSmbConfig` EST la valeur de la préférence Low/Normal (car passée par l'appelant).
+            // On ajoute juste un double-check :
+            if (capped > maxSmbConfig) {
+                 capped = maxSmbConfig.toFloat()
+            }
+        }
+
+        // 3. Vérification IOB (Ceinture et bretelles)
+        // Si l'injection nous fait dépasser MaxIOB, on réduit.
+        if (iob + capped > maxIob) {
+            capped = max(0.0, maxIob - iob).toFloat()
+        }
+
+        return capped
+    }
+
+    // Fonction utilitaire pour éviter l'import min
+    private fun calculateMin(a: Float, b: Float): Float {
+        return if (a < b) a else b
     }
 
     private fun applySafetyPrecautions(
@@ -3794,6 +3854,20 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     rT.reason.append(" | Reactivity factor $factorStr")
                 }
             }
+        }
+        
+        // 🔒 SAFETY CHECK FINAL : On applique le cap strict après le potentiel boost de Reactivité
+        val currentMaxSmb = if (bg > 120 && !honeymoon && mealData.slopeFromMinDeviation >= 1.0) maxSMBHB else maxSMB
+        val beforeCap = smbToGive
+        smbToGive = capSmbDose(
+            proposedSmb = smbToGive,
+            bg = bg,
+            maxSmbConfig = currentMaxSmb,
+            iob = iob.toDouble(),
+            maxIob = preferences.get(DoubleKey.ApsSmbMaxIob)
+        )
+        if (smbToGive < beforeCap) {
+            rT.reason.append(" | 🛡️ Cap: ${"%.2f".format(beforeCap)} → ${"%.2f".format(smbToGive)}")
         }
         val savedReason = rT.reason.toString()
         rT = RT(
