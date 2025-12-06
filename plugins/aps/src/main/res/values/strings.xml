@@ -1092,6 +1092,7 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
 
     <string name="hypo_risk_notification_text">Hypo risk detected: Rapid drop!</string>
     <string name="meal_dinner_maintain">Dinner mode maintain (%.1f floor)</string>
+    <string name="reason_bg_dropping_floor">Drop (Δ%.1f), safety floor (%.2f)</string>
     <string name="basal_planner_hard_hypo_guard">Hard Hypo guard: BG=%1$.0f ≤ %2$.0f</string>
     <string name="basal_planner_soft_hypo_guard_suspend">Soft Hypo guard: BG=%1$.0f, Δ=%2$s &lt; 0 → suspend</string>
     <string name="basal_planner_soft_hypo_guard_rising">Soft Hypo guard (rising): BG=%1$.0f, Δ=%2$s ≥ 0 → safe basal %3$sU/h</string>
