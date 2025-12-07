@@ -1091,6 +1091,22 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
             })
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.OApsAIMInight, title = R.string.OApsAIMI_Enable_night_title))
             })
+            // 🔧 Tools & Analysis Section
+            addPreference(PreferenceCategory(context).apply {
+                title = rh.gs(R.string.aimi_advisor_section)
+            })
+            addPreference(preferenceManager.createPreferenceScreen(context).apply {
+                key = "AIMI_Advisor"
+                title = rh.gs(R.string.aimi_advisor_title)
+                summary = rh.gs(R.string.aimi_advisor_summary)
+                setOnPreferenceClickListener {
+                    context.startActivity(
+                        Intent(context, app.aaps.plugins.aps.openAPSAIMI.advisor.AimiProfileAdvisorActivity::class.java)
+                    )
+                    true
+                }
+            })
+
             // ❌ TIME-BASED REACTIVITY REMOVED (replaced by UnifiedReactivityLearner)
             // Previously: morning/afternoon/evening/hyper factors
             // Now: UnifiedReactivityLearner.globalFactor handles all reactivity adaptation

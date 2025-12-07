@@ -1119,8 +1119,11 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="comparison_safety_large_diff">⚠️ Large total insulin difference</string>
     <string name="comparison_safety_ok">Safety profile acceptable</string>
 
-
     <string name="react_reactivity_entry">📈📉React. %1$s %2$s (TIR=%3$.0f%%, Variab.CV=%4$.0f%%, Hypos=%5$d)</string>
     <string name="react_reactivity_fallback">📈📉React. factor %1$s)</string>
 
+    <!-- AIMI Advisor -->
+    <string name="aimi_advisor_title">AIMI Advisor</string>
+    <string name="aimi_advisor_summary">Analyse les performances glycémiques et propose des ajustements de profil</string>
+    <string name="aimi_advisor_section">Outils et Analyses</string>
 </resources>
