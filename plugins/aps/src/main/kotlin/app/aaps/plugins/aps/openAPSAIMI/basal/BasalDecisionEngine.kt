@@ -286,8 +286,12 @@ class BasalDecisionEngine @Inject constructor(
                 val safeFloor = if (input.delta < -2) 0.0 else input.profileCurrentBasal * 0.5
                 chosenRate = safeFloor
                 overrideSafety = false
-              //rT.reason.append("HighIOB: ${if(safeFloor>0) "50%" else "0% (dropping)"} basal")
-                rT.reason.append(context.getString(R.string.high_iob_50))
+            //rT.reason.append("HighIOB: ${if(safeFloor>0) "50%" else "0% (dropping)"} basal")
+                if (safeFloor > 0) {
+                    rT.reason.append(context.getString(R.string.high_iob_50))
+                } else {
+                    rT.reason.append(context.getString(R.string.high_iob_dropping))
+                }
             } else if (input.iob > input.maxIob && input.allowMealHighIob) {
                 chosenRate = max(input.profileCurrentBasal, input.currentTemp.rate)
                 rT.reason.append(context.getString(R.string.reason_meal_hold_profile_basal,
@@ -307,7 +311,8 @@ class BasalDecisionEngine @Inject constructor(
                         // Was 0.0, now check if we can hold a floor
                         if (input.bg > 85 && input.predictedBg > 80 && input.safetyDecision.isHypoRisk == false) {
                              chosenRate = input.profileCurrentBasal * 0.2
-                             rT.reason.append("BG 80-90 fall safe: 20%")
+                           //rT.reason.append("BG 80-90 fall safe: 20%")
+                            rT.reason.append(context.getString(R.string.bg_80_90_fall_safe))
                         } else {
                              chosenRate = 0.0
                              rT.reason.append(context.getString(R.string.bg_80_90_fall))
