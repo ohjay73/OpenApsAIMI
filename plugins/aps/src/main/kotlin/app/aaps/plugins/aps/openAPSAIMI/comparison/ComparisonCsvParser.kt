@@ -4,7 +4,7 @@ import app.aaps.plugins.aps.R
 import java.io.File
 import kotlin.math.abs
 
-class ComparisonCsvParser  {
+class ComparisonCsvParser {
 
     fun parse(file: File): List<ComparisonEntry> {
         if (!file.exists() || !file.canRead()) {
