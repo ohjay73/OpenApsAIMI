@@ -1018,30 +1018,4 @@
     <string name="hypo_risk_notification_text">Hypo risk detected: Rapid drop!</string>
     <string name="meal_dinner_maintain">Dinner mode maintain (%.1f floor)</string>
     <string name="reason_bg_dropping_floor">Drop (Δ%.1f), safety floor (%.2f)</string>
-    <!-- AIMI ADVISOR STRINGS -->
-    <string name="aimi_advisor_title">AIMI Profile Advisor</string>
-    <string name="aimi_advisor_score_label">Score</string>
-
-    <string name="aimi_adv_rec_hypos_title">Risque d\'hypoglycémie</string>
-    <string name="aimi_adv_rec_hypos_desc">Le temps passé en hypoglycémie est trop élevé.</string>
-    <string name="aimi_adv_rec_hypos_action_isf">Augmenter ISF (+10%)</string>
-
-    <string name="aimi_adv_rec_control_title">Contrôle glycémique insuffisant</string>
-    <string name="aimi_adv_rec_control_desc">Le temps dans la cible (70-180) est inférieur à 70%.</string>
-
-    <string name="aimi_adv_rec_hypers_title">Hyperglycémies fréquentes</string>
-    <string name="aimi_adv_rec_hypers_desc">Le temps passé au-dessus de 180 mg/dL est significatif.</string>
-    <string name="aimi_adv_rec_hypers_action_ratios">Vérifier Ratios Glucides (IC)</string>
-    <string name="aimi_adv_rec_hypers_action_autodrive">Activer Autodrive Meal Detection</string>
-
-    <string name="aimi_adv_rec_basal_title">Déséquilibre de la Basale</string>
-    <string name="aimi_adv_rec_basal_desc">La part de la basale dans la dose totale quotidienne est anormale.</string>
-    <string name="aimi_adv_rec_basal_action_night">Vérifier la basale de nuit</string>
-
-    <string name="aimi_adv_rec_profile_ok_title">Profil sémantique correct</string>
-    <string name="aimi_adv_rec_profile_ok_desc">Aucune anomalie majeure détectée.</string>
-    <string name="aimi_adv_rec_profile_ok_action_doc">Consulter la doc avancée</string>
-    <string name="aimi_adv_rec_profile_ok_action_tune">Affiner via Autotune</string>
-    
-
 </resources>
