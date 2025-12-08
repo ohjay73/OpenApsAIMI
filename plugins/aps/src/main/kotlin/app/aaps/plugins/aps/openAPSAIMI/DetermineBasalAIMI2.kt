@@ -648,7 +648,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 reasonBuilder.append(context.getString(R.string.bg_near_target, predictedBG, targetBG))
             } else if (predictedBG < targetBG + 10 && risingFast) {
                 // Log pour traçabilité mais pas de réduction
-                reasonBuilder.append(context.getString(R.string.bg_near_target_but_rising, 
+                reasonBuilder.append(context.getString(R.string.bg_near_target_but_rising,
                     predictedBG, targetBG, delta, combinedDelta))
             }
         }
@@ -953,7 +953,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         if (mealModeActive) {
             val safeFloor = max(100.0, targetbg - 5)
             val risingFast = delta >= 2.0 || (delta > 0 && currentBg > 120)
-            
+
             // Condition assouplie: eventualBg ignoré si montée confirmée
             if (currentBg > safeFloor && delta > 0.5 && (eventualBg > safeFloor || risingFast)) {
                 mealModeSmbReason = context.getString(
@@ -1952,22 +1952,22 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     ): Boolean {
         val tol = 5.0
         val floor = hypo - tol
-        
+
         // 1. Hypo actuelle = TOUJOURS bloquer (sécurité absolue)
         val strongNow = bgNow <= floor
         if (strongNow) return true
-        
+
         // 2. ⚡ NOUVEAU: Bypass progressif si BG monte clairement
         //    - delta >= 4 : bypass total des prédictions (montée forte)
         //    - delta >= 2 && bg > hypo : bypass strongFuture seulement
         val risingFast = delta >= 4.0
         val risingModerate = delta >= 2.0 && bgNow > hypo
-        
+
         if (risingFast) {
             // Montée forte: ignorer complètement les prédictions
             return false
         }
-        
+
         // 3. Prédictions futures (seulement si pas en montée modérée)
         val strongFuture = (predicted <= floor && eventual <= floor)
         if (strongFuture && risingModerate) {
@@ -1976,7 +1976,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         } else if (strongFuture) {
             return true
         }
-        
+
         // 4. Chute rapide avec prédiction basse
         val fastFall = (delta <= -2.0 && predicted <= hypo)
         return fastFall
@@ -3861,16 +3861,16 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             this.predictedSMB = 0f
         } else {
             var finalModelSmb = modelcal
-             
+
              if (fallbackActive) {
                  // Damping for fallback (Hyper Kicker replacement)
                  // User suggested 50% dampening when relying on raw UAM without global prediction
-                 finalModelSmb = modelcal * 0.5f 
+                 finalModelSmb = modelcal * 0.5f
                  rT.reason.appendLine("Hyper fallback active: SMB unblocked (50% damped) despite missing prediction. UAM: ${"%.2f".format(modelcal)} -> ${"%.2f".format(finalModelSmb)}")
              } else {
                  rT.reason.appendLine("💉 SMB (UAM): ${"%.2f".format(modelcal)} U")
              }
-             
+
              this.predictedSMB = finalModelSmb
         }
 
@@ -4071,12 +4071,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         )
         rT.reason.append(savedReason)
         var rate = when {
-          //snackTime && snackrunTime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 4.0, "AI Force basal because mealTime $snackrunTime.", currenttemp, rT)
-          //mealTime && mealruntime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 10.0, "AI Force basal because mealTime $mealruntime.", currenttemp, rT)
-          //lunchTime && lunchruntime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 10.0, "AI Force basal because lunchTime $lunchruntime.", currenttemp, rT)
-          //dinnerTime && dinnerruntime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 10.0, "AI Force basal because dinnerTime $dinnerruntime.", currenttemp, rT)
-          //highCarbTime && highCarbrunTime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 10.0, "AI Force basal because highcarb $highCarbrunTime.", currenttemp, rT)
-
+            //snackTime && snackrunTime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 4.0, "AI Force basal because mealTime $snackrunTime.", currenttemp, rT)
+            //mealTime && mealruntime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 10.0, "AI Force basal because mealTime $mealruntime.", currenttemp, rT)
+            //lunchTime && lunchruntime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 10.0, "AI Force basal because lunchTime $lunchruntime.", currenttemp, rT)
+            //dinnerTime && dinnerruntime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 10.0, "AI Force basal because dinnerTime $dinnerruntime.", currenttemp, rT)
+            //highCarbTime && highCarbrunTime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 10.0, "AI Force basal because highcarb $highCarbrunTime.", currenttemp, rT)
             snackTime && snackrunTime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 4.0, context.getString(R.string.ai_force_basal_reason_snack) + " ($snackrunTime m).", currenttemp, rT)
             mealTime && mealruntime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 10.0, context.getString(R.string.ai_force_basal_reason_meal) + " ($mealruntime m).", currenttemp, rT)
             lunchTime && lunchruntime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 10.0, context.getString(R.string.ai_force_basal_reason_lunch) + " ($lunchruntime m).", currenttemp, rT)
@@ -4105,28 +4104,27 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     calculateRate(basal, profile_current_basal, boostedRate/profile_current_basal, "Post-Meal Boost active ($runTime m)", currenttemp, rT)
                 } else null
             }
-            
+
             // 🔥 General Hyper Kicker (Non-Meal)
             // Catch-all for late rises outside specific meal windows
             (bg > target_bg + 30 && (delta >= 0.3 || shortAvgDelta >= 0.2)) -> {
                 val maxBasalPref = preferences.get(DoubleKey.autodriveMaxBasal) // Absolute max
                 val safeMax = if (maxBasalPref > 0) maxBasalPref else profile_current_basal * 3.0
-                
+
                 val boostedRate = adjustBasalForGeneralHyper(
-                    suggestedBasalUph = profile_current_basal, 
+                    suggestedBasalUph = profile_current_basal,
                     bg = bg,
                     targetBg = target_bg,
                     delta = delta.toDouble(),
                     shortAvgDelta = shortAvgDelta.toDouble(),
                     maxBasalConfig = safeMax
                 )
-                
+
                 if (boostedRate > profile_current_basal * 1.1) {
                     calculateRate(basal, profile_current_basal, boostedRate/profile_current_basal, "Global Hyper Kicker (Active)", currenttemp, rT)
                 } else null
             }
-
-          //fastingTime -> calculateRate(profile_current_basal, profile_current_basal, delta.toDouble(), "AI Force basal because fastingTime", currenttemp, rT)
+            //fastingTime -> calculateRate(profile_current_basal, profile_current_basal, delta.toDouble(), "AI Force basal because fastingTime", currenttemp, rT)
             fastingTime -> calculateRate(profile_current_basal, profile_current_basal, delta.toDouble(), context.getString(R.string.ai_force_basal_reason_fasting), currenttemp, rT)
             else -> null
         }
@@ -4697,7 +4695,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         if (safetyDecision.stopBasal || bg < 70) {
             return suggestedRate // Allow 0.0 pour hypo réelle
         }
-        
+
         // 2. ⚡ Prediction basse MAIS montée → ne pas bypasser le floor
         if (predictedBg < 65) {
             if (delta > 0 && bg > 90) {
@@ -4759,21 +4757,21 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         maxBasalConfig: Double
     ): Double {
         // "Progressivement rapidement" logic requested by user
-        
+
         // Risque montée franche ou plateau haut persistant
         val rising = delta >= 0.5 || shortAvgDelta >= 0.3
         val plateauHigh = delta >= -0.1 && bg > targetBg + 50
-        
+
         if (!rising && !plateauHigh) return suggestedBasalUph
-        
+
         val deviation = bg - targetBg
-        
+
         // Progressive scaling based on deviation severity
         // 30mg au dessus: x2
         // 60mg au dessus: x5
         // 90mg au dessus: x8
         // 120mg+        : x10 (Authorized by user)
-        
+
         val scaleFactor = when {
             deviation >= 120 -> 10.0
             deviation >= 90  -> 8.0
@@ -4781,11 +4779,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             deviation >= 30  -> 2.0
             else -> 1.0
         }
-        
+
         if (scaleFactor == 1.0) return suggestedBasalUph
-        
+
         val boosted = suggestedBasalUph * scaleFactor
-        
+
         // Cap only by absolute max config (safety)
         return if (boosted > maxBasalConfig) maxBasalConfig else boosted
     }
