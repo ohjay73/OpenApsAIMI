@@ -905,6 +905,16 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                 key = "Global User Preferences"
                 //title = "Global User Preferences"
                 title = rh.gs(R.string.user_preferences)
+                addPreference(
+                    AdaptiveStringPreference(
+                        context,
+                        null,
+                        StringKey.AimiAdvisorOpenAIKey,
+                        null,
+                        R.string.aimi_pref_openai_key_summary,
+                        R.string.aimi_pref_openai_key_title
+                    )
+                )
                 addPreference(PreferenceCategory(context).apply {
                     title = rh.gs(R.string.user_preferences_title_menu)
                 })
@@ -1170,6 +1180,19 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                         booleanKey = BooleanKey.OApsAIMIUnifiedReactivityEnabled,
                         title = R.string.unified_reactivity_title,
                         summary = R.string.unified_reactivity_summary
+                    )
+                )
+                
+                // 🔧 Tools & Analysis Section
+                addPreference(PreferenceCategory(context).apply {
+                    title = rh.gs(R.string.aimi_advisor_section)
+                })
+                addPreference(
+                    AdaptiveIntentPreference(
+                        ctx = context,
+                        intentKey = IntentKey.OApsAIMIProfileAdvisor,
+                        intent = Intent(context, app.aaps.plugins.aps.openAPSAIMI.advisor.AimiProfileAdvisorActivity::class.java),
+                        summary = R.string.aimi_advisor_summary
                     )
                 )
                 

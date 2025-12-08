@@ -318,6 +318,8 @@
     <string name="oaps_aimi_smb_tail_threshold_summary">Fraction of remaining IOB that triggers SMB damping.</string>
     <string name="oaps_aimi_smb_tail_damping_title">Tail damping factor</string>
     <string name="oaps_aimi_smb_tail_damping_summary">Multiplier applied to SMB when tail IOB is high.</string>
+    <string name="pkpd_runtime_log">PK/PD: DIA %1$.1fh, peak %2$.0fmin, fused ISF %3$.0f mg/dL/U (scale ×%4$.2f, tail %5$.0f%%)\n</string>
+    <string name="pkpd_runtime_fallback">PK/PD disabled → profile DIA %1$.1fh, peak %2$.0fmin\n</string>
     <string name="oaps_aimi_smb_exercise_damping_title">Exercise damping factor</string>
     <string name="oaps_aimi_smb_exercise_damping_summary">Multiplier applied to SMB after recent exercise.</string>
     <string name="oaps_aimi_smb_late_fat_damping_title">Late meal damping factor</string>
@@ -770,6 +772,7 @@
     <string name="tdd_per_hour_high">High TDD/h (%1$.2f U/h), reduction x0.8; </string>
     <string name="tir_high">High TIR (%1$.1f%%), reduction x0.5;</string>
     <string name="bg_near_target">Predicted BG (%1$.1f) near target (%2$.1f), reduction x0.5; </string>
+    <string name="bg_near_target_but_rising">Predicted BG (%1$.1f) near target (%2$.1f) but rising detected (Δ=%3$.1f, combined=%4$.1f) → no reduction; </string>
     <string name="zero_basal_forced">Zero basal duration (%1$d min) exceeded, forcing minimal basal; </string>
     <string name="dia_base_info">Base DIA: %1$f h = %2$f min\n</string>
     <string name="morning_adjustment">Morning adjustment (6&#8211;10h): DIA reduced by 20%</string>
@@ -1018,4 +1021,75 @@
     <string name="hypo_risk_notification_text">Hypo risk detected: Rapid drop!</string>
     <string name="meal_dinner_maintain">Dinner mode maintain (%.1f floor)</string>
     <string name="reason_bg_dropping_floor">Drop (Δ%.1f), safety floor (%.2f)</string>
+
+    <!-- AIMI Advisor -->
+    <string name="aimi_advisor_summary">Analyse les performances glycémiques et propose des ajustements de profil</string>
+    <string name="aimi_advisor_section">Outils et Analyses</string>
+    <!-- AIMI ADVISOR SECTION -->
+    <string name="aimi_advisor_title">AIMI Advisor</string>
+
+    <string name="aimi_advisor_score_label_excellent">Excellent</string>
+    <string name="aimi_advisor_score_label_good">Bon</string>
+    <string name="aimi_advisor_score_label_warning">À améliorer</string>
+    <string name="aimi_advisor_score_label_attention">Attention requise</string>
+    <string name="aimi_advisor_score_label_critical">Action urgente</string>
+
+    <string name="aimi_advisor_period_label">Période : %1$s</string>
+    <string name="aimi_advisor_metric_tir_70_180">TIR 70–180 : %1$d %%</string>
+    <string name="aimi_advisor_metric_tir_70_140">TIR 70–140 : %1$d %%</string>
+    <string name="aimi_advisor_metric_time_below_70">Temps &lt;70 : %1$d %%</string>
+    <string name="aimi_advisor_metric_time_above_180">Temps &gt;180 : %1$d %%</string>
+    <string name="aimi_advisor_metric_mean_bg">Glycémie moyenne : %1$d mg/dL</string>
+    <string name="aimi_advisor_metric_tdd">TDD : %1$.1f U (basal %2$d %%)</string>
+
+    <string name="aimi_advisor_recommendations_title">Recommandations</string>
+
+    <!-- Hypos -->
+    <string name="aimi_adv_rec_hypos_title">Hypos sévères détectées</string>
+    <string name="aimi_adv_rec_hypos_desc">%1$d%% du temps sous 54 mg/dL, %2$d épisodes sévères. Priorité : réduire l\'agressivité.</string>
+    <string name="aimi_adv_rec_hypos_action_isf">Réduire MaxSMB de 10-20%</string>
+    <string name="aimi_adv_rec_hypos_action_modes">Réduire les facteurs des modes repas</string>
+    <string name="aimi_adv_rec_hypos_action_basal">Vérifier les basales nocturnes</string>
+
+    <!-- Poor Control -->
+    <string name="aimi_adv_rec_control_title">Contrôle insuffisant</string>
+    <string name="aimi_adv_rec_control_desc">TIR 70-180 = %1$d%% avec peu d\'hypos. Le profil est trop conservateur.</string>
+    <string name="aimi_adv_rec_control_action_basal">Augmenter la basale de 5-10%</string>
+    <string name="aimi_adv_rec_control_action_isf">Réduire l\'ISF (plus d\'insuline)</string>
+    <string name="aimi_adv_rec_control_action_modes">Utiliser les modes repas systématiquement</string>
+
+    <!-- Hypers -->
+    <string name="aimi_adv_rec_hypers_title">Temps élevé au-dessus de 180</string>
+    <string name="aimi_adv_rec_hypers_desc">%1$d%% du temps &gt; 180 mg/dL.</string>
+    <string name="aimi_adv_rec_hypers_action_ratios">Vérifier les ratios glucides/insuline</string>
+    <string name="aimi_adv_rec_hypers_action_autodrive">Activer/ajuster AutoDrive</string>
+    <string name="aimi_adv_rec_hypers_action_factors">Augmenter les facteurs des modes repas</string>
+
+    <!-- Basal Dominance -->
+    <string name="aimi_adv_rec_basal_title">Basale dominante</string>
+    <string name="aimi_adv_rec_basal_desc">Basale = %1$d%% de TDD. Peut indiquer des basales trop élevées ou des bolus insuffisants.</string>
+    <string name="aimi_adv_rec_basal_action_night">Revoir les basales nocturnes</string>
+    <string name="aimi_adv_rec_basal_action_carbs">Améliorer le comptage des glucides</string>
+
+    <!-- Good Profile -->
+    <string name="aimi_adv_rec_profile_ok_title">Profil bien équilibré ✓</string>
+    <string name="aimi_adv_rec_profile_ok_desc">Les indicateurs sont cohérents. Continuez ainsi !</string>
+    <string name="aimi_adv_rec_profile_ok_action_doc">Documenter cette configuration</string>
+    <string name="aimi_adv_rec_profile_ok_action_tune">Ajuster uniquement les tranches problématiques</string>
+
+    <!-- Advisor Actions (Dynamic) -->
+    <string name="aimi_action_increase_night_basal">Augmenter la basale de 00h-06h : %.2f → %.2f U/h (+10%%)</string>
+    <string name="aimi_action_reduce_max_smb">Réduire MaxSMB : %.1f → %.1f U</string>
+    <string name="aimi_action_increase_lunch_factor">Augmenter facteur Déjeuner : %.1f → %.1f</string>
+
+    <!-- AI Coach -->
+    <string name="aimi_coach_title">Coach AI</string>
+    <string name="aimi_coach_loading">Analyse approfondie en cours...</string>
+    <string name="aimi_coach_error">Le coach est indisponible.</string>
+    <string name="aimi_coach_placeholder">Configurez votre clé API OpenAI pour activer le coach.</string>
+
+    <!-- AI Prefs -->
+    <string name="aimi_pref_openai_key_title">Clé API OpenAI</string>
+    <string name="aimi_pref_openai_key_summary">Saisissez votre clé (sk-...) pour activer le Coach AIMI.</string>
 </resources>
+

@@ -505,6 +505,33 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     }
 
 
+    /**
+     * Détecte une montée glycémique significative basée sur les deltas réels.
+     * Utilisé pour éviter que les prédictions optimistes bloquent l'action.
+     *
+     * @param deltaVal Delta 5min actuel (mg/dL/5min)
+     * @param shortAvgDeltaVal Moyenne courte des deltas
+     * @param bgNow Glycémie actuelle
+     * @param targetBgVal Objectif glycémique
+     * @param mealModeActive Mode repas actif (seuils plus sensibles)
+     * @return true si une montée significative est détectée
+     */
+    private fun isRisingFast(
+        deltaVal: Double,
+        shortAvgDeltaVal: Double,
+        bgNow: Double,
+        targetBgVal: Double,
+        mealModeActive: Boolean
+    ): Boolean {
+        // Seuils ajustés selon le contexte repas
+        val deltaThreshold = if (mealModeActive) 2.0 else 4.0
+        val shortAvgThreshold = if (mealModeActive) 1.5 else 3.0
+        val bgMargin = if (mealModeActive) 0.0 else 10.0
+
+        return (deltaVal >= deltaThreshold || shortAvgDeltaVal >= shortAvgThreshold)
+            && bgNow >= targetBgVal - bgMargin
+    }
+
     private fun roundBasal(value: Double): Double = value
 
 
@@ -613,11 +640,16 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 reasonBuilder.append(context.getString(R.string.tir_high, tirInhypo))
             }
 
-            // 8. BG prédit proche de la cible
-            if (predictedBG < targetBG + 10) {
+            // 8. BG prédit proche de la cible - SAUF si montée significative
+            val risingFast = delta >= 3f || combinedDelta >= 2f
+            if (predictedBG < targetBG + 10 && !risingFast) {
                 factors.add(0.5f)
                 //reasonBuilder.append("BG prédit ($predictedBG) proche de la cible ($targetBG), réduction x0.5; ")
                 reasonBuilder.append(context.getString(R.string.bg_near_target, predictedBG, targetBG))
+            } else if (predictedBG < targetBG + 10 && risingFast) {
+                // Log pour traçabilité mais pas de réduction
+                reasonBuilder.append(context.getString(R.string.bg_near_target_but_rising, 
+                    predictedBG, targetBG, delta, combinedDelta))
             }
         }
 
@@ -821,6 +853,37 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val scale = 10.0.pow(2.0)
         return (Math.round(value * scale) / scale).toInt()
     }
+    // Helper for Post-Meal Basal Boost (AIMI 2.0)
+    private fun adjustBasalForMealHyper(
+        suggestedBasalUph: Double,
+        bg: Double,
+        targetBg: Double,
+        delta: Double,
+        shortAvgDelta: Double,
+        isMealModeActive: Boolean,
+        minutesSinceMealStart: Int,
+        mealMaxBasalUph: Double
+    ): Double {
+        val mealPhase = isMealModeActive && minutesSinceMealStart in 0..120
+        if (!mealPhase) return suggestedBasalUph
+
+        val risingOrFlat = delta >= 0.3 || shortAvgDelta >= 0.2
+        val moderatelyHigh = bg > targetBg + 30.0
+        val veryHigh = bg > targetBg + 90.0   // ex. cible 100 → 190+
+
+        if (!risingOrFlat || !moderatelyHigh) return suggestedBasalUph
+
+        val boostFactor = when {
+            veryHigh -> 10    // ex : 250+ → +50 %
+            else -> 8       // ex : 180–250 → +25 %
+        }
+
+        val boosted = suggestedBasalUph * boostFactor
+
+        // Plafond sécurisé : on ne dépasse pas mealMaxBasalUph
+        return if (boosted > mealMaxBasalUph) mealMaxBasalUph else boosted
+    }
+
     private fun calculateRate(basal: Double, currentBasal: Double, multiplier: Double, reason: String, currenttemp: CurrentTemp, rT: RT): Double {
         rT.reason.append("${currenttemp.duration}m@${(currenttemp.rate).toFixed2()} $reason")
         return if (basal == 0.0) currentBasal * multiplier else roundBasal(basal * multiplier)
@@ -886,10 +949,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             return true
         }
 
-        // 4) Enfin, l’exception meal-rise si elle est vraie
+        // 4) Enfin, l'exception meal-rise si elle est vraie
         if (mealModeActive) {
             val safeFloor = max(100.0, targetbg - 5)
-            if (currentBg > safeFloor && delta > 0.5 && eventualBg > safeFloor) {
+            val risingFast = delta >= 2.0 || (delta > 0 && currentBg > 120)
+            
+            // Condition assouplie: eventualBg ignoré si montée confirmée
+            if (currentBg > safeFloor && delta > 0.5 && (eventualBg > safeFloor || risingFast)) {
                 mealModeSmbReason = context.getString(
                     R.string.smb_enabled_meal_mode,
                     convertBG(currentBg),
@@ -1886,12 +1952,52 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     ): Boolean {
         val tol = 5.0
         val floor = hypo - tol
+        
+        // 1. Hypo actuelle = TOUJOURS bloquer (sécurité absolue)
         val strongNow = bgNow <= floor
+        if (strongNow) return true
+        
+        // 2. ⚡ NOUVEAU: Bypass progressif si BG monte clairement
+        //    - delta >= 4 : bypass total des prédictions (montée forte)
+        //    - delta >= 2 && bg > hypo : bypass strongFuture seulement
+        val risingFast = delta >= 4.0
+        val risingModerate = delta >= 2.0 && bgNow > hypo
+        
+        if (risingFast) {
+            // Montée forte: ignorer complètement les prédictions
+            return false
+        }
+        
+        // 3. Prédictions futures (seulement si pas en montée modérée)
         val strongFuture = (predicted <= floor && eventual <= floor)
+        if (strongFuture && risingModerate) {
+            // Montée modérée: ignorer strongFuture mais pas fastFall
+            // Continue to check fastFall only
+        } else if (strongFuture) {
+            return true
+        }
+        
+        // 4. Chute rapide avec prédiction basse
         val fastFall = (delta <= -2.0 && predicted <= hypo)
-        return strongNow || strongFuture || fastFall
+        return fastFall
     }
     // Hystérèse : on ne débloque qu’après avoir été > (seuil+margin) pendant X minutes
+    private fun canFallbackSmbWithoutPrediction(
+        bg: Double,
+        delta: Double,
+        targetBg: Double,
+        iob: Double,
+        profile: OapsProfileAimi
+    ): Boolean {
+        // Fallback SMB allowed if clearly high and rising, even if prediction is missing
+        val clearlyHigh = bg > targetBg + 30.0
+        val stronglyRising = delta >= 2.0 // mg/dl/5min
+        // Ensure IOB is not already saturating safety
+        val iobSafe = iob < profile.max_iob * 0.8
+
+        return clearlyHigh && stronglyRising && iobSafe
+    }
+
     private fun shouldBlockHypoWithHysteresis(
         bg: Double,
         predictedBg: Double,
@@ -2483,16 +2589,26 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         iobArray: Array<IobTotal>,
         finalSensitivity: Double,
         cobG: Double,
+
         profile: OapsProfileAimi,
-        rT: RT
+        rT: RT,
+        delta: Double
     ): PredictionResult {
-        val advancedPredictions = AdvancedPredictionEngine.predict(
-            currentBG = currentBg,
-            iobArray = iobArray,
-            finalSensitivity = finalSensitivity,
-            cobG = cobG,
-            profile = profile
-        )
+        consoleLog.add("Debug: computePkpdPredictions called with delta=$delta")
+        val advancedPredictions = try {
+            AdvancedPredictionEngine.predict(
+                currentBG = currentBg,
+                iobArray = iobArray,
+                finalSensitivity = finalSensitivity,
+                cobG = cobG,
+                profile = profile,
+                delta = delta
+            )
+        } catch (e: Exception) {
+            consoleLog.add("Error in AdvancedPredictionEngine: ${e.message}")
+            // Fallback: flat prediction
+            List(48) { currentBg }
+        }
 
         val sanitizedPredictions = advancedPredictions.map { round(min(401.0, max(39.0, it)), 0) }
         val intsPredictions = sanitizedPredictions.map { it.toInt() }
@@ -3172,7 +3288,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             exerciseFlag = sportTime,
             profileIsf = profile.sens,
             tdd24h = tdd24Hrs.toDouble(),
-            mealContext = pkpdMealContext
+            mealContext = pkpdMealContext,
+            consoleLog = consoleLog
         )
         if (pkpdRuntimeTemp != null) {
             pkpdRuntime = pkpdRuntimeTemp
@@ -3653,8 +3770,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             iobArray = iob_data_array,
             finalSensitivity = sens,
             cobG = mealData.mealCOB,
+
             profile = profile,
-            rT = rT
+            rT = rT,
+            delta = delta.toDouble()
         )
         this.eventualBG = pkpdPredictions.eventual
         this.predictedBg = pkpdPredictions.eventual.toFloat()
@@ -3718,14 +3837,22 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val minBg = minOf(safe(bg), safe(predictedBg.toDouble()), safe(eventualBG))
         val threshold = computeHypoThreshold(minBg, profile.lgsThreshold)
 
-        if (shouldBlockHypoWithHysteresis(
+        val isHypoBlocked = shouldBlockHypoWithHysteresis(
                 bg = bg,
                 predictedBg = predictedBg.toDouble(),
                 eventualBg = eventualBG,
                 threshold = threshold,
                 deltaMgdlPer5min = delta.toDouble()
             )
-        ) {
+
+        var fallbackActive = false
+        if (isHypoBlocked) {
+             if (canFallbackSmbWithoutPrediction(bg, delta.toDouble(), target_bg, iob.toDouble(), profile)) {
+                 fallbackActive = true
+            }
+        }
+
+        if (isHypoBlocked && !fallbackActive) {
             //rT.reason.appendLine(
             //    "🛑 Hypo guard+hystérèse: minBG=${convertBG(minBg)} " +
             //        "≤ Th=${convertBG(threshold)} (BG=${convertBG(bg)}, pred=${convertBG(predictedBg.toDouble())}, ev=${convertBG(eventualBG)}) → SMB=0"
@@ -3733,9 +3860,24 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             )
             this.predictedSMB = 0f
         } else {
-            rT.reason.appendLine("💉 SMB (UAM): ${"%.2f".format(modelcal)} U")
-            this.predictedSMB = modelcal
+            var finalModelSmb = modelcal
+             
+             if (fallbackActive) {
+                 // Damping for fallback (Hyper Kicker replacement)
+                 // User suggested 50% dampening when relying on raw UAM without global prediction
+                 finalModelSmb = modelcal * 0.5f 
+                 rT.reason.appendLine("Hyper fallback active: SMB unblocked (50% damped) despite missing prediction. UAM: ${"%.2f".format(modelcal)} -> ${"%.2f".format(finalModelSmb)}")
+             } else {
+                 rT.reason.appendLine("💉 SMB (UAM): ${"%.2f".format(modelcal)} U")
+             }
+             
+             this.predictedSMB = finalModelSmb
         }
+
+        // Detailed logging as requested
+        val hasPred = predictedBg > 20
+        val hyperKicker = (bg > target_bg + 30 && (delta >= 0.3 || shortAvgDelta >= 0.2))
+        consoleLog.add("SMB Decision: BG=${"%.0f".format(bg)}, Delta=${"%.1f".format(delta)}, IOB=${"%.2f".format(iob)}, HasPred=$hasPred, HyperKicker=$hyperKicker, UAM=${"%.2f".format(modelcal)}, Proposed=${"%.2f".format(this.predictedSMB)}")
         val pkpdDiaMinutesOverride: Double? = pkpdRuntime?.params?.diaHrs?.let { it * 60.0 } // PKPD donne des heures → on passe en minutes
         val useLegacyDynamicsdia = pkpdDiaMinutesOverride == null
         val smbExecution = SmbInstructionExecutor.execute(
@@ -3806,19 +3948,16 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     adjustFactorsBasedOnBgAndHypo(morning, afternoon, evening)
                 },
                 calculateAdjustedDia = { baseDia, currentHour, steps5, currentHr, avgHr60, pumpAge, iobValue ->
-                    // 🔀 Si PKPD est actif → on impose son DIA (en minutes)
-                    if (!useLegacyDynamicsdia && pkpdDiaMinutesOverride != null) {
-                        pkpdDiaMinutesOverride
-                    } else {
-                        // 🔙 Sinon on garde toute ta logique dynamique legacy
-                        calculateAdjustedDIA(
-                            baseDIAHours = baseDia,
-                            currentHour = currentHour,
-                            pumpAgeDays = pumpAge,
-                            iob = iobValue,
-                            activityContext = activityContext
-                        )
-                    }
+                    // 🔀 Si PKPD est actif, on l'utilise comme base, mais on permet l'ajustement dynamique (activités, heure, etc.)
+                    val effectiveBaseDia = pkpdDiaMinutesOverride?.let { (it / 60.0).toFloat() } ?: baseDia
+
+                    calculateAdjustedDIA(
+                        baseDIAHours = effectiveBaseDia,
+                        currentHour = currentHour,
+                        pumpAgeDays = pumpAge,
+                        iob = iobValue,
+                        activityContext = activityContext
+                    )
                 },
                 costFunction = { basalInput, bgInput, targetInput, horizon, sensitivity, candidate ->
                     costFunction(basalInput, bgInput, targetInput, horizon, sensitivity, candidate)
@@ -3923,6 +4062,50 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             lunchTime && lunchruntime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 10.0, "AI Force basal because lunchTime $lunchruntime.", currenttemp, rT)
             dinnerTime && dinnerruntime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 10.0, "AI Force basal because dinnerTime $dinnerruntime.", currenttemp, rT)
             highCarbTime && highCarbrunTime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 10.0, "AI Force basal because highcarb $highCarbrunTime.", currenttemp, rT)
+            
+            // 🔥 Patch Post-Meal Hyper Boost (AIMI 2.0)
+            (mealTime || lunchTime || dinnerTime || highCarbTime) -> {
+                val runTime = listOf(mealruntime, lunchruntime, dinnerruntime, highCarbrunTime).maxOrNull() ?: 0
+                val target = target_bg // simplification
+                val maxBasalPref = preferences.get(DoubleKey.meal_modes_MaxBasal) // limit from prefs
+                val safeMax = if (maxBasalPref > 0) maxBasalPref else profile_current_basal * 2.0 
+                
+                val boostedRate = adjustBasalForMealHyper(
+                    suggestedBasalUph = profile_current_basal, // Start with profile basal
+                    bg = bg,
+                    targetBg = target,
+                    delta = delta.toDouble(),
+                    shortAvgDelta = shortAvgDelta.toDouble(),
+                    isMealModeActive = true,
+                    minutesSinceMealStart = runTime.toInt(),
+                    mealMaxBasalUph = safeMax
+                )
+                
+                if (boostedRate > profile_current_basal * 1.05) { // Only if significantly boosted
+                     calculateRate(basal, profile_current_basal, boostedRate/profile_current_basal, "Post-Meal Boost active ($runTime m)", currenttemp, rT)
+                } else null
+            }
+            
+            // 🔥 General Hyper Kicker (Non-Meal)
+            // Catch-all for late rises outside specific meal windows
+            (bg > target_bg + 30 && (delta >= 0.3 || shortAvgDelta >= 0.2)) -> {
+                val maxBasalPref = preferences.get(DoubleKey.autodriveMaxBasal) // Absolute max
+                val safeMax = if (maxBasalPref > 0) maxBasalPref else profile_current_basal * 3.0
+                
+                val boostedRate = adjustBasalForGeneralHyper(
+                    suggestedBasalUph = profile_current_basal, 
+                    bg = bg,
+                    targetBg = target_bg,
+                    delta = delta.toDouble(),
+                    shortAvgDelta = shortAvgDelta.toDouble(),
+                    maxBasalConfig = safeMax
+                )
+                
+                if (boostedRate > profile_current_basal * 1.1) {
+                    calculateRate(basal, profile_current_basal, boostedRate/profile_current_basal, "Global Hyper Kicker (Active)", currenttemp, rT)
+                } else null
+            }
+
             fastingTime -> calculateRate(profile_current_basal, profile_current_basal, delta.toDouble(), "AI Force basal because fastingTime", currenttemp, rT)
             else -> null
         }
@@ -3999,7 +4182,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             iobArray = iob_data_array,
             finalSensitivity = sens,
             cobG = mealData.mealCOB,
-            profile = profile
+
+            profile = profile,
+            delta = delta.toDouble()
         )
         val sanitizedPredictions = advancedPredictions.map { round(min(401.0, max(39.0, it)), 0) }
         val intsPredictions = sanitizedPredictions.map { it.toInt() }
@@ -4476,13 +4661,30 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         predictedBg: Double,
         isMealActive: Boolean
     ): Double {
-        // 1. Critical Safety: Always obey forced zero if true hypo risk
-        // If SafetyDecision says stopBasal, it's usually handled before this, but checked here too.
-        if (safetyDecision.stopBasal || bg < 70 || predictedBg < 65) {
-            return suggestedRate // Allow 0.0
+        // 1. Critical Safety: Hypo REELLE seulement permet 0 U/h
+        if (safetyDecision.stopBasal || bg < 70) {
+            return suggestedRate // Allow 0.0 pour hypo réelle
+        }
+        
+        // 2. ⚡ Prediction basse MAIS montée → ne pas bypasser le floor
+        if (predictedBg < 65) {
+            if (delta > 0 && bg > 90) {
+                // Prédiction pessimiste, BG monte → appliquer floor quand même
+                // Note: logging handled at caller level
+            } else {
+                return suggestedRate // Allow 0.0 si vraiment en baisse
+            }
         }
 
-        // 2. Activity Context
+        // 3. ⚡ Mode Repas Actif : Floor plus élevé (60% profil)
+        if (isMealActive && suggestedRate < profileBasal * 0.6) {
+            val mealFloor = profileBasal * 0.6
+            if (bg > 90 && delta > -1) {
+                return mealFloor
+            }
+        }
+
+        // 4. Activity Context
         val isActivity = activityContext.state != app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.REST
         if (isActivity) {
             // If dropping fast during activity, allow low basal/zero
@@ -4490,27 +4692,69 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 return suggestedRate
             }
             // Recovery: If rising/stable during activity, avoid ZERO.
-            // Enforce small floor e.g. 20% profile
-            val activityFloor = profileBasal * 0.2
+            val activityFloor = profileBasal * 0.3  // 30% floor en activité
             if (suggestedRate < activityFloor) {
                 // If rising, push higher
-                if (delta > 0) return profileBasal * 0.5
+                if (delta > 0) {
+                    val risingFloor = profileBasal * 0.6  // 60% si montée
+                    return risingFloor
+                }
                 return activityFloor
             }
             return suggestedRate
         }
 
-        // 3. Cruise Mode (No Activity, No Critical Low)
-        // If system wants to cut to 0 (or very low) due to IOB/Delta rules:
-        val cruiseFloor = profileBasal * 0.45 // 45% floor
+        // 5. Cruise Mode (No Activity, No Critical Low)
+        val cruiseFloor = profileBasal * 0.55 // 55% floor (augmenté de 45%)
         if (suggestedRate < cruiseFloor) {
             // Only enforce floor if strictly safe
             if (bg > 100 && delta > -2 && predictedBg > 80) {
-                // Return floor
                 return cruiseFloor
             }
         }
 
         return suggestedRate
+    }
+
+
+    // Helper for General Hyper Kicker (Non-Meal) (AIMI 2.0)
+    private fun adjustBasalForGeneralHyper(
+        suggestedBasalUph: Double,
+        bg: Double,
+        targetBg: Double,
+        delta: Double,
+        shortAvgDelta: Double,
+        maxBasalConfig: Double
+    ): Double {
+        // "Progressivement rapidement" logic requested by user
+        
+        // Risque montée franche ou plateau haut persistant
+        val rising = delta >= 0.5 || shortAvgDelta >= 0.3
+        val plateauHigh = delta >= -0.1 && bg > targetBg + 50
+        
+        if (!rising && !plateauHigh) return suggestedBasalUph
+        
+        val deviation = bg - targetBg
+        
+        // Progressive scaling based on deviation severity
+        // 30mg au dessus: x2
+        // 60mg au dessus: x5
+        // 90mg au dessus: x8
+        // 120mg+        : x10 (Authorized by user)
+        
+        val scaleFactor = when {
+            deviation >= 120 -> 10.0
+            deviation >= 90  -> 8.0
+            deviation >= 60  -> 5.0
+            deviation >= 30  -> 2.0
+            else -> 1.0
+        }
+        
+        if (scaleFactor == 1.0) return suggestedBasalUph
+        
+        val boosted = suggestedBasalUph * scaleFactor
+        
+        // Cap only by absolute max config (safety)
+        return if (boosted > maxBasalConfig) maxBasalConfig else boosted
     }
 }
