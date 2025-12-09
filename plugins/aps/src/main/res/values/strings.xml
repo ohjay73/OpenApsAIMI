@@ -1128,7 +1128,7 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="aimi_advisor_summary">Analyse les performances glycémiques et propose des ajustements de profil</string>
     <string name="aimi_advisor_section">Outils et Analyses</string>
     <!-- AIMI ADVISOR SECTION -->
-    <string name="aimi_advisor_title">AIMI Advisor</string>
+    <string name="aimi_advisor_title">AIMI-Advisor</string>
 
     <string name="aimi_advisor_score_label_excellent">Excellent</string>
     <string name="aimi_advisor_score_label_good">Bon</string>
