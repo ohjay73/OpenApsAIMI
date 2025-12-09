@@ -4101,7 +4101,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 )
 
                 if (boostedRate > profile_current_basal * 1.05) { // Only if significantly boosted
-                    calculateRate(basal, profile_current_basal, boostedRate/profile_current_basal, "Post-Meal Boost active ($runTime m)", currenttemp, rT)
+                     calculateRate(basal, profile_current_basal, boostedRate/profile_current_basal, "Post-Meal Boost active ($runTime m)", currenttemp, rT)
                 } else null
             }
 
