@@ -18,9 +18,9 @@ import javax.inject.Inject
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineScope
+import androidx.lifecycle.lifecycleScope
 
 /**
  * =============================================================================
@@ -43,7 +43,7 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         super.onCreate(savedInstanceState)
         
         // Pass dependencies to service
-        advisorService = AimiAdvisorService(profileFunction, persistenceLayer, preferences)
+        advisorService = AimiAdvisorService(profileFunction, persistenceLayer, preferences, rh)
         title = rh.gs(R.string.aimi_advisor_title)
         
         // Dark Navy Background
@@ -65,7 +65,7 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
 
         // Loading Indicator
         val loadingText = TextView(this).apply {
-            text = "Analyse des données en cours..."
+            text = rh.gs(R.string.aimi_adv_loading)
             textSize = 16f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
@@ -107,7 +107,7 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    loadingText.text = "Erreur lors de l'analyse :\n${e.localizedMessage}"
+                    loadingText.text = "${rh.gs(R.string.aimi_adv_error_prefix)}${e.localizedMessage}"
                     loadingText.setTextColor(Color.parseColor("#F87171")) // Red
                 }
                 e.printStackTrace()
@@ -362,7 +362,7 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             val placeholder = rh.gs(R.string.aimi_coach_placeholder)
             contentText.text = "$basicAnalysis\n\n⚙️ $placeholder"
         } else {
-             kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Main) {
                 try {
                     val advice = AiCoachingService().fetchAdvice(context, report, apiKey)
                     contentText.text = advice
