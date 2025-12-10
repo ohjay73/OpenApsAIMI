@@ -3,23 +3,11 @@ package app.aaps.plugins.aps.openAPSAIMI.comparison
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.io.File
-import android.content.Context
-import app.aaps.plugins.aps.R
-import org.mockito.Mockito.mock // Importa la funzione mock di Mockito
-import org.mockito.Mockito.`when` // Importa 'when' per definire il comportamento
-import org.mockito.ArgumentMatchers.anyInt // Importa anyInt per matchare qualsiasi ID di risorsa
 
 class ComparisonCsvParserTest {
 
     @Test
     fun testAnalyze() {
-        // 1. CREA UN CONTEXT SIMULATO (MOCK)
-        val mockContext = mock(Context::class.java)
-
-        // 2. STUBBING: Istruisci il mockContext a restituire una stringa fittizia
-        //    ogni volta che viene chiamato getString(Int) all'interno di analyze().
-        //    Questo impedisce il crash quando il parser cerca di recuperare le stringhe.
-        `when`(mockContext.getString(anyInt())).thenReturn("TestStringValue")
         // Create a temporary CSV file
         val tempFile = File.createTempFile("comparison_test", ".csv")
         tempFile.writeText("""
@@ -31,7 +19,7 @@ Timestamp,Date,BG,Delta,ShortAvgDelta,LongAvgDelta,IOB,COB,AIMI_Rate,AIMI_SMB,AI
 
         val parser = ComparisonCsvParser()
         val entries = parser.parse(tempFile)
-        val report = parser.analyze(mockContext,entries)
+        val report = parser.analyze(entries)
 
         // Verify TIR (70-180)
         // BG: 100, 150, 200 -> 2/3 in range -> 66.66%
