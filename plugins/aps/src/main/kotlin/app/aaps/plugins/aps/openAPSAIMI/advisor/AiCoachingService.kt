@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.openAPSAIMI.advisor
 
+import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -22,170 +23,225 @@ import kotlinx.coroutines.withContext
  */
 class AiCoachingService {
 
+    enum class Provider { OPENAI, GEMINI }
+
     companion object {
         private const val OPENAI_URL = "https://api.openai.com/v1/chat/completions"
-        private const val MODEL = "gpt-4o" // or gpt-3.5-turbo
+        private const val OPENAI_MODEL = "gpt-4o"
+        
+        // Gemini 2.5 Flash (Dec 2025 standard)
+        private const val GEMINI_MODEL = "gemini-2.5-flash"
+        private const val GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/$GEMINI_MODEL:generateContent"
     }
 
     /**
      * Fetch advice asynchronously.
-     * @param context The advisor context (metrics, profile, etc.)
-     * @param report The generated rules-based report (with actions)
-     * @param apiKey The user's OpenAI API Key
      */
     suspend fun fetchAdvice(
+        androidContext: Context,
         context: AdvisorContext, 
         report: AdvisorReport, 
-        apiKey: String
+        apiKey: String,
+        provider: Provider
     ): String = withContext(Dispatchers.IO) {
-        if (apiKey.isBlank()) return@withContext "API Key manquante. Veuillez configurer votre clé OpenAI."
+        if (apiKey.isBlank()) return@withContext "Clé API manquante. Veuillez configurer votre clé ${provider.name}."
 
         try {
-            val prompt = buildPrompt(context, report)
-            val jsonBody = buildJsonBody(prompt)
+            val prompt = buildPrompt(androidContext, context, report)
             
-            val url = URL(OPENAI_URL)
-            val connection = url.openConnection() as HttpURLConnection
-            
-            connection.apply {
-                requestMethod = "POST"
-                setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("Authorization", "Bearer $apiKey")
-                doOutput = true
-                connectTimeout = 15000 // 15s
-                readTimeout = 30000    // 30s
-            }
-
-            // Send request
-            val writer = OutputStreamWriter(connection.outputStream)
-            writer.write(jsonBody.toString())
-            writer.flush()
-            writer.close()
-
-            // Read response
-            val responseCode = connection.responseCode
-            if (responseCode == 200) {
-                val reader = BufferedReader(InputStreamReader(connection.inputStream))
-                val response = StringBuilder()
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
-                    response.append(line)
-                }
-                reader.close()
-                return@withContext parseResponse(response.toString())
+            if (provider == Provider.GEMINI) {
+                return@withContext callGemini(apiKey, prompt)
             } else {
-                return@withContext "Erreur API ($responseCode). Veuillez vérifier votre clé ou votre connexion."
+                return@withContext callOpenAI(apiKey, prompt)
             }
 
         } catch (e: Exception) {
             e.printStackTrace()
-            return@withContext "Erreur de connexion : ${e.localizedMessage}"
+            return@withContext "Erreur de connexion (${provider.name}) : ${e.localizedMessage}"
         }
     }
 
-    /**
-     * Construct the prompt for the LLM.
-     */
-    private fun buildPrompt(ctx: AdvisorContext, report: AdvisorReport): String {
-        val sb = StringBuilder()
+    private fun callOpenAI(apiKey: String, prompt: String): String {
+        val jsonBody = buildOpenAiJson(prompt)
+        val url = URL(OPENAI_URL)
+        val connection = url.openConnection() as HttpURLConnection
         
-        // 1. Context: Metrics
-        sb.append("CONTEXTE PATIENT (7 derniers jours) :\n")
-        sb.append("- TIR 70-180: ${(ctx.metrics.tir70_180 * 100).roundToInt()}%\n")
-        sb.append("- Hypo (<70): ${(ctx.metrics.timeBelow70 * 100).roundToInt()}%\n")
-        sb.append("- Hyper (>180): ${(ctx.metrics.timeAbove180 * 100).roundToInt()}%\n")
-        sb.append("- Moyenne BG: ${ctx.metrics.meanBg.roundToInt()} mg/dL (GMI: ${ctx.metrics.gmi}%)\n")
-        sb.append("- TDD Moyen: ${ctx.metrics.tdd.roundToInt()} U (Basale: ${(ctx.metrics.basalPercent * 100).roundToInt()}%, Bolus: ${(100 - (ctx.metrics.basalPercent * 100).roundToInt())}%)\n")
-        sb.append("- Score AIMI: ${report.overallScore}/10\n\n")
+        connection.apply {
+            requestMethod = "POST"
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("Authorization", "Bearer $apiKey")
+            doOutput = true
+            connectTimeout = 15000
+            readTimeout = 30000
+        }
 
-        // 2. Context: Profile Settings
-        sb.append("PARAMÈTRES DU PROFIL ACTUEL :\n")
-        sb.append("- Basale Nuit: ${ctx.profile.nightBasal} U/h\n")
-        sb.append("- Ratio Glucides (IC): ${ctx.profile.icRatio} g/U\n")
-        sb.append("- Sensibilité (ISF): ${ctx.profile.isf} mg/dL/U\n")
-        sb.append("- Cible (Target): ${ctx.profile.targetBg} mg/dL\n\n")
+        val writer = OutputStreamWriter(connection.outputStream)
+        writer.write(jsonBody.toString())
+        writer.flush()
+        writer.close()
 
-        // 3. Context: Algorithm Preferences
-        sb.append("PRÉFÉRENCES AIMI :\n")
-        sb.append("- Max SMB: ${ctx.prefs.maxSmb} U\n")
-        sb.append("- Facteur Déjeuner: ${ctx.prefs.lunchFactor}x\n")
-        sb.append("- Autodrive Max: ${ctx.prefs.autodriveMaxBasal} U\n\n")
-
-        // 4. Observations (Rules Engine)
-        sb.append("OBSERVATIONS DU SYSTÈME :\n")
-        if (report.recommendations.isEmpty()) {
-            sb.append("- Aucune alerte système majeure.\n")
+        val responseCode = connection.responseCode
+        if (responseCode == 200) {
+            val reader = BufferedReader(InputStreamReader(connection.inputStream))
+            val response = StringBuilder()
+            var line: String?
+            while (reader.readLine().also { line = it } != null) response.append(line)
+            reader.close()
+            return parseOpenAiResponse(response.toString())
         } else {
-            report.recommendations.forEach { rec ->
-                 // Use resource ID mapping simulation or just generic description for context
-                 val type = rec.domain.name
-                 val prio = rec.priority.name
-                 sb.append("- $type ($prio): Voir actions suggérées.\n")
+             // Try read error stream
+            val reader = BufferedReader(InputStreamReader(connection.errorStream ?: connection.inputStream))
+            val err = StringBuilder()
+            var line: String?
+            while (reader.readLine().also { line = it } != null) err.append(line)
+            return "Erreur OpenAI ($responseCode): $err"
+        }
+    }
+
+    private fun callGemini(apiKey: String, prompt: String): String {
+        // Gemini URL requires key in query param usually, or header 'x-goog-api-key'
+        val urlStr = "$GEMINI_URL?key=$apiKey"
+        val url = URL(urlStr)
+        val connection = url.openConnection() as HttpURLConnection
+        
+        val jsonBody = JSONObject()
+        val parts = JSONArray()
+        val part = JSONObject()
+        // STRICT PARITY: Sending exact same prompt as OpenAI (which includes Persona)
+        part.put("text", prompt)
+        parts.put(part)
+        
+        val content = JSONObject()
+        content.put("parts", parts)
+        content.put("role", "user")
+        
+        val contents = JSONArray()
+        contents.put(content)
+        
+        val root = JSONObject()
+        root.put("contents", contents)
+        
+        // Generation Config
+        val config = JSONObject()
+        config.put("temperature", 0.7)
+        config.put("maxOutputTokens", 4096) // Significantly increased to prevent ANY truncation
+        root.put("generationConfig", config)
+
+        connection.apply {
+            requestMethod = "POST"
+            setRequestProperty("Content-Type", "application/json")
+            doOutput = true
+            connectTimeout = 15000
+            readTimeout = 60000 // Increased read timeout
+        }
+
+        val writer = OutputStreamWriter(connection.outputStream)
+        writer.write(root.toString())
+        writer.flush()
+        writer.close()
+
+        val responseCode = connection.responseCode
+        if (responseCode == 200) {
+            val reader = BufferedReader(InputStreamReader(connection.inputStream, java.nio.charset.StandardCharsets.UTF_8))
+            val response = StringBuilder()
+            var line: String?
+            while (reader.readLine().also { line = it } != null) response.append(line)
+            reader.close()
+            return parseGeminiResponse(response.toString())
+        } else {
+            val reader = BufferedReader(InputStreamReader(connection.errorStream ?: connection.inputStream, java.nio.charset.StandardCharsets.UTF_8))
+            val err = StringBuilder()
+            var line: String?
+            while (reader.readLine().also { line = it } != null) err.append(line)
+            return "Erreur Gemini ($responseCode): $err"
+        }
+    }
+
+    private fun buildPrompt(androidContext: Context, ctx: AdvisorContext, report: AdvisorReport): String {
+        val sb = StringBuilder()
+        val deviceLang = java.util.Locale.getDefault().displayLanguage
+        
+        // Persona
+        sb.append("You are AIMI, an expert 'Certified Diabetes Educator' specializing in Automated Insulin Delivery (AID).\n")
+        sb.append("Your Goal: Analyze the patient's 7-day glucose & insulin data to identify patterns and suggest specific algorithm tuning.\n")
+        sb.append("Tone: Professional, encouraging, precise, and safety-first.\n\n")
+
+        // 1. Context: Metrics
+        sb.append("--- PATIENT METRICS (7 Days) ---\n")
+        sb.append("Score: ${report.overallScore}/10 | GMI: ${ctx.metrics.gmi}%\n")
+        sb.append("TIR (70-180): ${(ctx.metrics.tir70_180 * 100).roundToInt()}%\n")
+        sb.append("Hypo (<70): ${(ctx.metrics.timeBelow70 * 100).roundToInt()}% | Severe (<54): ${(ctx.metrics.timeBelow54 * 100).roundToInt()}%\n")
+        sb.append("Hyper (>180): ${(ctx.metrics.timeAbove180 * 100).roundToInt()}%\n")
+        sb.append("Mean Glucose: ${ctx.metrics.meanBg.roundToInt()} mg/dL\n")
+        sb.append("Total Daily Dose (TDD): ${ctx.metrics.tdd.roundToInt()} U\n")
+        sb.append("Basal/Bolus Split: ${(ctx.metrics.basalPercent * 100).roundToInt()}% Basal | ${(100 - (ctx.metrics.basalPercent * 100).roundToInt())}% Bolus\n\n")
+
+        // 2. PKPD Context
+        if (ctx.pkpdPrefs.pkpdEnabled) {
+             sb.append("--- ACTIVE SETTINGS (PKPD) ---\n")
+             sb.append("DIA: ${ctx.pkpdPrefs.initialDiaH}h\n")
+             sb.append("Peak Time: ${ctx.pkpdPrefs.initialPeakMin}min\n")
+             sb.append("IsfFusionMax: x${ctx.pkpdPrefs.isfFusionMaxFactor}\n\n")
+        }
+
+        // 3. System Observations (Recommendations + PKPD)
+        sb.append("--- SYSTEM OBSERVATIONS ---\n")
+        if (report.recommendations.isNotEmpty()) {
+            report.recommendations.forEach { 
+                val title = try { androidContext.getString(it.titleResId) } catch(e:Exception) { "Issue" }
+                sb.append("- [Priority ${it.priority}] $title\n") 
             }
+        }
+        if (report.pkpdSuggestions.isNotEmpty()) {
+            report.pkpdSuggestions.forEach { sb.append("- [Software Suggestion] ${it.explanation}\n") }
+        }
+        if (report.recommendations.isEmpty() && report.pkpdSuggestions.isEmpty()) {
+            sb.append("- No specific algorithmic issues detected.\n")
         }
         sb.append("\n")
 
-        // 5. Instruction / Persona
-        sb.append("CONSIDNE :\n")
-        sb.append("Tu es un Expert Médical spécialiste des boucles fermées (OpenAPS).\n")
-        sb.append("Ton objectif est d'optimiser le réglage du profil pour améliorer le TIR et réduire les Hypos/Hypers.\n")
-        sb.append("Analyse la corrélation entre les paramètres (ISF, IC, Basale) et les résultats.\n")
-        sb.append("SI les résultats sont sous-optimaux (TIR < 80% ou Hypos > 3%), TU DOIS RECOMMANDER UNE MODIFICATION PRÉCISE D'UN PARAMÈTRE.\n")
-        sb.append("Analyses spécifiques :\n")
-        sb.append("- Si hypos fréquentes : vérifie Basale Nuit et ISF.\n")
-        sb.append("- Si hypers repas : vérifie Ratio Glucides (IC) et repas 'Moyen'/'Fort'.\n")
-        sb.append("- Si SMB inefficace : vérifie 'MaxSMB' et 'Unified Reactivity'.\n")
-        sb.append("\nIMPORTANT : Si tu recommandes une modification complexe, ajoute toujours : 'Pour plus de détails, consulte la documentation AIMI'.\n")
-        
-        val deviceLang = java.util.Locale.getDefault().displayLanguage
-        sb.append("Réponds en $deviceLang. Format : 'Analyse courte' puis 'Recommandation ' (liste à puces concrète).")
+        // 4. Instructions
+        sb.append("--- COACHING TASK ---\n")
+        sb.append("Respond in '$deviceLang'. Structure your answer exactly as follows:\n")
+        sb.append("1. 🔍 **Diagnostics**: Summarize the main glycemic patterns (e.g., 'Post-prandial spikes', 'Nighttime hypos', 'Basal heavy').\n")
+        sb.append("2. 📉 **Root Cause**: Hypothesize the 'Why' (e.g., 'DIA too short', 'ISF too aggressive', 'Carb ratio needs checking').\n")
+        sb.append("3. 🛠️ **Action Plan**: Propose 2-3 concrete, actionable steps. If Hypo > 4%, prioritize safety (reduce aggressiveness). If suggestions above exist, evaluate them.\n")
+        sb.append("\nConstraint: Keep it under 150 words. Use emojis.")
 
         return sb.toString()
     }
 
-    /**
-     * Build JSON body for OpenAI API.
-     */
-    private fun buildJsonBody(prompt: String): JSONObject {
+    private fun buildOpenAiJson(prompt: String): JSONObject {
         val root = JSONObject()
-        root.put("model", MODEL)
-        
+        root.put("model", OPENAI_MODEL)
         val messages = JSONArray()
-        
-        val systemMsg = JSONObject()
-        systemMsg.put("role", "system")
-        systemMsg.put("content", "You are a helpful diabetes optimization assistant.")
-        messages.put(systemMsg)
-
-        val userMsg = JSONObject()
-        userMsg.put("role", "user")
-        userMsg.put("content", prompt)
-        messages.put(userMsg)
-
+        // Unified: Prompt contains the full persona and instructions.
+        val usr = JSONObject().put("role", "user").put("content", prompt)
+        messages.put(usr)
         root.put("messages", messages)
         root.put("temperature", 0.7)
-        root.put("max_tokens", 400)
         
         return root
     }
 
-    /**
-     * Parse OpenAI JSON response.
-     */
-    private fun parseResponse(jsonStr: String): String {
+    private fun parseOpenAiResponse(jsonStr: String): String {
         return try {
             val root = JSONObject(jsonStr)
-            val choices = root.getJSONArray("choices")
-            if (choices.length() > 0) {
-                choices.getJSONObject(0)
-                    .getJSONObject("message")
-                    .getString("content")
-                    .trim()
-            } else {
-                "Pas de réponse du coach."
-            }
+            root.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content").trim()
         } catch (e: Exception) {
-            "Erreur de lecture de la réponse AI."
+            "Erreur lecture OpenAI."
+        }
+    }
+
+    private fun parseGeminiResponse(jsonStr: String): String {
+        return try {
+            val root = JSONObject(jsonStr)
+            val candidate = root.getJSONArray("candidates").getJSONObject(0)
+            val parts = candidate.getJSONObject("content").getJSONArray("parts")
+            parts.getJSONObject(0).getString("text").trim()
+        } catch (e: Exception) {
+             // Fallback for safety blocked
+             if (jsonStr.contains("finishReason")) "Contenu bloqué par sécurité Gemini." else "Erreur lecture Gemini."
         }
     }
 }

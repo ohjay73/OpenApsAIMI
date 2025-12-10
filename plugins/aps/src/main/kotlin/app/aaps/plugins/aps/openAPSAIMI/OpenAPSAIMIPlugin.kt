@@ -11,6 +11,8 @@ import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.PreferenceManager
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreference
+import androidx.preference.EditTextPreference
+import androidx.preference.ListPreference
 import app.aaps.core.data.aps.SMBDefaults
 import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.data.plugin.PluginType
@@ -917,6 +919,42 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                 )
                 addPreference(PreferenceCategory(context).apply {
                     title = rh.gs(R.string.user_preferences_title_menu)
+                })
+                // AI Assistant Section
+                addPreference(preferenceManager.createPreferenceScreen(context).apply {
+                    key = "AIMI_AI"
+                    title = rh.gs(R.string.aimi_prefs_ai_title) // "🤖 Assistant AI"
+
+                    // Provider Selection
+                    addPreference(AdaptiveListPreference(
+                        ctx = context,
+                        stringKey = StringKey.AimiAdvisorProvider,
+                        title = R.string.aimi_prefs_provider_title,
+                        entries = arrayOf(rh.gs(R.string.aimi_prefs_provider_openai), rh.gs(R.string.aimi_prefs_provider_gemini)),
+                        entryValues = arrayOf("OPENAI", "GEMINI")
+                    ).apply {
+                        dialogTitle = rh.gs(R.string.aimi_prefs_provider_dialog_title)
+                    })
+
+                    // OpenAI Key
+                    addPreference(
+                        AdaptiveStringPreference(
+                            ctx = context,
+                            stringKey = StringKey.AimiAdvisorOpenAIKey,
+                            summary = R.string.aimi_prefs_openai_key_summary,
+                            title = R.string.aimi_prefs_openai_key_title
+                        )
+                    )
+
+                    // Gemini Key
+                    addPreference(
+                        AdaptiveStringPreference(
+                            ctx = context,
+                            stringKey = StringKey.AimiAdvisorGeminiKey,
+                            summary = R.string.aimi_prefs_gemini_key_summary,
+                            title = R.string.aimi_prefs_gemini_key_title
+                        )
+                    )
                 })
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.OApsAIMIMLtraining, title = R.string.oaps_aimi_enableMlTraining_title))
                 addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIMaxSMB, dialogMessage = R.string.openapsaimi_maxsmb_summary, title = R.string.openapsaimi_maxsmb_title))

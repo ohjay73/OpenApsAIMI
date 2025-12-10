@@ -366,8 +366,15 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         }
         
         textLayout.addView(TextView(this).apply {
-            val keyLabel = rec.technicalKey.substringAfterLast("AIMIPkpd").replace("Initial", "").replace("Bounds", "")
-            text = keyLabel // Simple technical display or verify if we can match nice name.
+            val keyLabel = when {
+                rec.technicalKey.contains("PkpdEnabled") -> rh.gs(R.string.aimi_pkpd_title_enable)
+                rec.technicalKey.contains("InitialDiaH") -> rh.gs(R.string.aimi_pkpd_title_dia)
+                rec.technicalKey.contains("InitialPeakMin") -> rh.gs(R.string.aimi_pkpd_title_peak)
+                rec.technicalKey.contains("IsfFusionMaxFactor") -> rh.gs(R.string.aimi_pkpd_title_isf)
+                rec.technicalKey.contains("SmbTailDamping") -> rh.gs(R.string.aimi_pkpd_title_damping)
+                else -> rec.technicalKey.substringAfterLast("AIMIPkpd").replace("Initial", "") // Fallback
+            }
+            text = keyLabel
             textSize = 16f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.WHITE)
@@ -422,20 +429,25 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
 
         card.addView(layout)
 
-        val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
-        val apiKey = prefs.getString(app.aaps.core.keys.StringKey.AimiAdvisorOpenAIKey.key, "") ?: ""
+        // Fetch keys using definitions from StringKey
+        val providerStr = preferences.get(app.aaps.core.keys.StringKey.AimiAdvisorProvider)
+        val openAiKey = preferences.get(app.aaps.core.keys.StringKey.AimiAdvisorOpenAIKey)
+        val geminiKey = preferences.get(app.aaps.core.keys.StringKey.AimiAdvisorGeminiKey)
+
+        val provider = if (providerStr == "GEMINI") AiCoachingService.Provider.GEMINI else AiCoachingService.Provider.OPENAI
+        val activeKey = if (provider == AiCoachingService.Provider.GEMINI) geminiKey else openAiKey
         
-        if (apiKey.isBlank()) {
+        if (activeKey.isBlank()) {
             val basicAnalysis = advisorService.generatePlainTextAnalysis(context, report)
-            val placeholder = rh.gs(R.string.aimi_coach_placeholder)
+            val placeholder = rh.gs(R.string.aimi_coach_placeholder) + " (${provider.name})"
             contentText.text = "$basicAnalysis\n\n⚙️ $placeholder"
         } else {
              lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Main) {
                 try {
-                    val advice = AiCoachingService().fetchAdvice(context, report, apiKey)
+                    val advice = AiCoachingService().fetchAdvice(this@AimiProfileAdvisorActivity, context, report, activeKey, provider)
                     contentText.text = advice
                 } catch (e: Exception) {
-                    contentText.text = rh.gs(R.string.aimi_coach_error)
+                    contentText.text = rh.gs(R.string.aimi_coach_error) + "\n" + e.localizedMessage
                 }
             }
         }

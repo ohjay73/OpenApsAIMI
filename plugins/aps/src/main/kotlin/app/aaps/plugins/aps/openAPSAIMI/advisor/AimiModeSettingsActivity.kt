@@ -28,6 +28,8 @@ import app.aaps.core.ui.dialogs.OKDialog
 import javax.inject.Inject
 import android.os.Handler
 import android.os.Looper
+import android.widget.Switch
+
 
 class AimiModeSettingsActivity : TranslatedDaggerAppCompatActivity() {
 
@@ -37,6 +39,7 @@ class AimiModeSettingsActivity : TranslatedDaggerAppCompatActivity() {
     // Removed Inject to avoid Dagger graph issues with new Activity - REVERTED: Now we use Dagger
     // private val prefs by lazy { PreferenceManager.getDefaultSharedPreferences(this) }
     @Inject lateinit var preferences: Preferences
+    private val sp by lazy { androidx.preference.PreferenceManager.getDefaultSharedPreferences(this) }
 
     private var selectedMode = ModeType.LUNCH
 
@@ -47,6 +50,11 @@ class AimiModeSettingsActivity : TranslatedDaggerAppCompatActivity() {
     private lateinit var inputPrebolus2: EditText
     private lateinit var inputReactivity: EditText
     private lateinit var inputInterval: EditText
+
+    // AI Settings Inputs
+    private lateinit var inputOpenAiKey: EditText
+    private lateinit var inputGeminiKey: EditText
+    private lateinit var switchProvider: Switch
 
     private val darkNavy = Color.parseColor("#0F172A")
     private val cardDark = Color.parseColor("#1E293B")
@@ -127,6 +135,19 @@ class AimiModeSettingsActivity : TranslatedDaggerAppCompatActivity() {
 
         formCard.addView(formLayout)
         container.addView(formCard)
+
+
+        // --- Buttons ---
+        val buttonPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            weightSum = 2f
+            // Custom simplified background logic
+            setBackgroundColor(cardDark)
+            setPadding(16, 16, 16, 16)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = 64
+            }
+        }
 
         // Save Button
         val saveBtn = Button(this).apply {
@@ -231,6 +252,13 @@ class AimiModeSettingsActivity : TranslatedDaggerAppCompatActivity() {
         return input
     }
 
+    private fun getInputBackground(): android.graphics.drawable.Drawable {
+        return android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = 12f
+            setColor(Color.parseColor("#334155")) // Slightly lighter input bg
+        }
+    }
+
     private fun switchMode(mode: ModeType) {
         if (selectedMode == mode) return
         selectedMode = mode
@@ -266,11 +294,7 @@ class AimiModeSettingsActivity : TranslatedDaggerAppCompatActivity() {
     }
 
     private fun saveValues() {
-        saveToPreferences()
-        finish()
-    }
-
-    private fun saveToPreferences() {
+        // 1. Save Mode Settings
         val p1 = inputPrebolus1.text.toString().toDoubleOrNull() ?: 0.0
         val p2 = inputPrebolus2.text.toString().toDoubleOrNull() ?: 0.0
         val react = inputReactivity.text.toString().toDoubleOrNull() ?: 100.0
@@ -287,14 +311,15 @@ class AimiModeSettingsActivity : TranslatedDaggerAppCompatActivity() {
             preferences.put(DoubleKey.OApsAIMIDinnerFactor, react)
             preferences.put(IntKey.OApsAIMIDinnerinterval, interv)
         }
+
+
+        finish()
     }
 
     private fun activateMode() {
-        // Auto-save before activation
-        saveToPreferences()
+        saveValues() // saveValues handles saving. Logic merged. // No longer needed for AI keys
 
         // Find the automation event
-        // Use simpler matching
         val eventTitle = if (selectedMode == ModeType.LUNCH) "Lunch" else "Dinner"
         val events = automation.userEvents()
         val event = events.find { it.title.trim().equals(eventTitle, ignoreCase = true) }
