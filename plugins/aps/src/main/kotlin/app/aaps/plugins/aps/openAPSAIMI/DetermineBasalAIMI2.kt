@@ -936,6 +936,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             return false
         }
 
+        // 🔒 SAFETY: Hard Floor for SMB. No SMB below 80 mg/dL ever.
+        // Even if predicted to rise, we don't SuperBolus a hypo.
+        if (currentBg < 80) {
+            consoleError.add("SMB disabled: BG ${convertBG(currentBg)} < 80")
+            return false
+        }
+
         // 1) Détection meal-rise plus tolérante
         val safeFloor = max(100.0, targetbg - 5.0)
 // avant : delta >= 0.3 && currentBg > safeFloor && eventualBg > safeFloor
@@ -4303,59 +4310,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         smbExecution.newSmbInterval?.let { intervalsmb = it }
         var smbToGive = smbExecution.finalSmb
         
-        // 🎯 Appliquer le globalFactor du UnifiedReactivityLearner au SMB
-        // Cela permet de couvrir les hyperglyc\u00e9mies prolongées >180
-        if (preferences.get(BooleanKey.OApsAIMIUnifiedReactivityEnabled)) {
-            val beforeReactivity = smbToGive
-            smbToGive = (smbToGive * unifiedReactivityLearner.globalFactor).toFloat()
-            
-            if (unifiedReactivityLearner.globalFactor != 1.0 || smbToGive != beforeReactivity) {
-                // 📊 Enriched log with evolution and metrics
-                val snapshot = unifiedReactivityLearner.lastAnalysis
-                val factorStr = "%.3f".format(unifiedReactivityLearner.globalFactor)
-                
-                if (snapshot != null) {
-                    val hoursSince = (dateUtil.now() - snapshot.timestamp) / (60 * 60 * 1000)
-                    val trend = when {
-                        snapshot.globalFactor > snapshot.previousFactor -> "↑"
-                        snapshot.globalFactor < snapshot.previousFactor -> "↓"
-                        else -> "→"
-                    }
-                    
-                    if (smbToGive != beforeReactivity) {
-                         consoleLog.add(
-                            "UnifiedLearner: SMB ${"%.2f".format(beforeReactivity)}U → ${"%.2f".format(smbToGive)}U " +
-                            "(factor=$factorStr $trend, analyzed ${hoursSince}h ago)"
-                        )
-                    }
-                    
-                    rT.reason.append(
-                       //" | Reactivity $factorStr $trend (TIR=${"%.0f".format(snapshot.tir70_180)}%, " +
-                      //"CV=${"%.0f".format(snapshot.cv_percent)}%, H=${snapshot.hypo_count})"
-                        " | " + context.getString(
-                            R.string.react_reactivity_entry,
-                            factorStr,
-                            trend,
-                            snapshot.tir70_180,
-                            snapshot.cv_percent,
-                            snapshot.hypo_count
-                        )
-                    )
-                } else {
-                    // Fallback if no analysis yet
-                    if (smbToGive != beforeReactivity) {
-                        consoleLog.add("UnifiedLearner: SMB ${"%.2f".format(beforeReactivity)}U → ${"%.2f".format(smbToGive)}U (factor=$factorStr)")
-                    }
-                  //rT.reason.append(" | Reactivity factor $factorStr")
-                    rT.reason.append(
-                        " | " + context.getString(
-                            R.string.react_reactivity_fallback,
-                            factorStr,
-                        )
-                    )
-                }
-            }
-        }
+        // 🎯 [MIGRATION FCL 10.0]
+        // Legacy "Direct SMB Modulation" removed.
+        // The UnifiedReactivityLearner now acts upstream via OpenAPSAIMIPlugin -> Autosens.Ratio.
+        // This ensures the factor is applied consistently to both Basal and SMB limits, respecting all safety caps.
+        //
+        // if (preferences.get(BooleanKey.OApsAIMIUnifiedReactivityEnabled)) { ... }
         
         // 🔒 SAFETY CHECK FINAL : On applique le cap strict après le potentiel boost de Reactivité
         val currentMaxSmb = if (bg > 120 && !honeymoon && mealData.slopeFromMinDeviation >= 1.0) maxSMBHB else maxSMB
