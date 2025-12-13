@@ -1130,113 +1130,108 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
 
 
     <!-- AIMI Advisor -->
-    <string name="aimi_advisor_summary">Analyse les performances glycémiques et propose des ajustements de profil</string>
-    <string name="aimi_advisor_section">Outils et Analyses</string>
+    <string name="aimi_advisor_summary">Analyzes glycemic performance and suggests profile adjustments</string>
+    <string name="aimi_advisor_section">Tools and Analysis</string>
+
     <!-- AIMI ADVISOR SECTION -->
     <string name="aimi_advisor_title">AIMI Profile Advisor</string>
     <string name="aimi_advisor_model_title">Select AI Model</string>
     <string name="aimi_adv_loading">Analyzing your data…</string>
+
     <string name="aimi_advisor_score_label_excellent">Excellent</string>
-    <string name="aimi_advisor_score_label_good">Bon</string>
-    <string name="aimi_advisor_score_label_warning">À améliorer</string>
-    <string name="aimi_advisor_score_label_attention">Attention requise</string>
-    <string name="aimi_advisor_score_label_critical">Action urgente</string>
+    <string name="aimi_advisor_score_label_good">Good</string>
+    <string name="aimi_advisor_score_label_warning">Needs improvement</string>
+    <string name="aimi_advisor_score_label_attention">Attention required</string>
+    <string name="aimi_advisor_score_label_critical">Urgent action</string>
 
-    <string name="aimi_advisor_period_label">Période : %1$s</string>
-    <string name="aimi_advisor_metric_tir_70_180">TIR 70–180 : %1$d %%</string>
-    <string name="aimi_advisor_metric_tir_70_140">TIR 70–140 : %1$d %%</string>
-    <string name="aimi_advisor_metric_time_below_70">Temps &lt;70 : %1$d %%</string>
-    <string name="aimi_advisor_metric_time_above_180">Temps &gt;180 : %1$d %%</string>
-    <string name="aimi_advisor_metric_mean_bg">Glycémie moyenne : %1$d mg/dL</string>
-    <string name="aimi_advisor_metric_tdd">TDD : %1$.1f U (basal %2$d %%)</string>
+    <string name="aimi_advisor_period_label">Period: %1$s</string>
+    <string name="aimi_advisor_metric_tir_70_180">TIR 70–180: %1$d %%</string>
+    <string name="aimi_advisor_metric_tir_70_140">TIR 70–140: %1$d %%</string>
+    <string name="aimi_advisor_metric_time_below_70">Time &lt;70: %1$d %%</string>
+    <string name="aimi_advisor_metric_time_above_180">Time &gt;180: %1$d %%</string>
+    <string name="aimi_advisor_metric_mean_bg">Average glucose: %1$d mg/dL</string>
+    <string name="aimi_advisor_metric_tdd">TDD: %1$.1f U (basal %2$d %%)</string>
 
-    <string name="aimi_advisor_recommendations_title">Recommandations</string>
+    <string name="aimi_advisor_recommendations_title">Recommendations</string>
 
     <!-- Hypos -->
-    <string name="aimi_adv_rec_hypos_title">Hypos sévères détectées</string>
-    <string name="aimi_adv_rec_hypos_desc">%1$d%% du temps sous 54 mg/dL, %2$d épisodes sévères. Priorité : réduire l\'agressivité.</string>
-    <string name="aimi_adv_rec_hypos_action_isf">Réduire MaxSMB de 10-20%</string>
-    <string name="aimi_adv_rec_hypos_action_modes">Réduire les facteurs des modes repas</string>
-    <string name="aimi_adv_rec_hypos_action_basal">Vérifier les basales nocturnes</string>
+    <string name="aimi_adv_rec_hypos_title">Severe hypoglycemia detected</string>
+    <string name="aimi_adv_rec_hypos_desc">%1$d%% of time below 54 mg/dL, %2$d severe episodes. Priority: reduce aggressiveness.</string>
+    <string name="aimi_adv_rec_hypos_action_isf">Reduce MaxSMB by 10–20%</string>
+    <string name="aimi_adv_rec_hypos_action_modes">Reduce meal mode factors</string>
+    <string name="aimi_adv_rec_hypos_action_basal">Check nighttime basal rates</string>
 
     <!-- Poor Control -->
-    <string name="aimi_adv_rec_control_title">Contrôle insuffisant</string>
-    <string name="aimi_adv_rec_control_desc">TIR 70-180 = %1$d%% avec peu d\'hypos. Le profil est trop conservateur.</string>
-    <string name="aimi_adv_rec_control_action_basal">Augmenter la basale de 5-10%</string>
-    <string name="aimi_adv_rec_control_action_isf">Réduire l\'ISF (plus d\'insuline)</string>
-    <string name="aimi_adv_rec_control_action_modes">Utiliser les modes repas systématiquement</string>
+    <string name="aimi_adv_rec_control_title">Insufficient control</string>
+    <string name="aimi_adv_rec_control_desc">TIR 70–180 = %1$d%% with few hypos. The profile is too conservative.</string>
+    <string name="aimi_adv_rec_control_action_basal">Increase basal by 5–10%</string>
+    <string name="aimi_adv_rec_control_action_isf">Reduce ISF (more insulin)</string>
+    <string name="aimi_adv_rec_control_action_modes">Use meal modes consistently</string>
 
     <!-- Hypers -->
-    <string name="aimi_adv_rec_hypers_title">Temps élevé au-dessus de 180</string>
-    <string name="aimi_adv_rec_hypers_desc">%1$d%% du temps &gt; 180 mg/dL.</string>
-    <string name="aimi_adv_rec_hypers_action_ratios">Vérifier les ratios glucides/insuline</string>
-    <string name="aimi_adv_rec_hypers_action_autodrive">Activer/ajuster AutoDrive</string>
-    <string name="aimi_adv_rec_hypers_action_factors">Augmenter les facteurs des modes repas</string>
+    <string name="aimi_adv_rec_hypers_title">High time above 180</string>
+    <string name="aimi_adv_rec_hypers_desc">%1$d%% of time &gt; 180 mg/dL.</string>
+    <string name="aimi_adv_rec_hypers_action_ratios">Check carb-to-insulin ratios</string>
+    <string name="aimi_adv_rec_hypers_action_autodrive">Enable/adjust AutoDrive</string>
+    <string name="aimi_adv_rec_hypers_action_factors">Increase meal mode factors</string>
 
     <!-- Basal Dominance -->
-    <string name="aimi_adv_rec_basal_title">Basale dominante</string>
-    <string name="aimi_adv_rec_basal_desc">Basale = %1$d%% de TDD. Peut indiquer des basales trop élevées ou des bolus insuffisants.</string>
-    <string name="aimi_adv_rec_basal_action_night">Revoir les basales nocturnes</string>
-    <string name="aimi_adv_rec_basal_action_carbs">Améliorer le comptage des glucides</string>
+    <string name="aimi_adv_rec_basal_title">Basal dominance</string>
+    <string name="aimi_adv_rec_basal_desc">Basal = %1$d%% of TDD. This may indicate excessive basal or insufficient boluses.</string>
+    <string name="aimi_adv_rec_basal_action_night">Review nighttime basal rates</string>
+    <string name="aimi_adv_rec_basal_action_carbs">Improve carbohydrate counting</string>
 
     <!-- Good Profile -->
-    <string name="aimi_adv_rec_profile_ok_title">Profil bien équilibré ✓</string>
-    <string name="aimi_adv_rec_profile_ok_desc">Les indicateurs sont cohérents. Continuez ainsi !</string>
-    <string name="aimi_adv_rec_profile_ok_action_doc">Documenter cette configuration</string>
-    <string name="aimi_adv_rec_profile_ok_action_tune">Ajuster uniquement les tranches problématiques</string>
+    <string name="aimi_adv_rec_profile_ok_title">Well-balanced profile ✓</string>
+    <string name="aimi_adv_rec_profile_ok_desc">Indicators are consistent. Keep it up!</string>
+    <string name="aimi_adv_rec_profile_ok_action_doc">Document this configuration</string>
+    <string name="aimi_adv_rec_profile_ok_action_tune">Adjust only problematic time segments</string>
 
     <!-- Advisor Actions (Dynamic) -->
-    <string name="aimi_action_increase_night_basal">Augmenter la basale de 00h-06h : %.2f → %.2f U/h (+10%%)</string>
-    <string name="aimi_action_reduce_max_smb">Réduire MaxSMB : %.1f → %.1f U</string>
-    <string name="aimi_action_increase_lunch_factor">Augmenter facteur Déjeuner : %.1f → %.1f</string>
+    <string name="aimi_action_increase_night_basal">Increase basal from 00:00–06:00: %.2f → %.2f U/h (+10%%)</string>
+    <string name="aimi_action_reduce_max_smb">Reduce MaxSMB: %.1f → %.1f U</string>
+    <string name="aimi_action_increase_lunch_factor">Increase lunch factor: %.1f → %.1f</string>
 
     <!-- AI Coach -->
-    <string name="aimi_coach_title">Coach AI</string>
-    <string name="aimi_coach_loading">Analyse approfondie en cours...</string>
-    <string name="aimi_coach_error">Le coach est indisponible.</string>
-    <string name="aimi_coach_placeholder">Configurez votre clé API OpenAI pour activer le coach.</string>
+    <string name="aimi_coach_title">AI Coach</string>
+    <string name="aimi_coach_loading">In-depth analysis in progress…</string>
+    <string name="aimi_coach_error">The coach is unavailable.</string>
+    <string name="aimi_coach_placeholder">Configure your OpenAI API key to enable the AIMI Coach.</string>
 
     <!-- AI Prefs -->
-    <string name="aimi_pref_openai_key_title">Clé API OpenAI</string>
-    <string name="aimi_pref_openai_key_summary">Saisissez votre clé (sk-...) pour activer le Coach AIMI.</string>
+    <string name="aimi_pref_openai_key_title">OpenAI API Key</string>
+    <string name="aimi_pref_openai_key_summary">Enter your key (sk-...) to enable the AIMI Coach.</string>
+
     <!-- AIMI ADVISOR ANALYSIS -->
     <string name="aimi_adv_analysis_intro_excellent">The analysis indicates excellent results. Your profile seems well adapted.</string>
     <string name="aimi_adv_analysis_intro_good">The analysis shows good overall control, but some adjustments could improve stability.</string>
     <string name="aimi_adv_analysis_intro_poor">The analysis detects several areas of instability. Adjustments are recommended to reduce variability.</string>
     <string name="aimi_adv_analysis_issues_header">Identified areas of attention:</string>
     <string name="aimi_adv_analysis_issue_safety">Hypoglycemia risk detected (MaxSMB potentially too aggressive).</string>
-    <string name="aimi_adv_analysis_issue_hyper">Persistent hyperglycemia (ISF or Target to review).</string>
-    <string name="aimi_adv_analysis_issue_smb">Meal management could be improved (Modes or SMB).</string>
+    <string name="aimi_adv_analysis_issue_hyper">Persistent hyperglycemia (ISF or target to review).</string>
+    <string name="aimi_adv_analysis_issue_smb">Meal management could be improved (modes or SMB).</string>
     <string name="aimi_adv_analysis_issue_basal">Basal weight is unbalanced relative to TDD.</string>
     <string name="aimi_adv_analysis_issue_profile">Profile quality to optimize.</string>
     <string name="aimi_adv_analysis_footer">The actions suggested below aim to correct these imbalances in a targeted manner.</string>
     <string name="aimi_adv_analysis_all_good">No major issues detected. Keep it up!</string>
 
     <string name="aimi_adv_error_prefix">Analysis error:\n</string>
+
     <!-- AIMI PKPD Advisor -->
     <string name="aimi_pkpd_advisor_disabled">Adaptive PKPD is disabled. Enabling it would allow automatic adjustment of DIA and peak time to improve TIR.</string>
-    <string name="aimi_pkpd_hyper_dia">Frequent hypers detected. Reducing DIA from %1$s to %2$s hours may make active insulin calculation \'faster\' and increase corrections.</string>
-    <string name="aimi_pkpd_hyper_peak">Earlier action peak (%1$s min) may help be more aggressive on post-prandial rises.</string>
-    <string name="aimi_pkpd_hyper_isf">Increasing max ISF fusion factor would strengthen insulin when BG is resistant.</string>
+    <string name="aimi_pkpd_hyper_dia">Frequent hypers detected. Reducing DIA from %1$s to %2$s hours may make insulin activity appear faster and increase corrections.</string>
+    <string name="aimi_pkpd_hyper_peak">An earlier action peak (%1$s min) may help be more aggressive on post-prandial rises.</string>
+    <string name="aimi_pkpd_hyper_isf">Increasing the max ISF fusion factor would strengthen insulin action during resistance.</string>
     <string name="aimi_pkpd_hypo_dia">Frequent hypos detected. Extending DIA from %1$s to %2$s hours would better account for remaining insulin (IOB) and avoid stacking.</string>
-    <string name="aimi_pkpd_hypo_peak">Delaying action peak (%1$s min) would soften the insulin activity curve.</string>
-    <!-- AIMI PKPD Titles -->
-    <string name="aimi_pkpd_title_enable">Activation PKPD</string>
-    <string name="aimi_pkpd_title_dia">Durée d\'Action (DIA)</string>
-    <string name="aimi_pkpd_title_peak">Pic d\'Action</string>
-    <string name="aimi_pkpd_title_isf">Sensibilité (ISF)</string>
-    <string name="aimi_pkpd_title_damping">Amortissement (Damping)</string>
+    <string name="aimi_pkpd_hypo_peak">Delaying the action peak (%1$s min) would soften the insulin activity curve.</string>
     <string name="aimi_pkpd_hypo_damping">Increasing tail damping would reduce risky SMBs with late IOB.</string>
 
-    <!-- AIMI AI Preferences -->
-    <string name="aimi_prefs_ai_title">🤖 Assistant AI</string>
-    <string name="aimi_prefs_provider_title">AI Provider</string>
-    <string name="aimi_prefs_provider_dialog_title">Select AI Provider</string>
-    <string name="aimi_prefs_provider_openai">OpenAI (GPT-4o)</string>
-    <string name="aimi_prefs_provider_gemini">Google Gemini (1.5 Flash)</string>
-    <string name="aimi_prefs_openai_key_title">OpenAI API Key</string>
-    <string name="aimi_prefs_openai_key_summary">Enter your OpenAI API Key (sk-...)</string>
-    <string name="aimi_prefs_gemini_key_title">Gemini API Key</string>
-    <string name="aimi_prefs_gemini_key_summary">Enter your Google Gemini API Key (AIza...)</string>
+    <!-- AIMI PKPD Titles -->
+    <string name="aimi_pkpd_title_enable">Activation PKPD</string>
+    <string name="aimi_pkpd_title_dia">Durée d’action (DIA)</string>
+    <string name="aimi_pkpd_title_peak">Pic d’action</string>
+    <string name="aimi_pkpd_title_isf">Sensibilité (ISF)</string>
+    <string name="aimi_pkpd_title_damping">Amortissement</string>
+
 </resources>
 
