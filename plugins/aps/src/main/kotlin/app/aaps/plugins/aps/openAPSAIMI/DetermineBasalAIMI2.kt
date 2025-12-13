@@ -945,13 +945,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             return false
         }
 
-        // 🔒 SAFETY: Hard Floor for SMB. No SMB below 80 mg/dL ever.
-        // Even if predicted to rise, we don't SuperBolus a hypo.
-        if (currentBg < 80) {
-            consoleError.add("SMB disabled: BG ${convertBG(currentBg)} < 80")
-            return false
-        }
-
         // 1) Détection meal-rise plus tolérante
         val safeFloor = max(100.0, targetbg - 5.0)
 // avant : delta >= 0.3 && currentBg > safeFloor && eventualBg > safeFloor
