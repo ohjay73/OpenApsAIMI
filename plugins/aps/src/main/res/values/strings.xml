@@ -1059,7 +1059,6 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="aimi_no_action">no AIMI+ action&#160;</string>
 
     <!-- AIMI: Plateau / smart hyperglycemia -->
-
     <string name="aimi_plateau_high_boost">High but stable glucose (>180) ⇒ Basal intensification</string>
     <string name="aimi_plateau_prefs">Correction of high but stable glucose</string>
     <string name="aimi_plateau_prefs_title_menu">Plateau : settings for high but stable glucose</string>
@@ -1132,12 +1131,10 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <!-- AIMI Advisor -->
     <string name="aimi_advisor_summary">Analyzes glycemic performance and suggests profile adjustments</string>
     <string name="aimi_advisor_section">Tools and Analysis</string>
-
     <!-- AIMI ADVISOR SECTION -->
     <string name="aimi_advisor_title">AIMI Profile Advisor</string>
     <string name="aimi_advisor_model_title">Select AI Model</string>
     <string name="aimi_adv_loading">Analyzing your data…</string>
-
     <string name="aimi_advisor_score_label_excellent">Excellent</string>
     <string name="aimi_advisor_score_label_good">Good</string>
     <string name="aimi_advisor_score_label_warning">Needs improvement</string>
@@ -1201,37 +1198,44 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <!-- AI Prefs -->
     <string name="aimi_pref_openai_key_title">OpenAI API Key</string>
     <string name="aimi_pref_openai_key_summary">Enter your key (sk-...) to enable the AIMI Coach.</string>
-
     <!-- AIMI ADVISOR ANALYSIS -->
     <string name="aimi_adv_analysis_intro_excellent">The analysis indicates excellent results. Your profile seems well adapted.</string>
     <string name="aimi_adv_analysis_intro_good">The analysis shows good overall control, but some adjustments could improve stability.</string>
     <string name="aimi_adv_analysis_intro_poor">The analysis detects several areas of instability. Adjustments are recommended to reduce variability.</string>
     <string name="aimi_adv_analysis_issues_header">Identified areas of attention:</string>
     <string name="aimi_adv_analysis_issue_safety">Hypoglycemia risk detected (MaxSMB potentially too aggressive).</string>
-    <string name="aimi_adv_analysis_issue_hyper">Persistent hyperglycemia (ISF or target to review).</string>
-    <string name="aimi_adv_analysis_issue_smb">Meal management could be improved (modes or SMB).</string>
+    <string name="aimi_adv_analysis_issue_hyper">Persistent hyperglycemia (ISF or Target to review).</string>
+    <string name="aimi_adv_analysis_issue_smb">Meal management could be improved (Modes or SMB).</string>
     <string name="aimi_adv_analysis_issue_basal">Basal weight is unbalanced relative to TDD.</string>
     <string name="aimi_adv_analysis_issue_profile">Profile quality to optimize.</string>
     <string name="aimi_adv_analysis_footer">The actions suggested below aim to correct these imbalances in a targeted manner.</string>
     <string name="aimi_adv_analysis_all_good">No major issues detected. Keep it up!</string>
 
     <string name="aimi_adv_error_prefix">Analysis error:\n</string>
-
     <!-- AIMI PKPD Advisor -->
     <string name="aimi_pkpd_advisor_disabled">Adaptive PKPD is disabled. Enabling it would allow automatic adjustment of DIA and peak time to improve TIR.</string>
-    <string name="aimi_pkpd_hyper_dia">Frequent hypers detected. Reducing DIA from %1$s to %2$s hours may make insulin activity appear faster and increase corrections.</string>
-    <string name="aimi_pkpd_hyper_peak">An earlier action peak (%1$s min) may help be more aggressive on post-prandial rises.</string>
-    <string name="aimi_pkpd_hyper_isf">Increasing the max ISF fusion factor would strengthen insulin action during resistance.</string>
+    <string name="aimi_pkpd_hyper_dia">Frequent hypers detected. Reducing DIA from %1$s to %2$s hours may make active insulin calculation \'faster\' and increase corrections.</string>
+    <string name="aimi_pkpd_hyper_peak">Earlier action peak (%1$s min) may help be more aggressive on post-prandial rises.</string>
+    <string name="aimi_pkpd_hyper_isf">Increasing max ISF fusion factor would strengthen insulin when BG is resistant.</string>
     <string name="aimi_pkpd_hypo_dia">Frequent hypos detected. Extending DIA from %1$s to %2$s hours would better account for remaining insulin (IOB) and avoid stacking.</string>
-    <string name="aimi_pkpd_hypo_peak">Delaying the action peak (%1$s min) would soften the insulin activity curve.</string>
-    <string name="aimi_pkpd_hypo_damping">Increasing tail damping would reduce risky SMBs with late IOB.</string>
-
+    <string name="aimi_pkpd_hypo_peak">Delaying action peak (%1$s min) would soften the insulin activity curve.</string>
     <!-- AIMI PKPD Titles -->
     <string name="aimi_pkpd_title_enable">Activation PKPD</string>
-    <string name="aimi_pkpd_title_dia">Durée d’action (DIA)</string>
-    <string name="aimi_pkpd_title_peak">Pic d’action</string>
+    <string name="aimi_pkpd_title_dia">Durée d\'Action (DIA)</string>
+    <string name="aimi_pkpd_title_peak">Pic d\'Action</string>
     <string name="aimi_pkpd_title_isf">Sensibilité (ISF)</string>
-    <string name="aimi_pkpd_title_damping">Amortissement</string>
+    <string name="aimi_pkpd_title_damping">Amortissement (Damping)</string>
+    <string name="aimi_pkpd_hypo_damping">Increasing tail damping would reduce risky SMBs with late IOB.</string>
 
+    <!-- AIMI AI Preferences -->
+    <string name="aimi_prefs_ai_title">🤖 Assistant AI</string>
+    <string name="aimi_prefs_provider_title">AI Provider</string>
+    <string name="aimi_prefs_provider_dialog_title">Select AI Provider</string>
+    <string name="aimi_prefs_provider_openai">OpenAI (GPT-4o)</string>
+    <string name="aimi_prefs_provider_gemini">Google Gemini (1.5 Flash)</string>
+    <string name="aimi_prefs_openai_key_title">OpenAI API Key</string>
+    <string name="aimi_prefs_openai_key_summary">Enter your OpenAI API Key (sk-...)</string>
+    <string name="aimi_prefs_gemini_key_title">Gemini API Key</string>
+    <string name="aimi_prefs_gemini_key_summary">Enter your Google Gemini API Key (AIza...)</string>
 </resources>
 
