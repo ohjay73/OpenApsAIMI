@@ -1236,5 +1236,12 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="aimi_prefs_openai_key_summary">Enter your OpenAI API Key (sk-...)</string>
     <string name="aimi_prefs_gemini_key_title">Gemini API Key</string>
     <string name="aimi_prefs_gemini_key_summary">Enter your Google Gemini API Key (AIza...)</string>
+
+    <string name="aimi_advisor_section_observations">Observations</string>
+    <string name="aimi_advisor_section_pkpd">PKPD adjustments</string>
+    <string name="aimi_advisor_section_cognitive">Cognitive state</string>
+    <string name="aimi_advisor_section_coach">AI Coach</string>
+
+
 </resources>
 

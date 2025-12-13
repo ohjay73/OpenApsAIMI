@@ -1010,5 +1010,11 @@
     <string name="aimi_pkpd_title_isf">Sensibilité (ISF)</string>
     <string name="aimi_pkpd_title_damping">Amortissement (Damping)</string>
     <string name="aimi_pkpd_hypo_damping">Augmenter l\'amortissement (damping) en fin de DIA (Tail) réduirait les SMB risqués avec de l\'IOB tardive.</string>
+
+    <string name="aimi_advisor_section_observations">Observations</string>
+    <string name="aimi_advisor_section_pkpd">Ajustements PKPD</string>
+    <string name="aimi_advisor_section_cognitive">État cognitif</string>
+    <string name="aimi_advisor_section_coach">Coach IA</string>
+
 </resources>
 

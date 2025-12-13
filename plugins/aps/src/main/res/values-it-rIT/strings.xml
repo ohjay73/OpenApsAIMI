@@ -1218,6 +1218,11 @@
     <string name="aimi_pkpd_title_isf">Sensibilità (ISF)</string>
     <string name="aimi_pkpd_title_damping">Ammortizzazione (Damping)</string>
 
+    <string name="aimi_advisor_section_observations">Osservazioni</string>
+    <string name="aimi_advisor_section_pkpd">Regolazioni PKPD</string>
+    <string name="aimi_advisor_section_cognitive">Stato cognitivo</string>
+    <string name="aimi_advisor_section_coach">Coach IA</string>
+
 
 </resources>
 

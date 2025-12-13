@@ -105,7 +105,8 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                     rootLayout.addView(createMetricsGrid(report.metrics, cardColor))
                     
                     // 3. Section: Observations (Kotlin Rules)
-                    rootLayout.addView(createSectionHeader("OBSERVATIONS"))
+                  //rootLayout.addView(createSectionHeader("OBSERVATIONS"))
+                    rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_advisor_section_observations)))
                     if (report.recommendations.isEmpty()) {
                         // All good
                     } else {
@@ -116,18 +117,21 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
 
                     // 3b. PKPD TUNING
                     if (report.pkpdSuggestions.isNotEmpty()) {
-                        rootLayout.addView(createSectionHeader("AJUSTEMENTS PKPD"))
+                      //rootLayout.addView(createSectionHeader("AJUSTEMENTS PKPD"))
+                        rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_advisor_section_pkpd)))
                         report.pkpdSuggestions.forEach { rec ->
                             rootLayout.addView(createPkpdCard(rec, cardColor))
                         }
                     }
 
                     // 4. Section: COGNITIVE BRIDGE (BRAIN)
-                    rootLayout.addView(createSectionHeader("ÉTAT COGNITIF"))
+                  //rootLayout.addView(createSectionHeader("ÉTAT COGNITIF"))
+                    rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_advisor_section_cognitive)))
                     rootLayout.addView(createCognitiveCard(context.prefs.unifiedReactivityFactor, cardColor))
 
                     // 5. Section: AI Coach (ChatGPT/Gemini)
-                    rootLayout.addView(createSectionHeader("COACH IA"))
+                  //rootLayout.addView(createSectionHeader("COACH IA"))
+                    rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_advisor_section_coach)))
                     rootLayout.addView(createCoachCard(context, report, cardColor))
             
                     // Footer
