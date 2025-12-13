@@ -937,6 +937,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             consoleError.add(context.getString(R.string.smb_disabled))
             return false
         }
+        
+        // 🔒 SAFETY: Hard Floor for SMB. No SMB below 80 mg/dL ever.
+        // Even if predicted to rise, we don't SuperBolus a hypo.
+        if (currentBg < 80) {
+            consoleError.add("SMB disabled: BG ${convertBG(currentBg)} < 80")
+            return false
+        }
 
         // 🔒 SAFETY: Hard Floor for SMB. No SMB below 80 mg/dL ever.
         // Even if predicted to rise, we don't SuperBolus a hypo.
