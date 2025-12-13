@@ -1115,10 +1115,16 @@
     <string name="unified_reactivity_summary">Analizza TIR/CV%/Ipoglicemie ogni 6 ore per adattare la reattività (0.6&#8211;1.5). Sostituisce la reattività per fasce orarie. Esporta nel file CSV in Documenti\AAPS.</string>
 
     <!-- AIMI Advisor -->
+
+    <string name="aimi_advisor_dashboard_title">Report settimanale</string>
+    <string name="aimi_advisor_dashboard_score">Punteggio: %1$.1f/10</string>
+
     <string name="aimi_advisor_summary">Analizza le prestazioni glicemiche e propone aggiustamenti del profilo</string>
     <string name="aimi_advisor_section">Strumenti e Analisi</string>
 
     <!-- AIMI ADVISOR SECTION -->
+
+
     <string name="aimi_advisor_title">AIMI Profile Advisor</string>
     <string name="aimi_advisor_model_title">Seleziona modello AI</string>
     <string name="aimi_adv_loading">Analisi dei dati in corso…</string>
@@ -1129,6 +1135,7 @@
     <string name="aimi_advisor_score_label_attention">Attenzione richiesta</string>
     <string name="aimi_advisor_score_label_critical">Azione urgente</string>
 
+    <string name="aimi_advisor_metric_tdd_avg">TDD medio</string>
     <string name="aimi_advisor_period_label">Periodo: %1$s</string>
     <string name="aimi_advisor_metric_tir_70_180">TIR 70–180: %1$d %%</string>
     <string name="aimi_advisor_metric_tir_70_140">TIR 70–140: %1$d %%</string>
@@ -1140,6 +1147,7 @@
     <string name="aimi_advisor_recommendations_title">Raccomandazioni</string>
 
     <!-- Hypos -->
+    <string name="aimi_advisor_metric_hypo_below_54">Ipo &lt; 54</string>
     <string name="aimi_adv_rec_hypos_title">Ipoglicemie severe rilevate</string>
     <string name="aimi_adv_rec_hypos_desc">%1$d%% del tempo sotto 54 mg/dL, %2$d episodi severi. Priorità: ridurre l’aggressività.</string>
     <string name="aimi_adv_rec_hypos_action_isf">Ridurre MaxSMB del 10–20%</string>

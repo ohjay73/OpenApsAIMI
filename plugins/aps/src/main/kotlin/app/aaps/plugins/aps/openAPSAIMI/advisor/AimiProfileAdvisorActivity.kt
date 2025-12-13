@@ -159,7 +159,8 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             }
             
             infoLayout.addView(TextView(this@AimiProfileAdvisorActivity).apply {
-                text = "Rapport Hebdo"
+              //text = "Rapport Hebdo"
+                text = rh.gs(R.string.aimi_advisor_dashboard_title)
                 textSize = 22f
                 setTypeface(null, Typeface.BOLD)
                 setTextColor(Color.WHITE)
@@ -182,7 +183,8 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             }
             
             val scoreText = TextView(this@AimiProfileAdvisorActivity).apply {
-                text = "Score: ${"%.1f".format(report.overallScore)}/10"
+              //text = "Score: ${"%.1f".format(report.overallScore)}/10"
+                text = rh.gs(R.string.aimi_advisor_dashboard_score,report.overallScore)
                 setTextColor(Color.parseColor("#4ADE80")) // Bright Green
                 setTypeface(null, Typeface.BOLD)
                 textSize = 14f
@@ -235,8 +237,8 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         }
         row1.addView(createMetricCard("TIR (70-180)", "${(metrics.tir70_180 * 100).roundToInt()}%", Color.parseColor("#4ADE80"), cardColor), paramHalf())
         row1.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(24, 0) })
-        row1.addView(createMetricCard("TDD MOYEN", "${metrics.tdd.roundToInt()} U", Color.parseColor("#60A5FA"), cardColor), paramHalf())
-        
+      //row1.addView(createMetricCard("TDD MOYEN", "${metrics.tdd.roundToInt()} U", Color.parseColor("#60A5FA"), cardColor), paramHalf())
+        row1.addView(createMetricCard(rh.gs(R.string.aimi_advisor_metric_tdd_avg),"${metrics.tdd.roundToInt()} U",Color.parseColor("#60A5FA"),cardColor),paramHalf())
         // Row 2
         val row2 = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -244,7 +246,8 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         }
         row2.addView(createMetricCard("GMI", "${metrics.gmi}%", Color.parseColor("#FACC15"), cardColor), paramHalf())
         row2.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(24, 0) })
-        row2.addView(createMetricCard("HYPO < 54", "${(metrics.timeBelow54 * 100).roundToInt()}%", Color.parseColor("#F87171"), cardColor), paramHalf())
+      //row2.addView(createMetricCard("HYPO < 54", "${(metrics.timeBelow54 * 100).roundToInt()}%", Color.parseColor("#F87171"), cardColor), paramHalf())
+        row2.addView(createMetricCard(rh.gs(R.string.aimi_advisor_metric_hypo_below_54),"${(metrics.timeBelow54 * 100).roundToInt()}%",Color.parseColor("#F87171"),cardColor),paramHalf())
 
         grid.addView(row1)
         grid.addView(row2)

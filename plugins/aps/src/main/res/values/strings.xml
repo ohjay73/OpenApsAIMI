@@ -1129,6 +1129,8 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
 
 
     <!-- AIMI Advisor -->
+    <string name="aimi_advisor_dashboard_title">Weekly Report</string>
+    <string name="aimi_advisor_dashboard_score">Score: %1$.1f/10</string>
     <string name="aimi_advisor_summary">Analyzes glycemic performance and suggests profile adjustments</string>
     <string name="aimi_advisor_section">Tools and Analysis</string>
     <!-- AIMI ADVISOR SECTION -->
@@ -1142,6 +1144,7 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="aimi_advisor_score_label_critical">Urgent action</string>
 
     <string name="aimi_advisor_period_label">Period: %1$s</string>
+    <string name="aimi_advisor_metric_tdd_avg">Average TDD</string>
     <string name="aimi_advisor_metric_tir_70_180">TIR 70–180: %1$d %%</string>
     <string name="aimi_advisor_metric_tir_70_140">TIR 70–140: %1$d %%</string>
     <string name="aimi_advisor_metric_time_below_70">Time &lt;70: %1$d %%</string>
@@ -1152,6 +1155,7 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="aimi_advisor_recommendations_title">Recommendations</string>
 
     <!-- Hypos -->
+    <string name="aimi_advisor_metric_hypo_below_54">Hypo &lt; 54</string>
     <string name="aimi_adv_rec_hypos_title">Severe hypoglycemia detected</string>
     <string name="aimi_adv_rec_hypos_desc">%1$d%% of time below 54 mg/dL, %2$d severe episodes. Priority: reduce aggressiveness.</string>
     <string name="aimi_adv_rec_hypos_action_isf">Reduce MaxSMB by 10–20%</string>

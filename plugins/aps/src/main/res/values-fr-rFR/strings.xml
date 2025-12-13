@@ -913,6 +913,8 @@
     <string name="comparison_safety_ok">Profil de sécurité acceptable</string>
 
     <!-- AIMI Advisor -->
+    <string name="aimi_advisor_dashboard_title">Rapport Hebdo</string>
+    <string name="aimi_advisor_dashboard_score">Score : %1$.1f/10</string>
     <string name="aimi_advisor_summary">Analyse les performances glycémiques et propose des ajustements de profil</string>
     <string name="aimi_advisor_section">Outils et Analyses</string>
     <!-- AIMI ADVISOR SECTION -->
@@ -925,6 +927,7 @@
     <string name="aimi_advisor_score_label_critical">Action urgente</string>
 
     <string name="aimi_advisor_period_label">Période : %1$s</string>
+    <string name="aimi_advisor_metric_tdd_avg">TDD MOYEN</string>
     <string name="aimi_advisor_metric_tir_70_180">TIR 70–180 : %1$d %%</string>
     <string name="aimi_advisor_metric_tir_70_140">TIR 70–140 : %1$d %%</string>
     <string name="aimi_advisor_metric_time_below_70">Temps &lt;70 : %1$d %%</string>
@@ -935,9 +938,10 @@
     <string name="aimi_advisor_recommendations_title">Recommandations</string>
 
     <!-- Hypos -->
+    <string name="aimi_advisor_metric_hypo_below_54">Hypo &lt; 54</string>
     <string name="aimi_adv_rec_hypos_title">Hypos sévères détectées</string>
     <string name="aimi_adv_rec_hypos_desc">%1$d%% du temps sous 54 mg/dL, %2$d épisodes sévères. Priorité : réduire l\'agressivité.</string>
-    <string name="aimi_adv_rec_hypos_action_isf">Réduire MaxSMB de 10-20%</string>
+    <string name="aimi_adv_rec_hypos_action_isf">Réduire MaxSMB de 10-20%%</string>
     <string name="aimi_adv_rec_hypos_action_modes">Réduire les facteurs des modes repas</string>
     <string name="aimi_adv_rec_hypos_action_basal">Vérifier les basales nocturnes</string>
 
