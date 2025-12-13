@@ -1003,6 +1003,12 @@
     <string name="aimi_pkpd_hyper_isf">Augmenter le facteur max de fusion ISF permettrait de renforcer l\'insuline quand la glycémie est résistante.</string>
     <string name="aimi_pkpd_hypo_dia">Hypos fréquentes détectées. Allonger la DIA de %1$s à %2$s h permettrait de mieux prendre en compte l\'insuline restante (IOB) et d\'éviter les cumuls.</string>
     <string name="aimi_pkpd_hypo_peak">Retarder le pic d\'action (%1$s min) adoucirait la courbe d\'activité de l\'insuline.</string>
+    <!-- AIMI PKPD Titles -->
+    <string name="aimi_pkpd_title_enable">Activation PKPD</string>
+    <string name="aimi_pkpd_title_dia">Durée d\'Action (DIA)</string>
+    <string name="aimi_pkpd_title_peak">Pic d\'Action</string>
+    <string name="aimi_pkpd_title_isf">Sensibilité (ISF)</string>
+    <string name="aimi_pkpd_title_damping">Amortissement (Damping)</string>
     <string name="aimi_pkpd_hypo_damping">Augmenter l\'amortissement (damping) en fin de DIA (Tail) réduirait les SMB risqués avec de l\'IOB tardive.</string>
 </resources>
 

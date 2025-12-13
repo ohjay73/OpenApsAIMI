@@ -1210,7 +1210,6 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="aimi_adv_analysis_issue_profile">Profile quality to optimize.</string>
     <string name="aimi_adv_analysis_footer">The actions suggested below aim to correct these imbalances in a targeted manner.</string>
     <string name="aimi_adv_analysis_all_good">No major issues detected. Keep it up!</string>
-
     <string name="aimi_adv_error_prefix">Analysis error:\n</string>
     <!-- AIMI PKPD Advisor -->
     <string name="aimi_pkpd_advisor_disabled">Adaptive PKPD is disabled. Enabling it would allow automatic adjustment of DIA and peak time to improve TIR.</string>
@@ -1220,11 +1219,11 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="aimi_pkpd_hypo_dia">Frequent hypos detected. Extending DIA from %1$s to %2$s hours would better account for remaining insulin (IOB) and avoid stacking.</string>
     <string name="aimi_pkpd_hypo_peak">Delaying action peak (%1$s min) would soften the insulin activity curve.</string>
     <!-- AIMI PKPD Titles -->
-    <string name="aimi_pkpd_title_enable">Activation PKPD</string>
-    <string name="aimi_pkpd_title_dia">Durée d\'Action (DIA)</string>
-    <string name="aimi_pkpd_title_peak">Pic d\'Action</string>
-    <string name="aimi_pkpd_title_isf">Sensibilité (ISF)</string>
-    <string name="aimi_pkpd_title_damping">Amortissement (Damping)</string>
+    <string name="aimi_pkpd_title_enable">PKPD Activation</string>
+    <string name="aimi_pkpd_title_dia">Duration of Action (DIA)</string>
+    <string name="aimi_pkpd_title_peak">Action Peak</string>
+    <string name="aimi_pkpd_title_isf">Sensitivity (ISF)</string>
+    <string name="aimi_pkpd_title_damping">Damping</string>
     <string name="aimi_pkpd_hypo_damping">Increasing tail damping would reduce risky SMBs with late IOB.</string>
 
     <!-- AIMI AI Preferences -->
