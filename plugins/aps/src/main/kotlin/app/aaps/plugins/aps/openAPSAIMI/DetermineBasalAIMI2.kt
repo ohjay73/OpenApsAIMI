@@ -60,6 +60,7 @@ import app.aaps.plugins.aps.openAPSAIMI.comparison.AimiSmbComparator
 import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCycleInfo
 import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCycleLearner
 import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCyclePreferences
+import app.aaps.plugins.aps.openAPSAIMI.wcycle.CycleTrackingMode
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.AdvancedPredictionEngine
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.InsulinActionProfiler
 import java.io.File
@@ -190,6 +191,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private var predictedBg = 0.0f
     private var lastCarbAgeMin: Int = 0
     private var futureCarbs = 0.0f
+    private var lastCycleNotificationDay: Int = -1 // State for cycle notification spam prevention
     //private var enablebasal: Boolean = false
     private var recentNotes: List<UE>? = null
     private var tags0to60minAgo = ""
@@ -2914,7 +2916,29 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             )
         )
         wCycleInfoForRun = info
+        checkCycleDayNotification(info)
         return info
+    }
+
+    private fun checkCycleDayNotification(info: WCycleInfo) {
+        val mode = wCyclePreferences.trackingMode()
+        val tracking = mode != CycleTrackingMode.MENOPAUSE && mode != CycleTrackingMode.NO_MENSES_LARC 
+        
+        // Trigger: Late Period (Day > Avg Length)
+        // Spam Prevention: Notify only once per day (if day index changed)
+        val limit = wCyclePreferences.avgLen()
+        if (tracking && info.dayInCycle > limit) {
+             if (info.dayInCycle != lastCycleNotificationDay) {
+                 val msg = "⚠️ WCycle: J${info.dayInCycle} > $limit. Retard détecté.\nMettre à jour le 1er jour des règles ?"
+                 consoleLog.add(msg)
+                 uiInteraction.addNotification(
+                    app.aaps.core.interfaces.notifications.Notification.HYPO_RISK_ALARM,
+                    msg,
+                    app.aaps.core.interfaces.notifications.Notification.URGENT
+                 )
+                 lastCycleNotificationDay = info.dayInCycle
+             }
+        }
     }
 
     private fun appendWCycleReason(target: StringBuilder, info: WCycleInfo) {
@@ -3856,6 +3880,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             consoleLog.add(context.getString(R.string.autosens_ratio_log, sensitivityRatio))
         }
         basal = profile.current_basal * sensitivityRatio
+        // WCycle Connectivity: Apply Basal Multiplier
+        val wCycle = wCycleInfoForRun
+        if (wCycle != null && wCycle.applied) {
+             basal *= wCycle.basalMultiplier.toDouble()
+        }
         basal = roundBasal(basal)
         if (basal != profile_current_basal)
         //consoleLog.add("Adjusting basal from $profile_current_basal to $basal; ")
@@ -4539,7 +4568,15 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         )
         appendCompactLog(reasonAimi, tp, bg, delta, recentSteps5Minutes, averageBeatsPerMinute)
         rT.reason.append(reasonAimi.toString())
-        val csf = sens / profile.carb_ratio
+        
+        // 🔮 FCL 11.0: Deep Endo - Apply WCycle IC Multiplier
+        val icMult = wCycleFacade.getIcMultiplier()
+        // If multiplier > 1 (e.g. 1.15 Luteal), we want STRONGER insulin.
+        // Stronger insulin means LOWER Carb Ratio (e.g. 10g/U -> 8.7g/U).
+        // So we DIVIDE the profile CR by the multiplier.
+        val adjustedCR = profile.carb_ratio / icMult
+        
+        val csf = sens / adjustedCR
         //consoleError.add("profile.sens: ${profile.sens}, sens: $sens, CSF: $csf")
         consoleError.add(context.getString(R.string.console_profile_sens, baseSensitivity, sens, csf))
 
@@ -5028,7 +5065,17 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             )
 
             // 🎯 Process UnifiedReactivityLearner (old learner removed)
+            // 🎯 Process UnifiedReactivityLearner (old learner removed)
             unifiedReactivityLearner.processIfNeeded()  // Analyze & adjust every 6h
+
+            // 🔮 FCL 11.0: WCycle Active Learning
+            if (wCyclePreferences.enabled()) {
+                val phase = wCycleFacade.getPhase()
+                if (phase != app.aaps.plugins.aps.openAPSAIMI.wcycle.CyclePhase.UNKNOWN) {
+                     // Feed real-time resistance (Autosens Ratio) back to the Cycle Learner
+                     wCycleFacade.updateLearning(phase, autosens_data.ratio)
+                }
+            }
 
             return finalResult
         }
