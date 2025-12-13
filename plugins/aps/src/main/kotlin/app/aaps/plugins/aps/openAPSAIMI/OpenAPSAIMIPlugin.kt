@@ -119,7 +119,8 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
     private val determineBasalaimiSMB2: DetermineBasalaimiSMB2,
     private val profiler: Profiler,
     private val context: Context,
-    private val apsResultProvider: Provider<APSResult>
+    private val apsResultProvider: Provider<APSResult>,
+    private val unifiedReactivityLearner: app.aaps.plugins.aps.openAPSAIMI.learning.UnifiedReactivityLearner // 🧠 Brain Injection
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -556,6 +557,47 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                 ratioFromCarbs = 1.0 // Peut être ajusté si nécessaire
             )
 
+            // 🧠 AIMI BRAIN INTEGRATION (UnifiedReactivityLearner)
+            // "The Cognitive Bridge": Adjusts BOTH Sensitivity (ISF) and Resistance (Autosens Ratio)
+            try {
+                unifiedReactivityLearner.processIfNeeded()
+                var brainFactor = unifiedReactivityLearner.getCombinedFactor()
+                
+                // 🚨 SAFETY OVERRIDE (FCL 10.3) - Refined for "Blind Spot" Removal:
+                // If we are in Hyper (>150) AND Rising/Stable, we MUST NOT be protective (<1.0).
+                // FIX: "Rising" defined strictly as Delta > -0.5 (Stable or Up). 
+                // Previously > -2.0 allowed drops, which was risky to un-protect.
+                val isHyper = glucoseStatus.glucose > 150
+                val isRising = (glucoseStatus.delta ?: 0.0) > -0.5 
+                
+                if (isHyper && isRising && brainFactor < 1.0) {
+                    aapsLogger.debug(LTag.APS, "🧠 Brain Override: IGNORING protective factor ${"%.2f".format(brainFactor)} because BG ${glucoseStatus.glucose} is high & stable/rising.")
+                    brainFactor = 1.0
+                }
+
+                if (brainFactor != 1.0) {
+                    val originalRatio = autosensResult.ratio
+                    val originalISF = variableSensitivity
+                    
+                    // 1. Modulate Autosens Ratio (Basal/Targets)
+                    // Factor > 1 (Aggressive) -> Ratio Increases (Higher Basal)
+                    // Factor < 1 (Protective) -> Ratio Decreases (Lower Basal)
+                    autosensResult.ratio = originalRatio * brainFactor
+                    
+                    // 2. Modulate Dynamic ISF (SMB)
+                    // Factor > 1 (Aggressive) -> ISF Decreases (Larger Bolus) -> ISF / Factor
+                    // Factor < 1 (Protective) -> ISF Increases (Smaller Bolus) -> ISF / Factor
+                    variableSensitivity = variableSensitivity / brainFactor
+                    
+                    aapsLogger.debug(LTag.APS, "🧠 AIMI Brain Override: " +
+                        "Autosens ${"%.2f".format(originalRatio)}->${"%.2f".format(autosensResult.ratio)} | " +
+                        "ISF ${"%.0f".format(originalISF)}->${"%.0f".format(variableSensitivity)} " +
+                        "(Factor ${"%.2f".format(brainFactor)})")
+                }
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.APS, "Failed to apply AIMI Brain factor", e)
+            }
+
             val iobArray = iobCobCalculator.calculateIobArrayForSMB(autosensResult, SMBDefaults.exercise_mode, SMBDefaults.half_basal_exercise_target, isTempTarget)
             val mealData = iobCobCalculator.getMealDataWithWaitingForCalculationFinish()
             var currentActivity = 0.0
@@ -729,6 +771,27 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                 uiInteraction = uiInteraction
             ).also {
                 val determineBasalResult = apsResultProvider.get().with(it)
+                
+                // 🔮 FCL 11.0: Force Copy Predictions via JSON (Manual Construction)
+                if (it.predBGs != null) {
+                    val count = it.predBGs?.IOB?.size ?: 0
+                    aapsLogger.debug(LTag.APS, "Plugin: Injecting predictions via JSON manually (Size: $count)")
+                    try {
+                        val predJson = org.json.JSONObject()
+                        // Manual array copy to ensure data transfer
+                        // Note: Using JSONArray constructor or equivalent
+                        predJson.put("IOB", org.json.JSONArray(it.predBGs?.IOB))
+                        predJson.put("COB", org.json.JSONArray(it.predBGs?.COB))
+                        predJson.put("ZT",  org.json.JSONArray(it.predBGs?.ZT))
+                        predJson.put("UAM", org.json.JSONArray(it.predBGs?.UAM))
+                        
+                        // Inject into the main result JSON
+                        determineBasalResult.json()?.put("predBGs", predJson)
+                    } catch (e: Exception) {
+                        aapsLogger.error(LTag.APS, "Failed to inject JSON predictions: $e")
+                    }
+                }
+
                 // Preserve input data
                 determineBasalResult.inputConstraints = inputConstraints
                 determineBasalResult.autosensResult = autosensResult

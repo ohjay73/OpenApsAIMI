@@ -21,6 +21,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineScope
 import androidx.lifecycle.lifecycleScope
+import app.aaps.core.keys.interfaces.DoublePreferenceKey
+import app.aaps.core.keys.interfaces.IntPreferenceKey
+import app.aaps.core.keys.interfaces.BooleanPreferenceKey
+import app.aaps.core.keys.interfaces.PreferenceKey
+import app.aaps.core.keys.interfaces.StringPreferenceKey
 
 /**
  * =============================================================================
@@ -35,15 +40,25 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
     @Inject lateinit var profileFunction: app.aaps.core.interfaces.profile.ProfileFunction
     @Inject lateinit var persistenceLayer: app.aaps.core.interfaces.db.PersistenceLayer
     @Inject lateinit var preferences: app.aaps.core.keys.interfaces.Preferences
+    @Inject lateinit var unifiedReactivityLearner: app.aaps.plugins.aps.openAPSAIMI.learning.UnifiedReactivityLearner
     
     // NOT injected - created manually to avoid Dagger issues
     private lateinit var advisorService: AimiAdvisorService
+    private lateinit var historyRepo: app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository
+
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
         // Pass dependencies to service
-        advisorService = AimiAdvisorService(profileFunction, persistenceLayer, preferences, rh)
+        advisorService = AimiAdvisorService(
+            profileFunction = profileFunction, 
+            persistenceLayer = persistenceLayer, 
+            preferences = preferences, 
+            rh = rh, 
+            unifiedReactivityLearner = unifiedReactivityLearner
+        )
+        historyRepo = app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository(this)
         title = rh.gs(R.string.aimi_advisor_title)
         
         // Dark Navy Background
@@ -76,7 +91,8 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         // CRITICAL FIX: Load data on IO thread to prevent crash
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val report = advisorService.generateReport(periodDays = 7)
+                val history = historyRepo.getRecentActions(7)
+                val report = advisorService.generateReport(periodDays = 7, history = history)
                 val context = advisorService.collectContext(7)
 
                 withContext(Dispatchers.Main) {
@@ -106,7 +122,11 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                         }
                     }
 
-                    // 4. Section: AI Coach (ChatGPT)
+                    // 4. Section: COGNITIVE BRIDGE (BRAIN)
+                    rootLayout.addView(createSectionHeader("ÉTAT COGNITIF"))
+                    rootLayout.addView(createCognitiveCard(context.prefs.unifiedReactivityFactor, cardColor))
+
+                    // 5. Section: AI Coach (ChatGPT/Gemini)
                     rootLayout.addView(createSectionHeader("COACH IA"))
                     rootLayout.addView(createCoachCard(context, report, cardColor))
             
@@ -345,14 +365,97 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             setPadding(0, 4, 0, 0)
         })
         
-        // Add dynamic actions overview if present? 
-        // For UI simplicity, we keep it clean as requested (Observations style) or append brief action text.
-        // Let's hide detailed actions inside the observation text or keep it simple.
+        // Add dynamic actions overview if present
+        if (rec.action != null && rec.action is AdvisorAction.UpdatePreference) {
+            val actionBtn = TextView(this).apply {
+                text = "APPLIQUER"
+                textSize = 14f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.parseColor("#38BDF8")) // Sky Blue
+                gravity = Gravity.END
+                setPadding(0, 16, 0, 0)
+                setOnClickListener {
+                    showApplyActionDialog(rec.action as AdvisorAction.UpdatePreference)
+                }
+            }
+            textLayout.addView(actionBtn)
+        }
         
         row.addView(textLayout)
         card.addView(row)
         return card
     }
+
+    private fun showApplyActionDialog(action: AdvisorAction.UpdatePreference) {
+        val sb = StringBuilder()
+        sb.append("L'Advisor propose les ajustements suivants :\n\n")
+        
+        action.changes.forEach { change ->
+             sb.append("• ${change.keyName}: ${change.oldValue} ➔ ${change.newValue}\n")
+             sb.append("  ${change.explanation}\n\n")
+        }
+
+        sb.append("Voulez-vous appliquer ces changements ?")
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Confirmation des Ajustements")
+            .setMessage(sb.toString())
+            .setPositiveButton("TOUT APPLIQUER") { _, _ ->
+                applyAction(action)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun applyAction(action: AdvisorAction.UpdatePreference) {
+        try {
+            var appliedCount = 0
+            
+            action.changes.forEach { change ->
+                var applied = false
+                if (change.newValue is Double && change.key is DoublePreferenceKey) {
+                     val key = change.key as DoublePreferenceKey
+                     preferences.put(key, change.newValue as Double)
+                     logAction(change)
+                     applied = true
+                } else if (change.newValue is Int && change.key is IntPreferenceKey) {
+                     val key = change.key as IntPreferenceKey
+                     preferences.put(key, change.newValue as Int)
+                     logAction(change)
+                     applied = true
+                } else if (change.newValue is Boolean && change.key is BooleanPreferenceKey) {
+                     val key = change.key as BooleanPreferenceKey
+                     preferences.put(key, change.newValue as Boolean)
+                     logAction(change)
+                     applied = true
+                }
+                
+                if (applied) appliedCount++
+            }
+
+            if (appliedCount > 0) {
+                 android.widget.Toast.makeText(this, "$appliedCount changements appliqués !", android.widget.Toast.LENGTH_SHORT).show()
+                 recreate()
+            } else {
+                 android.widget.Toast.makeText(this, "Aucun changement compatible appliqué.", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(this, "Erreur : ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
+            e.printStackTrace()
+        }
+    }
+
+    private fun logAction(change: AdvisorAction.Prediction) {
+         historyRepo.logAction(
+                app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository.ActionType.PREFERENCE_CHANGE,
+                change.keyName,
+                change.explanation,
+                change.oldValue.toString(),
+                change.newValue.toString()
+            )
+    }
+
+
 
     private fun createPkpdCard(rec: PkpdTuningSuggestion, cardBg: Int): CardView {
         val card = CardView(this).apply {
@@ -421,6 +524,87 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         return card
     }
 
+    private fun createCognitiveCard(factor: Double, cardBg: Int): CardView {
+        val card = CardView(this).apply {
+            radius = 16f
+            setCardBackgroundColor(cardBg)
+            cardElevation = 0f
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(0, 0, 0, 16)
+            }
+        }
+        
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(24, 24, 24, 24)
+        }
+        
+        // Brain Icon
+        val iconBg = CardView(this).apply {
+            radius = 50f
+            cardElevation = 0f
+            setCardBackgroundColor(Color.parseColor("#334155"))
+            layoutParams = LinearLayout.LayoutParams(48.dpToPx(), 48.dpToPx())
+        }
+        val iconText = TextView(this).apply {
+            text = "🧠"
+            textSize = 20f
+            gravity = Gravity.CENTER
+            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+        iconBg.addView(iconText)
+        row.addView(iconBg)
+        
+        // Text Content
+        val textLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24, 0, 0, 0)
+        }
+        
+        // Determine State
+        val stateText: String
+        val stateColor: Int
+        val explanation: String
+        
+        when {
+            factor < 0.95 -> {
+                stateText = "PROTECTEUR (x${"%.2f".format(factor)})"
+                stateColor = Color.parseColor("#F87171") // Red/Orange - Reducing aggression
+                explanation = "Le système a détecté une instabilité/hypo récente et a réduit l'agressivité globale."
+            }
+            factor > 1.05 -> {
+                stateText = "OFFENSIF (x${"%.2f".format(factor)})"
+                stateColor = Color.parseColor("#EF4444") // Red - Increasing aggression
+                explanation = "Le système combat une hyperglycémie persistante ou une résistance détectée."
+            }
+            else -> {
+                stateText = "NEUTRE (x${"%.2f".format(factor)})"
+                stateColor = Color.parseColor("#4ADE80") // Green
+                explanation = "Le système fonctionne avec ses paramètres de base. Aucune anomalie détectée."
+            }
+        }
+
+        textLayout.addView(TextView(this).apply {
+            text = stateText
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(stateColor)
+        })
+        
+        textLayout.addView(TextView(this).apply {
+            text = explanation
+            textSize = 14f
+            setTextColor(Color.parseColor("#94A3B8")) // Slate 400
+            setLineSpacing(4f, 1.1f)
+            setPadding(0, 4, 0, 0)
+        })
+        
+        row.addView(textLayout)
+        card.addView(row)
+        return card
+    }
+
     private fun createCoachCard(context: AdvisorContext, report: AdvisorReport, cardBg: Int): CardView {
         val card = CardView(this).apply {
             radius = 16f
@@ -469,9 +653,12 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             val placeholder = rh.gs(R.string.aimi_coach_placeholder) + " (${provider.name})"
             contentText.text = "$basicAnalysis\n\n⚙️ $placeholder"
         } else {
-             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+            lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Main) {
                 try {
-                    val advice = AiCoachingService().fetchAdvice(this@AimiProfileAdvisorActivity, context, report, activeKey, provider)
+                    val history = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        historyRepo.getRecentActions(7)
+                    }
+                    val advice = AiCoachingService().fetchAdvice(this@AimiProfileAdvisorActivity, context, report, activeKey, provider, history)
                     contentText.text = advice
                 } catch (e: Exception) {
                     contentText.text = rh.gs(R.string.aimi_coach_error) + "\n" + e.localizedMessage
