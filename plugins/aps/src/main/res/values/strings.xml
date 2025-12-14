@@ -1143,6 +1143,8 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
 
     <string name="aimi_advisor_period_label">Period: %1$s</string>
     <string name="aimi_advisor_metric_tdd_avg">Average TDD</string>
+    <string name="aimi_adv_metric_tir_today">TIR Today</string>
+    <string name="aimi_adv_metric_tdd_today">TDD Today</string>
     <string name="aimi_advisor_metric_tir_70_180">TIR 70–180: %1$d %%</string>
     <string name="aimi_advisor_metric_tir_70_140">TIR 70–140: %1$d %%</string>
     <string name="aimi_advisor_metric_time_below_70">Time &lt;70: %1$d %%</string>

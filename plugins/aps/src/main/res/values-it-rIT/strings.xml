@@ -1132,6 +1132,8 @@
 
     <string name="aimi_advisor_period_label">Periodo: %1$s</string>
     <string name="aimi_advisor_metric_tdd_avg">TDD medio</string>
+    <string name="aimi_adv_metric_tir_today">TIR giornaliero</string>
+    <string name="aimi_adv_metric_tdd_today">TDD giornaliero</string>
     <string name="aimi_advisor_metric_tir_70_180">TIR 70–180: %1$d %%</string>
     <string name="aimi_advisor_metric_tir_70_140">TIR 70–140: %1$d %%</string>
     <string name="aimi_advisor_metric_time_below_70">Tempo &lt;70: %1$d %%</string>

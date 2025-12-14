@@ -927,6 +927,8 @@
 
     <string name="aimi_advisor_period_label">Période : %1$s</string>
     <string name="aimi_advisor_metric_tdd_avg">TDD MOYEN</string>
+    <string name="aimi_adv_metric_tir_today">AUJ. TIR</string>
+    <string name="aimi_adv_metric_tdd_today">AUJ. TDD</string>
     <string name="aimi_advisor_metric_tir_70_180">TIR 70–180 : %1$d %%</string>
     <string name="aimi_advisor_metric_tir_70_140">TIR 70–140 : %1$d %%</string>
     <string name="aimi_advisor_metric_time_below_70">Temps &lt;70 : %1$d %%</string>
@@ -999,6 +1001,7 @@
     <string name="aimi_adv_brain_protect_desc">Le système a détecté une instabilité/hypo récente et a réduit l\'agressivité globale.</string>
     <string name="aimi_adv_brain_offense_desc">Le système combat une hyperglycémie persistante ou une résistance détectée.</string>
     <string name="aimi_adv_brain_neutral_desc">Le système fonctionne avec ses paramètres de base. Aucune anomalie détectée.</string>
+
 
     <string name="aimi_coach_title">Coach IA</string>
     <string name="aimi_coach_loading">Génération des conseils personnalisés...</string>

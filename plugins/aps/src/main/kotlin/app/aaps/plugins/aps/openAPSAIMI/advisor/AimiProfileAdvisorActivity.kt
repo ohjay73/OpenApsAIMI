@@ -262,12 +262,14 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             
             val tirVal = metrics.todayTir?.let { "${(it * 100).roundToInt()}%" } ?: "-"
             // Use slightly different color to distinguish? Or same green/blue scheme.
-            row3.addView(createMetricCard("AUJ. TIR", tirVal, Color.parseColor("#4ADE80"), cardColor), paramHalf())
+          //row3.addView(createMetricCard("AUJ. TIR", tirVal, Color.parseColor("#4ADE80"), cardColor), paramHalf())
+            row3.addView(createMetricCard(rh.gs(R.string.aimi_adv_metric_tir_today), tirVal, Color.parseColor("#4ADE80"), cardColor), paramHalf())
             
             row3.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(16, 0) })
             
             val tddVal = metrics.todayTdd?.let { "%.1f U".format(it) } ?: "-"
-            row3.addView(createMetricCard("AUJ. TDD", tddVal, Color.parseColor("#60A5FA"), cardColor), paramHalf())
+          //row3.addView(createMetricCard("AUJ. TDD", tddVal, Color.parseColor("#60A5FA"), cardColor), paramHalf())
+            row3.addView(createMetricCard(rh.gs(R.string.aimi_adv_metric_tdd_today), tddVal, Color.parseColor("#60A5FA"), cardColor), paramHalf())
             
             grid.addView(row3)
         }
@@ -539,19 +541,25 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         
         when {
             factor < 0.95 -> {
-                stateText = "PROTECTEUR (x${"%.2f".format(factor)})"
+              //stateText = "PROTECTEUR (x${"%.2f".format(factor)})"
+                stateText = rh.gs(R.string.aimi_adv_brain_protect, factor)
                 stateColor = Color.parseColor("#F87171") // Red/Orange - Reducing aggression
-                explanation = "Le système a détecté une instabilité/hypo récente et a réduit l'agressivité globale."
+              //explanation = "Le système a détecté une instabilité/hypo récente et a réduit l'agressivité globale."
+                explanation = rh.gs(R.string.aimi_adv_brain_protect_desc)
             }
             factor > 1.05 -> {
-                stateText = "OFFENSIF (x${"%.2f".format(factor)})"
+              //stateText = "OFFENSIF (x${"%.2f".format(factor)})"
+                stateText = rh.gs(R.string.aimi_adv_brain_offense, factor)
                 stateColor = Color.parseColor("#EF4444") // Red - Increasing aggression
-                explanation = "Le système combat une hyperglycémie persistante ou une résistance détectée."
+              //explanation = "Le système combat une hyperglycémie persistante ou une résistance détectée."
+                explanation = rh.gs(R.string.aimi_adv_brain_offense_desc)
             }
             else -> {
-                stateText = "NEUTRE (x${"%.2f".format(factor)})"
+              //stateText = "NEUTRE (x${"%.2f".format(factor)})"
+                stateText = rh.gs(R.string.aimi_adv_brain_neutral, factor)
                 stateColor = Color.parseColor("#4ADE80") // Green
-                explanation = "Le système fonctionne avec ses paramètres de base. Aucune anomalie détectée."
+              //explanation = "Le système fonctionne avec ses paramètres de base. Aucune anomalie détectée."
+                explanation = rh.gs(R.string.aimi_adv_brain_neutral_desc)
             }
         }
 
