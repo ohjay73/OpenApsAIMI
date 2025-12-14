@@ -19,6 +19,11 @@
         app:showAsAction="never"
         android:title="@string/nav_dashboard_preview" />
     <item
+        android:id="@+id/nav_meal_advisor"
+        android:orderInCategory="1"
+        app:showAsAction="never"
+        android:title="@string/aimi_meal_advisor_title" />
+    <item
         android:id="@+id/nav_aimi_advisor"
         android:orderInCategory="1"
         app:showAsAction="never"
