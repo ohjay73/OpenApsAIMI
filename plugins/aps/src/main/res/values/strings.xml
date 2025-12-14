@@ -340,6 +340,10 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="oaps_aimi_cho_summary">Average carbohydrates per meal. Estimated value, not exact</string>
     <string name="oaps_aimi_cho_title">Average carbohydrate amount lunch/dinner</string>
     <string name="aimi_preferences">AIMI Settings</string>
+    <string name="aimi_advisor_section_settings">AIMI Settings</string>
+
+
+
     <string name="user_preferences">User preferences</string>
     <string name="user_modes_preferences_title_menu">User preferences - Modes</string>
     <string name="reactivity_preferences">Reactivity - Settings</string>
