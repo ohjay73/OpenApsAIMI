@@ -539,7 +539,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             && bgNow >= targetBgVal - bgMargin
     }
 
-    private fun roundBasal(value: Double): Double = value
+    private fun roundBasal(value: Double): Double {
+        val safeValue = if (value < 0.0) 0.0 else value
+        // Standard rounding to 2 decimals (OpenAPS style 0.00)
+        return Math.round(safeValue * 100.0) / 100.0
+    }
 
 
     /**
