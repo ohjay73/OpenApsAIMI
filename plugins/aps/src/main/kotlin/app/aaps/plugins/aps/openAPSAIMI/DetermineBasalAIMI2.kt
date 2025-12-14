@@ -3624,6 +3624,32 @@ class DetermineBasalaimiSMB2 @Inject constructor(
              return rT
         }
 
+        // 📸 Meal Advisor Integration (AIMI "Snap & Go")
+        val estimatedCarbs = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbs)
+        val estimatedCarbsTime = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbTime).toLong() // Stored as Double, cast to Long
+        val timeSinceEstimateMin = (System.currentTimeMillis() - estimatedCarbsTime) / 60000.0
+        
+        if (estimatedCarbs > 10.0 && timeSinceEstimateMin in 0.0..120.0 && bg >= 80) {
+            // We have a recent photo estimate!
+            // If delta is rising fast (> 5) or we are high (> target + 30), treat as unbolused meal.
+            if ((delta > 5.0 || bg > targetBg + 30) && modesCondition) {
+                // Determine aggression based on estimated load:
+                // Small (< 30g) -> Standard
+                // Medium (30-60g) -> Large
+                // Large (> 60g) -> Extra Large (Simulated by scaling Dynamic Pbolus)
+                
+                // Base calculation
+                val urgencyFactor = if (estimatedCarbs > 60) 1.5 else 1.0
+                val targetUnits = calculateAdaptivePrebolus(dynamicPbolusLarge * urgencyFactor, delta, reason)
+                
+                val msg = "📸 Meal Advisor: Targeting ~${estimatedCarbs.toInt()}g (Est. ${timeSinceEstimateMin.toInt()}m ago) -> Force ${targetUnits}U"
+                reason.append(msg + "\n")
+                
+                finalizeAndCapSMB(rT, targetUnits, reason.toString())
+                return rT
+            }
+        }
+
         if (isMealModeCondition() && bg >= 80) {
             val pbolusM: Double = preferences.get(DoubleKey.OApsAIMIMealPrebolus)
             // rT.reason.append(" Microbolusing Meal Mode ${pbolusM}U.")
