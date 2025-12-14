@@ -41,7 +41,7 @@ class MealAdvisorActivity : TranslatedDaggerAppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        recognitionService = FoodRecognitionService(this)
+        recognitionService = FoodRecognitionService(this, preferences)
         title = "AIMI Meal Advisor"
 
         // UI Setup (Code Layout)
@@ -52,6 +52,55 @@ class MealAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             setBackgroundColor(bgColor)
             gravity = Gravity.CENTER_HORIZONTAL
         }
+
+        // 0. Provider Selector
+        val providerLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 16 }
+        }
+
+        val providerLabel = TextView(this).apply {
+            text = "AI Model: "
+            setTextColor(Color.WHITE)
+        }
+        providerLayout.addView(providerLabel)
+
+        val spinner = android.widget.Spinner(this).apply {
+            // Apply a simple white text style for spinner items if possible or use default
+            // For programmatic spinner with dark theme, we might need a custom adapter or accept default.
+            // Using default for now.
+            background.setColorFilter(Color.WHITE, android.graphics.PorterDuff.Mode.SRC_ATOP)
+        }
+        
+        val providers = arrayOf("OpenAI (GPT-4o)", "Gemini (2.5 Flash)")
+        val adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_item, providers)
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        spinner.adapter = adapter
+
+        // Set initial selection
+        val currentProvider = preferences.get(app.aaps.core.keys.StringKey.AimiAdvisorProvider)
+        if (currentProvider == "GEMINI") {
+            spinner.setSelection(1)
+        } else {
+            spinner.setSelection(0)
+        }
+
+        spinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+             override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                 val selected = if (position == 1) "GEMINI" else "OPENAI"
+                 preferences.put(app.aaps.core.keys.StringKey.AimiAdvisorProvider, selected)
+                 // Ensure text color is readable if default adapter is used
+                 (view as? TextView)?.setTextColor(Color.WHITE)
+             }
+             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
+        providerLayout.addView(spinner)
+        layout.addView(providerLayout)
 
         // 1. Photo Area
         imageView = ImageView(this).apply {
@@ -121,70 +170,71 @@ class MealAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             androidx.core.app.ActivityCompat.requestPermissions(this, arrayOf(android.Manifest.permission.CAMERA), 100)
         } else {
-             // MOCK: Simplify for prototype -> Directly run generic analysis simulation
-            simulateAnalysis() 
+            val takePictureIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            if (takePictureIntent.resolveActivity(packageManager) != null) {
+                startActivityForResult(takePictureIntent, REQUEST_IMAGE_CAPTURE)
+            } else {
+                Toast.makeText(this, "No Camera App found", Toast.LENGTH_SHORT).show()
+            }
         }
     }
-    
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 100) {
             if (grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                simulateAnalysis()
+                dispatchTakePictureIntent()
             } else {
                 Toast.makeText(this, "Camera permission required.", Toast.LENGTH_SHORT).show()
             }
         }
     }
-    
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_IMAGE_CAPTURE && resultCode == RESULT_OK) {
+            val imageBitmap = data?.extras?.get("data") as Bitmap
+            imageView.setImageBitmap(imageBitmap)
+            simulateAnalysis(imageBitmap)
+        }
+    }
+
     // Mock simulation for prototype consistency without camera hardware
-    private fun simulateAnalysis() {
+    private fun simulateAnalysis(bitmap: Bitmap) {
         Toast.makeText(this, "Analyzing image (AI Vision)...", Toast.LENGTH_SHORT).show()
-        
+
         lifecycleScope.launch {
             try {
                 // Call Service
-                val result = recognitionService.estimateCarbsFromImage("mock_uri")
+                val result = recognitionService.estimateCarbsFromImage(bitmap)
                 currentEstimate = result
-                
+
                 // Update UI
-                resultText.text = "${result.carbsGrams.toInt()}g Carbs\n${result.description}"
+                resultText.text = """
+                    ${result.carbsGrams.toInt()}g Carbs
+                    ${result.proteinGrams.toInt()}g Protein | ${result.fatGrams.toInt()}g Fat
+                    (FPU Equiv: ${result.fpuEquivalent.toInt()}g)
+                    
+                    ${result.description}
+                """.trimIndent()
+                
                 reasoningText.text = result.reasoning
                 confirmButton.visibility = android.view.View.VISIBLE
-                confirmButton.text = "✅ Confirm ${result.carbsGrams.toInt()}g"
-                
+                confirmButton.text = "✅ Confirm ${result.carbsGrams.toInt()}g Carbs" // Only confirmed carbs injected for now
+
             } catch (e: Exception) {
                 resultText.text = "Error: ${e.message}"
             }
         }
     }
 
-    /*
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQUEST_IMAGE_CAPTURE && resultCode == RESULT_OK) {
-            val imageBitmap = data?.extras?.get("data") as Bitmap
-            imageView.setImageBitmap(imageBitmap)
-            simulateAnalysis()
-        }
-    }
-    */
-
     private fun confirmEstimate() {
         val estimate = currentEstimate ?: return
-        
-        // Inject into Preferences for FCL
-        // We need to define these keys in DoubleKey/LongKey.
-        // Assuming keys will be added: OApsAIMILastEstimatedCarbs, OApsAIMILastEstimatedCarbTime
-        
-        // Using safe fallback if keys not yet compiled, but plan requires adding them first.
-        // I will trust the keys will be added in the next step.
-        // Writing code knowing keys are:
         
         preferences.put(DoubleKey.OApsAIMILastEstimatedCarbs, estimate.carbsGrams)
         preferences.put(DoubleKey.OApsAIMILastEstimatedCarbTime, System.currentTimeMillis().toDouble())
         
-        Toast.makeText(this, "Injected! FCL will now target this rise.", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "Injected! FCL targeting ${estimate.carbsGrams.toInt()}g (+${estimate.fpuEquivalent.toInt()}g FPU effect)", Toast.LENGTH_LONG).show()
         finish()
     }
 }
