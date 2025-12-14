@@ -970,7 +970,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                 key = "Global User Preferences"
                 //title = "Global User Preferences"
                 title = rh.gs(R.string.user_preferences)
-               
+
                 addPreference(PreferenceCategory(context).apply {
                     title = rh.gs(R.string.user_preferences_title_menu)
                 })
