@@ -1121,6 +1121,8 @@
 
     <string name="aimi_advisor_summary">Analizza le prestazioni glicemiche e propone aggiustamenti del profilo</string>
     <string name="aimi_advisor_section">Strumenti e Analisi</string>
+    <string name="aimi_adv_period_last_days">Ultimi %1$d giorni</string>
+
 
     <!-- AIMI ADVISOR SECTION -->
 

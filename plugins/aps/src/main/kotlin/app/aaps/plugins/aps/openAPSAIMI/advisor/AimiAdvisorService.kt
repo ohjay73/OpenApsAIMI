@@ -255,7 +255,8 @@ class AimiAdvisorService {
         }
 
         return AdvisorMetrics(
-            periodLabel = "Last $days days",
+          //periodLabel = "Last $days days",
+            periodLabel = rh?.gs(R.string.aimi_adv_period_last_days, days) ?: "Last $days days",
             tir70_180 = tir70_180,
             tir70_140 = tir70_140,
             timeBelow70 = timeBelow70, 

@@ -244,7 +244,8 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             weightSum = 2f
         }
-        row2.addView(createMetricCard("GMI", "${metrics.gmi}%", Color.parseColor("#FACC15"), cardColor), paramHalf())
+      //row2.addView(createMetricCard("GMI", "${metrics.gmi}%", Color.parseColor("#FACC15"), cardColor), paramHalf())
+        row2.addView(createMetricCard("GMI", String.format("%.1f", metrics.gmi), Color.parseColor("#FACC15"), cardColor), paramHalf())
         row2.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(24, 0) })
       //row2.addView(createMetricCard("HYPO < 54", "${(metrics.timeBelow54 * 100).roundToInt()}%", Color.parseColor("#F87171"), cardColor), paramHalf())
         row2.addView(createMetricCard(rh.gs(R.string.aimi_advisor_metric_hypo_below_54),"${(metrics.timeBelow54 * 100).roundToInt()}%",Color.parseColor("#F87171"),cardColor),paramHalf())

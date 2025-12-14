@@ -917,6 +917,7 @@
     <string name="aimi_advisor_dashboard_score">Score : %1$.1f/10</string>
     <string name="aimi_advisor_summary">Analyse les performances glycémiques et propose des ajustements de profil</string>
     <string name="aimi_advisor_section">Outils et Analyses</string>
+    <string name="aimi_adv_period_last_days">Derniers %1$d jours</string>
     <!-- AIMI ADVISOR SECTION -->
 
     <string name="aimi_advisor_score_label_excellent">Excellent</string>

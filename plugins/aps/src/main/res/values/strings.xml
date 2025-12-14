@@ -1133,6 +1133,7 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="aimi_advisor_dashboard_score">Score: %1$.1f/10</string>
     <string name="aimi_advisor_summary">Analyzes glycemic performance and suggests profile adjustments</string>
     <string name="aimi_advisor_section">Tools and Analysis</string>
+    <string name="aimi_adv_period_last_days">Last %1$d days</string>
     <!-- AIMI ADVISOR SECTION -->
 
     <string name="aimi_advisor_score_label_excellent">Excellent</string>
