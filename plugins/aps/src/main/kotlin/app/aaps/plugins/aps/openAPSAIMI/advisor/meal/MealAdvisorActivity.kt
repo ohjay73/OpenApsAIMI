@@ -16,12 +16,9 @@ import androidx.lifecycle.lifecycleScope
 import app.aaps.core.ui.activities.TranslatedDaggerAppCompatActivity
 import app.aaps.plugins.aps.R
 import app.aaps.core.keys.interfaces.Preferences
-import app.aaps.core.keys.interfaces.DoublePreferenceKey
-import app.aaps.core.keys.interfaces.LongPreferenceKey
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import app.aaps.core.keys.DoubleKey
-import app.aaps.core.keys.LongKey
 
 /**
  * Meal Advisor UI: "Snap & Go"
@@ -184,8 +181,8 @@ class MealAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         // I will trust the keys will be added in the next step.
         // Writing code knowing keys are:
         
-        preferences.store(DoubleKey.OApsAIMILastEstimatedCarbs, estimate.carbsGrams)
-        preferences.store(LongKey.OApsAIMILastEstimatedCarbTime, System.currentTimeMillis())
+        preferences.put(DoubleKey.OApsAIMILastEstimatedCarbs, estimate.carbsGrams)
+        preferences.put(DoubleKey.OApsAIMILastEstimatedCarbTime, System.currentTimeMillis().toDouble())
         
         Toast.makeText(this, "Injected! FCL will now target this rise.", Toast.LENGTH_LONG).show()
         finish()
