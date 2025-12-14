@@ -1288,8 +1288,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                 addPreference(PreferenceCategory(context).apply {
                     title = rh.gs(R.string.aimi_advisor_section)
                 })
-                addPreference(
-                    AdaptiveIntentPreference(
+                addPreference(AdaptiveIntentPreference(
                         ctx = context,
                         intentKey = IntentKey.OApsAIMIProfileAdvisor,
                         intent = Intent(context, app.aaps.plugins.aps.openAPSAIMI.advisor.AimiProfileAdvisorActivity::class.java),
@@ -1305,7 +1304,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                         title = R.string.aimi_meal_advisor_title
                     )
                 )
-                
+
                 addPreference(PreferenceCategory(context).apply {
                     title = rh.gs(R.string.oaps_aimi_ngr_title)
                 })
