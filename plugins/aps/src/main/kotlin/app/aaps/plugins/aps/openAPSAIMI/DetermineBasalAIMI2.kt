@@ -1278,6 +1278,31 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     }
 
     /**
+     * 🛡️ Centralized Safety Enforcement for "Innovation" Modes
+     * Ensures consistent application of MaxIOB and MaxSMB limits using capSmbDose.
+     */
+    private fun finalizeAndCapSMB(rT: RT, proposedUnits: Double, reasonHeader: String) {
+        val proposedFloat = proposedUnits.toFloat()
+        
+        // Use maxSMB (Preferences) as the hard limit.
+        // We use 'maxSMB' instead of 'maxSMBHB' to ensure strict safety unless explicitly handled otherwise.
+        val safeCap = capSmbDose(
+            proposedSmb = proposedFloat,
+            bg = this.bg,
+            maxSmbConfig = this.maxSMB, 
+            iob = this.iob.toDouble(),
+            maxIob = this.maxIob
+        )
+        
+        rT.units = safeCap.toDouble()
+        rT.reason.append(reasonHeader)
+        
+        if (safeCap < proposedFloat) {
+             rT.reason.appendLine(context.getString(R.string.limits_smb, proposedFloat, safeCap))
+        }
+    }
+
+    /**
      * 🛡️ Sécurité Ultime : Plafonne le SMB final juste avant l'envoi.
      *
      * Cette fonction garantit que peu importe les calculs précédents (ML, Reactivity, etc.),
@@ -1608,8 +1633,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         reason: StringBuilder
     ): Boolean {
          // Impossible rise (e.g. +30 mg/dL in 5 mins) = Compression Low Recovery
-         if (delta > 25.0f) {
-             reason.append("🛡️ Safety Net: Compression Rebound Block (Delta > 25) -> Autodrive OFF\n")
+         // [User Request]: Relaxed to avoid blocking aggressive meal spikes (e.g. +22)
+         if (delta > 35.0f) {
+             reason.append("🛡️ Safety Net: Compression Rebound Block (Delta > 35) -> Autodrive OFF\n")
              return true
          }
          return false
@@ -1670,11 +1696,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val autodriveMinDeviation: Double = preferences.get(DoubleKey.OApsAIMIAutodriveDeviation)
         // val autodriveBG: Int = preferences.get(IntKey.OApsAIMIAutodriveBG) // Old static threshold
 
-        // 🛡️ Noise Filter (Anti-Jump)
-        if (delta > 15f && shortAvgDelta < 5f) {
-             reason.append("🚫 Noise detected (Delta > 15 & Avg < 5) -> Autodrive OFF")
-             return false
-        }
+        // 🛡️ Noise Filter (Anti-Jump) -> [User Request]: Disabled.
+    // An aggressive rise (+22) is valid information for Autodrive.
+    // if (delta > 15f && shortAvgDelta < 5f) {
+    //      reason.append("🚫 Noise detected (Delta > 15 & Avg < 5) -> Autodrive OFF")
+    //      return false
+    // }
 
         // 📈 Deltas récents & delta combiné
         val recentDeltas = getRecentDeltas()
@@ -1712,21 +1739,23 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             currentState = AutodriveState.WATCHING
         }
 
-        // ✅ Décision finale
+        // FCL 13.0: Rocket Start Bypass (CombinedDelta > 10 or > 2xPref)
+        
+        // Final Decision
         val ok =
             autodriveCondition &&
                 combinedDelta >= autodriveDelta &&
                 autodrive &&
                 predictedBg > dynamicPredictedThreshold &&
-                slopeFromMinDeviation >= autodriveMinDeviation &&
+                (slopeFromMinDeviation >= autodriveMinDeviation || combinedDelta > 10.0f || combinedDelta > autodriveDelta * 2.0f) &&
                 bg >= dynamicBgThreshold
 
         if (ok) currentState = AutodriveState.ENGAGED
 
         reason.appendLine(
-            "🚗 Autodrive: ${if (ok) "✅ ON" else "❌ OFF"} [$currentState] | " +
-                "cond=$autodriveCondition, Δc≥${"%.2f".format(autodriveDelta)}, " +
-                "predBG>${dynamicPredictedThreshold.toInt()}, slope≥${"%.2f".format(autodriveMinDeviation)}, bg≥${dynamicBgThreshold.toInt()}"
+            "Autodrive: ${if (ok) "ON" else "OFF"} [$currentState] | " +
+                "cond=$autodriveCondition, dC=${"%.2f".format(combinedDelta)}, " +
+                "predBG>${dynamicPredictedThreshold.toInt()}, slope>=${"%.2f".format(autodriveMinDeviation)}, bg>=${dynamicBgThreshold.toInt()}"
         )
 
         return ok
@@ -3497,8 +3526,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val profileISF_raw = if (profile != null && profile.sens > 10) profile.sens else 50.0
         // 🔮 FCL 11.0 Fix: Use Dynamic 'sens' for Effective ISF to capture Resistance/Sensitivity
         val effectiveISF = sens / autosens_data.ratio 
-        val dynamicPbolusSmall = calculateDynamicMicroBolus(effectiveISF, 20.0, reason)
+        // ⚡ FCL 12.0: Unified Learner Integration for Prebolus
+        // [User Request]: Disabled for now. Prebolus should be raw / standard.
+        // val useUnified = preferences.get(BooleanKey.OApsAIMIUnifiedReactivityEnabled)
+        // val reactivityFactor = if (useUnified) unifiedReactivityLearner.globalFactor else 1.0
+        
         val dynamicPbolusLarge = calculateDynamicMicroBolus(effectiveISF, 25.0, reason)
+        val dynamicPbolusSmall = calculateDynamicMicroBolus(effectiveISF, 15.0, reason)
         
         // 🔮 FCL 11.0: Generate Predictions NOW so they are visible even if Autodrive returns early
         // 🔮 FCL 11.0: Generate Predictions NOW so they are visible even if Autodrive returns early
@@ -3581,177 +3615,159 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         // 🥞 FCL 10.8: Early Meal Detection / Snack (Fallback)
         // Only fires if Main Autodrive (Heavy) logic above fell through (e.g. slope too gentle).
-        var autodriveCondition = false
-        if (bg >= 80) {
-            // 🔨 Innovation: High Plateau Breaker
-            if (!nightbis && autodrive && isHighPlateauBreakerCondition(bg.toFloat(), targetBg.toFloat(), stable == 1, iob.toDouble(), maxSMB, reason) && modesCondition) {
-                 val adaptiveUnits = calculateAdaptivePrebolus(dynamicPbolusLarge, delta, reason)
-                 rT.units = adaptiveUnits
-                 reason.append("→ Plateau Breaker engaged: Force Bolus ${adaptiveUnits}U\n")
-                 rT.reason.append(reason.toString())
-                 return rT
-            }
+        
+        // 🔨 Innovation: High Plateau Breaker
+        if (!nightbis && autodrive && bg >= 80 && isHighPlateauBreakerCondition(bg.toFloat(), targetBg.toFloat(), stable == 1, iob.toDouble(), maxSMB, reason) && modesCondition) {
+             val adaptiveUnits = calculateAdaptivePrebolus(dynamicPbolusLarge, delta, reason)
+             reason.append("→ Plateau Breaker engaged: Force Bolus ${adaptiveUnits}U\n")
+             finalizeAndCapSMB(rT, adaptiveUnits, reason.toString())
+             return rT
+        }
 
-            if (isMealModeCondition()) {
-                val pbolusM: Double = preferences.get(DoubleKey.OApsAIMIMealPrebolus)
-                rT.units = pbolusM
-                //rT.reason.append(" Microbolusing Meal Mode ${pbolusM}U.")
-                rT.reason.append(context.getString(R.string.manual_meal_prebolus, pbolusM))
-                return rT
-            }
-            // 🛡️ Innovation: FCL 6.0 Safety Net
-            val isPostHypo = isPostHypoProtectionCondition(recentBGs, reason)
-            val isCompression = isCompressionProtectionCondition(delta.toFloat(), reason)
-            
-            if (isCompression) {
-                 // Hard Stop on Sensor Error
-                 return rT
-            }
-            
-            // 🧠 FCL 8.0: Context-Aware Trigger for Drift Terminator
-            // Resistant (<0.8): Tighten to +10. Sensitive (>1.2): Relax to +30. Normal: +15
-            val terminatorThresholdAdd = when {
-                autosensRatio < 0.8 -> 10.0 // Aggressive
-                autosensRatio > 1.2 -> 30.0 // Safe
-                else -> 15.0
-            }
-            val terminatorTarget = targetBg + terminatorThresholdAdd
+        if (isMealModeCondition() && bg >= 80) {
+            val pbolusM: Double = preferences.get(DoubleKey.OApsAIMIMealPrebolus)
+            // rT.reason.append(" Microbolusing Meal Mode ${pbolusM}U.")
+            val msg = context.getString(R.string.manual_meal_prebolus, pbolusM)
+            finalizeAndCapSMB(rT, pbolusM, msg)
+            return rT
+        }
+        // 🛡️ Innovation: FCL 6.0 Safety Net
+        val isPostHypo = isPostHypoProtectionCondition(recentBGs, reason)
+        val isCompression = isCompressionProtectionCondition(delta.toFloat(), reason)
+        
+        if (isCompression) {
+             // Hard Stop on Sensor Error
+             return rT
+        }
+        
+        // 🧠 FCL 8.0: Context-Aware Trigger for Drift Terminator
+        // Resistant (<0.8): Tighten to +10. Sensitive (>1.2): Relax to +30. Normal: +15
+        val terminatorThresholdAdd = when {
+            autosensRatio < 0.8 -> 10.0 // Aggressive
+            autosensRatio > 1.2 -> 30.0 // Safe
+            else -> 15.0
+        }
+        val terminatorTarget = targetBg + terminatorThresholdAdd
 
-            // 🧹 Innovation: FCL 5.0 Drift Terminator (Blocked by Post-Hypo)
-            if (!nightbis && autodrive && !isPostHypo && isDriftTerminatorCondition(bg.toFloat(), terminatorTarget.toFloat(), delta.toFloat(), totalBolusLastHour, reason) && modesCondition) {
-                val terminatortap = dynamicPbolusSmall
-                rT.units = terminatortap
-                reason.append("→ Drift Terminator (Trigger +${terminatorThresholdAdd}): Micro-Tap ${terminatortap}U\n")
-                rT.reason.append(reason.toString())
-                return rT
-            }
+        // 🧹 Innovation: FCL 5.0 Drift Terminator (Blocked by Post-Hypo)
+        if (!nightbis && autodrive && bg >= 80 && !isPostHypo && isDriftTerminatorCondition(bg.toFloat(), terminatorTarget.toFloat(), delta.toFloat(), totalBolusLastHour, reason) && modesCondition) {
+            val terminatortap = dynamicPbolusSmall
+            reason.append("→ Drift Terminator (Trigger +${terminatorThresholdAdd}): Micro-Tap ${terminatortap}U\n")
+            finalizeAndCapSMB(rT, terminatortap, reason.toString())
+            return rT
+        }
+        
+        if (!nightbis && isAutodriveModeCondition(delta, autodrive, mealData.slopeFromMinDeviation, bg.toFloat(), predictedBg, reason, targetBg) && modesCondition && bg >= 80) {
+            // FCL 7.0: Use Dynamic Large Base, BUT respect Post-Hypo Safety
+            // FIX: If Post-Hypo OR Gentle Rise (delta < 5 and bg < Target+30), force Small Bolus.
+            val pbolusA = if (isPostHypo || (delta < 5.0f && bg < targetBg + 30.0f)) dynamicPbolusSmall else dynamicPbolusLarge
             
-            if (!nightbis && isAutodriveModeCondition(delta, autodrive, mealData.slopeFromMinDeviation, bg.toFloat(), predictedBg, reason, targetBg) && modesCondition) {
-                // 🧠 FCL 7.0: Use Dynamic Large Base, BUT respect Post-Hypo Safety
-                // 🛡️ [FIX] Blind Spot: If Post-Hypo, forced to Small Bolus to avoid rebound ping-pong.
-                val pbolusA = if (isPostHypo) dynamicPbolusSmall else dynamicPbolusLarge
-                
-                // 📈 Innovation: Adaptive Prebolus & Resistance Hammer
-                // 🛡️ Disabled if Post-Hypo (Already handled by logic below, but pbolusA is now safer too)
-                var adaptiveUnits = if (isPostHypo) pbolusA else calculateAdaptivePrebolus(pbolusA, delta, reason)
-                
-                // 🔨 FCL 5.0 Resistance Hammer
-                // 🛡️ Disabled if Post-Hypo
-                if (!isPostHypo) {
-                    // 🧠 FCL 7.0 Ineffectiveness Watchdog
-                    if (checkIneffectivenessWatchdog(false, reason)) {
-                        // Abort!
-                        return rT 
-                    }
-                    
-                    val originalUnits = adaptiveUnits
-                    adaptiveUnits = calculateResistanceHammer(adaptiveUnits, totalBolusLastHour, delta, reason)
-                    if (adaptiveUnits > originalUnits) {
-                        // Hammer fired (Wait for calculateResistanceHammer to update state? Yes applied inside)
-                        hammerFailureCount++ // Increment count (Simpler logic here vs inside helper?)
-                        // Helper already tracks *time*, we track *count*
-                    }
+            // 📈 Innovation: Adaptive Prebolus & Resistance Hammer
+            // 🛡️ Disabled if Post-Hypo (Already handled by logic below, but pbolusA is now safer too)
+            var adaptiveUnits = if (isPostHypo) pbolusA else calculateAdaptivePrebolus(pbolusA, delta, reason)
+            
+            // 🔨 FCL 5.0 Resistance Hammer
+            // 🛡️ Disabled if Post-Hypo
+            if (!isPostHypo) {
+                // 🧠 FCL 7.0 Ineffectiveness Watchdog
+                if (checkIneffectivenessWatchdog(false, reason)) {
+                    // Abort!
+                    return rT 
                 }
                 
-                rT.units = adaptiveUnits
-                
-                //reason.append("→ Microbolusing Autodrive Mode ${pbolusA}U\n")
-                reason.append(context.getString(R.string.autodrive_meal_prebolus, adaptiveUnits))
-                //reason.append("  • Target BG: $targetBg\n")
-                reason.append(context.getString(R.string.target_bg, targetBg))
-                //reason.append("  • Slope from min deviation: ${mealData.slopeFromMinDeviation}\n")
-                reason.append(context.getString(R.string.slope_from_min_deviation, mealData.slopeFromMinDeviation))
-                //reason.append("  • BG acceleration: $bgAcceleration\n")
-                reason.append(context.getString(R.string.bg_acceleration, bgAcceleration))
-                rT.reason.append(reason.toString()) // une seule fois à la fin
-                return rT
-                // rT.reason.append("Microbolusing Autodrive Mode ${pbolusA}U. TargetBg : ${targetBg}, CombinedDelta : ${combinedDelta}, Slopemindeviation : ${mealData.slopeFromMinDeviation}, Acceleration : ${bgAcceleration}. ")
-                // return rT
+                val originalUnits = adaptiveUnits
+                adaptiveUnits = calculateResistanceHammer(adaptiveUnits, totalBolusLastHour, delta, reason)
+                if (adaptiveUnits > originalUnits) {
+                    // Hammer fired (Wait for calculateResistanceHammer to update state? Yes applied inside)
+                    hammerFailureCount++ // Increment count (Simpler logic here vs inside helper?)
+                    // Helper already tracks *time*, we track *count*
+                }
             }
+            
+            //reason.append("→ Microbolusing Autodrive Mode ${pbolusA}U\n")
+            reason.append(context.getString(R.string.autodrive_meal_prebolus, adaptiveUnits))
+            //reason.append("  • Target BG: $targetBg\n")
+            reason.append(context.getString(R.string.target_bg, targetBg))
+            //reason.append("  • Slope from min deviation: ${mealData.slopeFromMinDeviation}\n")
+            reason.append(context.getString(R.string.slope_from_min_deviation, mealData.slopeFromMinDeviation))
+            //reason.append("  • BG acceleration: $bgAcceleration\n")
+            reason.append(context.getString(R.string.bg_acceleration, bgAcceleration))
+            
+            finalizeAndCapSMB(rT, adaptiveUnits, reason.toString())
+            return rT
+        }
 
-            autodriveCondition = adjustAutodriveCondition(bgTrend, predictedBg, combinedDelta.toFloat(), reason, targetBg + 30f)
-            if (bg > targetBg + 10 && predictedBg > targetBg + 30 && !nightbis && !hasReceivedPbolusMInLastHour(dynamicPbolusSmall) && autodrive && detectMealOnset(delta, predicted.toFloat(), bgAcceleration.toFloat(), predictedBg, targetBg) && modesCondition) {
-                rT.units = dynamicPbolusSmall
-                rT.reason.append(context.getString(R.string.reason_autodrive_early_meal, dynamicPbolusSmall, combinedDelta, predicted, bgAcceleration.toDouble()))
-                return rT
-            }
+        val autodriveCondition = adjustAutodriveCondition(bgTrend, predictedBg, combinedDelta.toFloat(), reason, targetBg + 30f)
+        if (bg > targetBg + 10 && predictedBg > targetBg + 30 && !nightbis && !hasReceivedPbolusMInLastHour(dynamicPbolusSmall) && autodrive && detectMealOnset(delta, predicted.toFloat(), bgAcceleration.toFloat(), predictedBg, targetBg) && modesCondition && bg >= 80) {
+            val msg = context.getString(R.string.reason_autodrive_early_meal, dynamicPbolusSmall, combinedDelta, predicted, bgAcceleration.toDouble())
+            finalizeAndCapSMB(rT, dynamicPbolusSmall, msg)
+            return rT
+        }
 
-            // 🚀 Innovation: Zero-IOB Priming (Fallback)
-            if (!nightbis && autodrive && isZeroIOBPrimingCondition(iob.toDouble(), delta, bgAcceleration.toFloat(), reason) && modesCondition) {
-                val primeBolus = calculateDynamicMicroBolus(effectiveISF, 15.0, reason) // Safe priming scaled to context
-                rT.units = primeBolus
-                reason.append("→ Zero-IOB Priming with ${primeBolus}U\n")
-                rT.reason.append(reason.toString())
-                return rT
-            }
-            if (isbfastModeCondition()) {
-                val pbolusbfast: Double = preferences.get(DoubleKey.OApsAIMIBFPrebolus)
-                rT.units = pbolusbfast
-                //rT.reason.append(" Microbolusing 1/2 Breakfast Mode ${pbolusbfast}U.")
-                rT.reason.append(context.getString(R.string.reason_prebolus_bfast1, pbolusbfast))
-                return rT
-            }
-            if (isbfast2ModeCondition()) {
-                val pbolusbfast2: Double = preferences.get(DoubleKey.OApsAIMIBFPrebolus2)
-                this.maxSMB = pbolusbfast2
-                rT.units = pbolusbfast2
-                //rT.reason.append(" Microbolusing 2/2 Breakfast Mode ${pbolusbfast2}U. ")
-                rT.reason.append(context.getString(R.string.reason_prebolus_bfast2, pbolusbfast2))
-                return rT
-            }
-            if (isLunchModeCondition()) {
-                val pbolusLunch: Double = preferences.get(DoubleKey.OApsAIMILunchPrebolus)
-                rT.units = pbolusLunch
-                //rT.reason.append(" Microbolusing 1/2 Lunch Mode ${pbolusLunch}U.")
-                rT.reason.append(context.getString(R.string.reason_prebolus_lunch1, pbolusLunch))
-                return rT
-            }
-            if (isLunch2ModeCondition()) {
-                val pbolusLunch2: Double = preferences.get(DoubleKey.OApsAIMILunchPrebolus2)
-                this.maxSMB = pbolusLunch2
-                rT.units = pbolusLunch2
-                //rT.reason.append(" Microbolusing 2/2 Lunch Mode ${pbolusLunch2}U.")
-                rT.reason.append(context.getString(R.string.reason_prebolus_lunch2, pbolusLunch2))
-                return rT
-            }
-            if (isDinnerModeCondition()) {
-                val pbolusDinner: Double = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus)
-                rT.units = pbolusDinner
-                //rT.reason.append(" Microbolusing 1/2 Dinner Mode ${pbolusDinner}U.")
-                rT.reason.append(context.getString(R.string.reason_prebolus_dinner1, pbolusDinner))
-                return rT
-            }
-            if (isDinner2ModeCondition()) {
-                val pbolusDinner2: Double = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus2)
-                this.maxSMB = pbolusDinner2
-                rT.units = pbolusDinner2
-                //rT.reason.append(" Microbolusing 2/2 Dinner Mode ${pbolusDinner2}U.")
-                rT.reason.append(context.getString(R.string.reason_prebolus_dinner2, pbolusDinner2))
-                return rT
-            }
-            if (isHighCarbModeCondition()) {
-                val pbolusHC: Double = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus)
-                rT.units = pbolusHC
-                //rT.reason.append(" Microbolusing High Carb Mode ${pbolusHC}U.")
-                rT.reason.append(context.getString(R.string.reason_prebolus_highcarb, pbolusHC))
-                return rT
-            }
-            if (isHighCarb2ModeCondition()) {
-                val pbolusHC2: Double = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus2)
-                rT.units = pbolusHC2
-                //rT.reason.append(" Microbolusing High Carb Mode ${pbolusHC}U.")
-                rT.reason.append(context.getString(R.string.reason_prebolus_highcarb2, pbolusHC2))
-                return rT
-            }
-            if (issnackModeCondition()) {
-                val pbolussnack: Double = preferences.get(DoubleKey.OApsAIMISnackPrebolus)
-                rT.units = pbolussnack
-                //rT.reason.append(" Microbolusing snack Mode ${pbolussnack}U.")
-                rT.reason.append(context.getString(R.string.reason_prebolus_snack, pbolussnack))
-                return rT
-            }
-        } else {
-             reason.append("⛔ Safety: BG ${bg} < 80, skipping Meal Prebolus/Autodrive\n")
+        // 🚀 Innovation: Zero-IOB Priming (Fallback)
+        if (!nightbis && autodrive && bg >= 80 && isZeroIOBPrimingCondition(iob.toDouble(), delta, bgAcceleration.toFloat(), reason) && modesCondition) {
+            val primeBolus = calculateDynamicMicroBolus(effectiveISF, 15.0, reason) // Safe priming scaled to context
+            reason.append("→ Zero-IOB Priming with ${primeBolus}U\n")
+            finalizeAndCapSMB(rT, primeBolus, reason.toString())
+            return rT
+        }
+        if (isbfastModeCondition() && bg >= 80) {
+            val pbolusbfast: Double = preferences.get(DoubleKey.OApsAIMIBFPrebolus)
+            val msg = context.getString(R.string.reason_prebolus_bfast1, pbolusbfast)
+            finalizeAndCapSMB(rT, pbolusbfast, msg)
+            return rT
+        }
+        if (isbfast2ModeCondition() && bg >= 80) {
+            val pbolusbfast2: Double = preferences.get(DoubleKey.OApsAIMIBFPrebolus2)
+            this.maxSMB = pbolusbfast2
+            rT.units = pbolusbfast2
+            //rT.reason.append(" Microbolusing 2/2 Breakfast Mode ${pbolusbfast2}U. ")
+            rT.reason.append(context.getString(R.string.reason_prebolus_bfast2, pbolusbfast2))
+            return rT
+        }
+        if (isLunchModeCondition() && bg >= 80) {
+            val pbolusLunch: Double = preferences.get(DoubleKey.OApsAIMILunchPrebolus)
+            val msg = context.getString(R.string.reason_prebolus_lunch1, pbolusLunch)
+            finalizeAndCapSMB(rT, pbolusLunch, msg)
+            return rT
+        }
+        if (isLunch2ModeCondition() && bg >= 80) {
+            val pbolusLunch2: Double = preferences.get(DoubleKey.OApsAIMILunchPrebolus2)
+            this.maxSMB = pbolusLunch2
+            val msg = context.getString(R.string.reason_prebolus_lunch2, pbolusLunch2)
+            finalizeAndCapSMB(rT, pbolusLunch2, msg)
+            return rT
+        }
+        if (isDinnerModeCondition() && bg >= 80) {
+            val pbolusDinner: Double = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus)
+            val msg = context.getString(R.string.reason_prebolus_dinner1, pbolusDinner)
+            finalizeAndCapSMB(rT, pbolusDinner, msg)
+            return rT
+        }
+        if (isDinner2ModeCondition() && bg >= 80) {
+            val pbolusDinner2: Double = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus2)
+            this.maxSMB = pbolusDinner2
+            val msg = context.getString(R.string.reason_prebolus_dinner2, pbolusDinner2)
+            finalizeAndCapSMB(rT, pbolusDinner2, msg)
+            return rT
+        }
+        if (isHighCarbModeCondition() && bg >= 80) {
+            val pbolusHC: Double = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus)
+            val msg = context.getString(R.string.reason_prebolus_highcarb, pbolusHC)
+            finalizeAndCapSMB(rT, pbolusHC, msg)
+            return rT
+        }
+        if (isHighCarb2ModeCondition() && bg >= 80) {
+            val pbolusHC2: Double = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus2)
+            val msg = context.getString(R.string.reason_prebolus_highcarb2, pbolusHC2)
+            finalizeAndCapSMB(rT, pbolusHC2, msg)
+            return rT
+        }
+        if (issnackModeCondition() && bg >= 80) {
+            val pbolussnack: Double = preferences.get(DoubleKey.OApsAIMISnackPrebolus)
+            val msg = context.getString(R.string.reason_prebolus_snack, pbolussnack)
+            finalizeAndCapSMB(rT, pbolussnack, msg)
+            return rT
         }
         //rT.reason.append(", MaxSMB: $maxSMB")
         rT.reason.append(context.getString(R.string.reason_maxsmb, maxSMB))
@@ -4523,7 +4539,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             
             // 🔥 General Hyper Kicker (Non-Meal)
             // Catch-all for late rises outside specific meal windows
-            (bg > target_bg + 30 && (delta >= 0.3 || shortAvgDelta >= 0.2)) -> {
+            // 🔥 General Hyper Kicker (Non-Meal)
+            // Catch-all for late rises outside specific meal windows
+            // 🚀 FCL 13.0: Add Rocket Start trigger (Delta > 10.0) to catch early explosions before BG > Target+30
+            ((bg > target_bg + 30 || delta > 10.0f) && (delta >= 0.3 || shortAvgDelta >= 0.2)) -> {
                 val maxBasalPref = preferences.get(DoubleKey.autodriveMaxBasal) // Absolute max
                 val safeMax = if (maxBasalPref > 0.1) maxBasalPref else profile.max_basal // Fallback if 0
                 
@@ -5180,25 +5199,27 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // Risque montée franche ou plateau haut persistant
         val rising = delta >= 0.5 || shortAvgDelta >= 0.3
         val plateauHigh = delta >= -0.1 && bg > targetBg + 50
-        
-        if (!rising && !plateauHigh) return suggestedBasalUph
-        
+        val rocketStart = delta > 10.0 // FCL 13.0 Rocket Start
+    
+        if (!rising && !plateauHigh && !rocketStart) return suggestedBasalUph
+    
         val deviation = bg - targetBg
-        
+    
         // Progressive scaling based on deviation severity
         // 30mg au dessus: x2
         // 60mg au dessus: x5
         // 90mg au dessus: x8
         // 120mg+        : x10 (Authorized by user)
-        
+        // Rocket Start : Auto Max (x10) if delta > 10.0
+    
         val scaleFactor = when {
-            deviation >= 120 -> 10.0
+            rocketStart || deviation >= 120 -> 10.0
             deviation >= 90  -> 8.0
             deviation >= 60  -> 5.0
             deviation >= 30  -> 2.0
             else -> 1.0
         }
-        
+    
         if (scaleFactor == 1.0) return suggestedBasalUph
         
         val boosted = suggestedBasalUph * scaleFactor

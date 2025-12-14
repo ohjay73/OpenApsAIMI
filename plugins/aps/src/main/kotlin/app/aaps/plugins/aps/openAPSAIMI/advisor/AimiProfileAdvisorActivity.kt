@@ -41,6 +41,8 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
     @Inject lateinit var persistenceLayer: app.aaps.core.interfaces.db.PersistenceLayer
     @Inject lateinit var preferences: app.aaps.core.keys.interfaces.Preferences
     @Inject lateinit var unifiedReactivityLearner: app.aaps.plugins.aps.openAPSAIMI.learning.UnifiedReactivityLearner
+    @Inject lateinit var tddCalculator: app.aaps.core.interfaces.stats.TddCalculator
+    @Inject lateinit var tirCalculator: app.aaps.core.interfaces.stats.TirCalculator
     
     // NOT injected - created manually to avoid Dagger issues
     private lateinit var advisorService: AimiAdvisorService
@@ -56,7 +58,9 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             persistenceLayer = persistenceLayer, 
             preferences = preferences, 
             rh = rh, 
-            unifiedReactivityLearner = unifiedReactivityLearner
+            unifiedReactivityLearner = unifiedReactivityLearner,
+            tddCalculator = tddCalculator,
+            tirCalculator = tirCalculator
         )
         historyRepo = app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository(this)
         title = rh.gs(R.string.aimi_advisor_title)
@@ -98,36 +102,38 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                 withContext(Dispatchers.Main) {
                     rootLayout.removeView(loadingText)
 
+
                     // 1. Header (Title + Score Pill)
                     rootLayout.addView(createDashboardHeader(report))
             
                     // 2. Metrics Grid (2x2)
                     rootLayout.addView(createMetricsGrid(report.metrics, cardColor))
                     
-                    // 3. Section: Observations (Kotlin Rules)
-                    rootLayout.addView(createSectionHeader("OBSERVATIONS"))
-                    if (report.recommendations.isEmpty()) {
-                        // All good
-                    } else {
-                         report.recommendations.forEach { rec ->
+                    // 3. Section: Observations & Recommendations
+                    val standardRecs = report.recommendations.filter { it.domain != RecommendationDomain.PKPD }
+                    val pkpdRecs = report.recommendations.filter { it.domain == RecommendationDomain.PKPD }
+
+                    if (standardRecs.isNotEmpty()) {
+                        rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_adv_section_obs)))
+                        standardRecs.forEach { rec ->
                             rootLayout.addView(createObservationCard(rec, report.metrics, cardColor))
                         }
                     }
 
-                    // 3b. PKPD TUNING
-                    if (report.pkpdSuggestions.isNotEmpty()) {
-                        rootLayout.addView(createSectionHeader("AJUSTEMENTS PKPD"))
-                        report.pkpdSuggestions.forEach { rec ->
-                            rootLayout.addView(createPkpdCard(rec, cardColor))
+                    // 3b. PKPD TUNING (Unified)
+                    if (pkpdRecs.isNotEmpty()) {
+                        rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_adv_section_pkpd)))
+                        pkpdRecs.forEach { rec ->
+                            rootLayout.addView(createObservationCard(rec, report.metrics, cardColor))
                         }
                     }
 
                     // 4. Section: COGNITIVE BRIDGE (BRAIN)
-                    rootLayout.addView(createSectionHeader("ÉTAT COGNITIF"))
+                    rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_adv_section_brain)))
                     rootLayout.addView(createCognitiveCard(context.prefs.unifiedReactivityFactor, cardColor))
 
                     // 5. Section: AI Coach (ChatGPT/Gemini)
-                    rootLayout.addView(createSectionHeader("COACH IA"))
+                    rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_adv_section_coach)))
                     rootLayout.addView(createCoachCard(context, report, cardColor))
             
                     // Footer
@@ -155,7 +161,7 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             }
             
             infoLayout.addView(TextView(this@AimiProfileAdvisorActivity).apply {
-                text = "Rapport Hebdo"
+                text = rh.gs(R.string.aimi_adv_report_weekly)
                 textSize = 22f
                 setTypeface(null, Typeface.BOLD)
                 setTextColor(Color.WHITE)
@@ -178,7 +184,7 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             }
             
             val scoreText = TextView(this@AimiProfileAdvisorActivity).apply {
-                text = "Score: ${"%.1f".format(report.overallScore)}/10"
+                text = rh.gs(R.string.aimi_adv_score_label, report.overallScore)
                 setTextColor(Color.parseColor("#4ADE80")) // Bright Green
                 setTypeface(null, Typeface.BOLD)
                 textSize = 14f
@@ -244,6 +250,27 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
 
         grid.addView(row1)
         grid.addView(row2)
+
+        // Row 3 (Today)
+        if (metrics.todayTir != null || metrics.todayTdd != null) {
+            val row3 = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                weightSum = 2f
+                setPadding(0, 24, 0, 0)
+            }
+            
+            val tirVal = metrics.todayTir?.let { "${(it * 100).roundToInt()}%" } ?: "-"
+            // Use slightly different color to distinguish? Or same green/blue scheme.
+            row3.addView(createMetricCard("AUJ. TIR", tirVal, Color.parseColor("#4ADE80"), cardColor), paramHalf())
+            
+            row3.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(16, 0) })
+            
+            val tddVal = metrics.todayTdd?.let { "%.1f U".format(it) } ?: "-"
+            row3.addView(createMetricCard("AUJ. TDD", tddVal, Color.parseColor("#60A5FA"), cardColor), paramHalf())
+            
+            grid.addView(row3)
+        }
+
         return grid
     }
 
@@ -349,12 +376,22 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             setTextColor(Color.WHITE)
         })
         
-        val desc = when(rec.descriptionResId) {
+        var desc = when(rec.descriptionResId) {
              R.string.aimi_adv_rec_hypos_desc -> rh.gs(rec.descriptionResId, (metrics.timeBelow54 * 100).roundToInt(), metrics.severeHypoEvents)
              R.string.aimi_adv_rec_control_desc -> rh.gs(rec.descriptionResId, (metrics.tir70_180 * 100).roundToInt())
              R.string.aimi_adv_rec_hypers_desc -> rh.gs(rec.descriptionResId, (metrics.timeAbove180 * 100).roundToInt())
              R.string.aimi_adv_rec_basal_desc -> rh.gs(rec.descriptionResId, (metrics.basalPercent * 100).roundToInt())
-             else -> rh.gs(rec.descriptionResId)
+             else -> {
+                  if (rec.descriptionArgs.isNotEmpty()) {
+                      try {
+                          rh.gs(rec.descriptionResId, *rec.descriptionArgs.toTypedArray())
+                      } catch(e: Exception) {
+                          rh.gs(rec.descriptionResId) + " " + rec.descriptionArgs.joinToString(" ")
+                      }
+                  } else {
+                      rh.gs(rec.descriptionResId)
+                  }
+              }
         }
         
         textLayout.addView(TextView(this).apply {
@@ -368,7 +405,7 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         // Add dynamic actions overview if present
         if (rec.action != null && rec.action is AdvisorAction.UpdatePreference) {
             val actionBtn = TextView(this).apply {
-                text = "APPLIQUER"
+                text = rh.gs(R.string.aimi_adv_apply_btn)
                 textSize = 14f
                 setTypeface(null, Typeface.BOLD)
                 setTextColor(Color.parseColor("#38BDF8")) // Sky Blue
@@ -388,19 +425,17 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
 
     private fun showApplyActionDialog(action: AdvisorAction.UpdatePreference) {
         val sb = StringBuilder()
-        sb.append("L'Advisor propose les ajustements suivants :\n\n")
+        sb.append(rh.gs(R.string.aimi_adv_apply_dialog_prefix))
         
         action.changes.forEach { change ->
              sb.append("• ${change.keyName}: ${change.oldValue} ➔ ${change.newValue}\n")
              sb.append("  ${change.explanation}\n\n")
         }
 
-        sb.append("Voulez-vous appliquer ces changements ?")
-
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Confirmation des Ajustements")
+            .setTitle(rh.gs(R.string.aimi_adv_apply_dialog_title))
             .setMessage(sb.toString())
-            .setPositiveButton("TOUT APPLIQUER") { _, _ ->
+            .setPositiveButton(rh.gs(R.string.aimi_adv_apply_dialog_confirm)) { _, _ ->
                 applyAction(action)
             }
             .setNegativeButton(android.R.string.cancel, null)
@@ -434,94 +469,28 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             }
 
             if (appliedCount > 0) {
-                 android.widget.Toast.makeText(this, "$appliedCount changements appliqués !", android.widget.Toast.LENGTH_SHORT).show()
+                 android.widget.Toast.makeText(this, rh.gs(R.string.aimi_adv_success_msg, appliedCount), android.widget.Toast.LENGTH_SHORT).show()
                  recreate()
             } else {
-                 android.widget.Toast.makeText(this, "Aucun changement compatible appliqué.", android.widget.Toast.LENGTH_SHORT).show()
+                 android.widget.Toast.makeText(this, rh.gs(R.string.aimi_adv_no_change_msg), android.widget.Toast.LENGTH_SHORT).show()
             }
         } catch (e: Exception) {
-            android.widget.Toast.makeText(this, "Erreur : ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
+            android.widget.Toast.makeText(this, "${rh.gs(R.string.aimi_adv_error_prefix)}${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
             e.printStackTrace()
         }
     }
 
     private fun logAction(change: AdvisorAction.Prediction) {
+        // Extract key string from Key object if possible
+        val keyStr = (change.key as? app.aaps.core.keys.interfaces.PreferenceKey)?.key ?: change.keyName
+
          historyRepo.logAction(
                 app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository.ActionType.PREFERENCE_CHANGE,
-                change.keyName,
+                keyStr, 
                 change.explanation,
                 change.oldValue.toString(),
                 change.newValue.toString()
             )
-    }
-
-
-
-    private fun createPkpdCard(rec: PkpdTuningSuggestion, cardBg: Int): CardView {
-        val card = CardView(this).apply {
-            radius = 16f
-            setCardBackgroundColor(cardBg)
-            cardElevation = 0f
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(0, 0, 0, 16)
-            }
-        }
-        
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(24, 24, 24, 24)
-        }
-        
-        // Icon Circle
-        val iconBg = CardView(this).apply {
-            radius = 50f
-            cardElevation = 0f
-            setCardBackgroundColor(Color.parseColor("#334155"))
-            layoutParams = LinearLayout.LayoutParams(48.dpToPx(), 48.dpToPx())
-        }
-        val iconText = TextView(this).apply {
-            text = "⚙️"
-            textSize = 20f
-            gravity = Gravity.CENTER
-            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        }
-        iconBg.addView(iconText)
-        row.addView(iconBg)
-        
-        // Text Content
-        val textLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(24, 0, 0, 0)
-        }
-        
-        textLayout.addView(TextView(this).apply {
-            val keyLabel = when {
-                rec.technicalKey.contains("PkpdEnabled") -> rh.gs(R.string.aimi_pkpd_title_enable)
-                rec.technicalKey.contains("InitialDiaH") -> rh.gs(R.string.aimi_pkpd_title_dia)
-                rec.technicalKey.contains("InitialPeakMin") -> rh.gs(R.string.aimi_pkpd_title_peak)
-                rec.technicalKey.contains("IsfFusionMaxFactor") -> rh.gs(R.string.aimi_pkpd_title_isf)
-                rec.technicalKey.contains("SmbTailDamping") -> rh.gs(R.string.aimi_pkpd_title_damping)
-                else -> rec.technicalKey.substringAfterLast("AIMIPkpd").replace("Initial", "") // Fallback
-            }
-            text = keyLabel
-            textSize = 16f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-        })
-        
-        textLayout.addView(TextView(this).apply {
-            val msg = rec.explanation
-            text = msg
-            textSize = 14f
-            setTextColor(Color.parseColor("#94A3B8")) // Slate 400
-            setLineSpacing(4f, 1.1f)
-            setPadding(0, 4, 0, 0)
-        })
-        
-        row.addView(textLayout)
-        card.addView(row)
-        return card
     }
 
     private fun createCognitiveCard(factor: Double, cardBg: Int): CardView {

@@ -27,7 +27,9 @@ data class AdvisorMetrics(
     val basalPercent: Double,       // Basal as fraction of TDD
     val hypoEvents: Int,
     val severeHypoEvents: Int,
-    val hyperEvents: Int
+    val hyperEvents: Int,
+    val todayTir: Double?,    // (0-1) or null
+    val todayTdd: Double?     // U or null
 )
 
 /**
@@ -40,6 +42,7 @@ enum class RecommendationDomain {
     TARGET,             // BG targets
     SMB,                // SMB settings
     MODES,              // Meal modes configuration
+    PKPD,               // Adaptive PK/PD settings
     PROFILE_QUALITY     // General profile assessment
 }
 
@@ -68,7 +71,7 @@ enum class AdvisorSeverity {
 sealed class AdvisorAction {
     // A single atomic change
     data class Prediction(
-        val key: Any,
+        val key: Any,        // PreferenceKey object
         val keyName: String, // User friendly name or resource ID
         val oldValue: Any,
         val newValue: Any,
@@ -79,19 +82,19 @@ sealed class AdvisorAction {
     data class UpdatePreference(
         val changes: List<Prediction>
     ) : AdvisorAction()
-    // Future: data class UpdateProfile(...)
 }
 
 /**
  * A single recommendation from the advisor.
  * Uses Resource IDs for localization.
  */
-// Enhance Recommendations to include optional action
 data class AimiRecommendation(
     val titleResId: Int,
     val descriptionResId: Int,
     val priority: RecommendationPriority,
-    val action: AdvisorAction? = null
+    val domain: RecommendationDomain,
+    val action: AdvisorAction? = null,
+    val descriptionArgs: List<String> = emptyList() // For dynamic description formatting
 )
 
 /**
@@ -104,7 +107,7 @@ data class AdvisorReport(
     val overallSeverity: AdvisorSeverity,
     val overallAssessment: String,
     val recommendations: List<AimiRecommendation>,
-    val pkpdSuggestions: List<PkpdTuningSuggestion>,
+    // PkpdSuggestions merged into recommendations with Domain.PKPD
     val summary: String
 )
 
@@ -124,9 +127,11 @@ data class AdvisorContext(
 
 data class AimiProfileSnapshot(
     val nightBasal: Double,      // U/h (average or specific block)
-    val icRatio: Double,         // g/U
-    val isf: Double,             // mg/dL/U
-    val targetBg: Double         // mg/dL
+    val icRatio: Double,         // g/U (weighted average)
+    val isf: Double,             // mg/dL/U (weighted average)
+    val targetBg: Double,        // mg/dL (weighted average)
+    val dia: Double,             // hours
+    val totalBasal: Double       // U/day (sum of profile basal)
 )
 
 data class AimiPrefsSnapshot(
@@ -140,17 +145,6 @@ data class AdvisorFlag(
     val code: String,
     val severity: AdvisorSeverity
 )
-
-data class LegacyAdvisorAction(
-    val actionCode: LegacyAdvisorActionCode,
-    val params: Map<String, Any> = emptyMap()
-)
-
-enum class LegacyAdvisorActionCode {
-    INCREASE_NIGHT_BASAL,
-    REDUCE_MAX_SMB,
-    INCREASE_LUNCH_FACTOR
-}
 
 /**
  * =============================================================================
@@ -175,11 +169,4 @@ data class PkpdPrefsSnapshot(
     val smbTailDamping: Double,
     val smbExerciseDamping: Double,
     val smbLateFatDamping: Double
-)
-
-data class PkpdTuningSuggestion(
-    val technicalKey: String,
-    val fromValue: Double?,
-    val toValue: Double?,
-    val explanation: String
 )
