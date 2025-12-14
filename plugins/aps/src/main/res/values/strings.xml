@@ -1186,15 +1186,24 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="aimi_action_reduce_max_smb">Reduce MaxSMB: %.1f → %.1f U</string>
     <string name="aimi_action_increase_lunch_factor">Increase lunch factor: %.1f → %.1f</string>
 
+    <!-- AI Coach -->
+
+
     <!-- AI Prefs -->
     <string name="aimi_pref_openai_key_title">OpenAI API Key</string>
     <string name="aimi_pref_openai_key_summary">Enter your key (sk-...) to enable the AIMI Coach.</string>
     <!-- AIMI ADVISOR ANALYSIS -->
+
     <string name="aimi_adv_analysis_issue_safety">Hypoglycemia risk detected (MaxSMB potentially too aggressive).</string>
     <string name="aimi_adv_analysis_issue_hyper">Persistent hyperglycemia (ISF or Target to review).</string>
     <string name="aimi_adv_analysis_issue_smb">Meal management could be improved (Modes or SMB).</string>
     <string name="aimi_adv_analysis_issue_basal">Basal weight is unbalanced relative to TDD.</string>
     <string name="aimi_adv_analysis_issue_profile">Profile quality to optimize.</string>
+
+
+
+    <!-- AIMI PKPD Advisor -->
+
 
     <!-- AIMI AI Preferences -->
     <string name="aimi_prefs_ai_title">🤖 Assistant AI</string>
@@ -1206,7 +1215,6 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="aimi_prefs_openai_key_summary">Enter your OpenAI API Key (sk-...)</string>
     <string name="aimi_prefs_gemini_key_title">Gemini API Key</string>
     <string name="aimi_prefs_gemini_key_summary">Enter your Google Gemini API Key (AIza...)</string>
-
     <!-- AIMI ADVISOR STRINGS -->
     <string name="aimi_advisor_title">AIMI Advisor</string>
     <string name="aimi_adv_loading">Analysis in progress&#8230;</string>
@@ -1271,6 +1279,5 @@ Prolonged Unannounced Hypers: Decrease (0.3–0.4) so the ISF adapts more quickl
     <string name="aimi_pkpd_hypo_dia">Frequent hypos detected. Extending DIA from %1$s to %2$s hours would better account for remaining insulin (IOB) and avoid stacking.</string>
     <string name="aimi_pkpd_hypo_peak">Delaying action peak (%1$s min) would soften the insulin activity curve.</string>
     <string name="aimi_pkpd_hypo_damping">Increasing tail damping would reduce risky SMBs with late IOB.</string>
-
 </resources>
 
