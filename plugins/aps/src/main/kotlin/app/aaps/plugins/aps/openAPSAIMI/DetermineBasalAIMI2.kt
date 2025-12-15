@@ -1033,6 +1033,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             rT.rate = 0.0
             return rT
         }
+        val isLgsEnabled = profile.lgsThreshold != null && profile.lgsThreshold!! > 0
 
         val bgNow = bg
 
@@ -1086,6 +1087,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // Même en bypass, on ne dépasse JAMAIS max_basal (hard cap)
         var rate = when {
             bgNow <= hypoGuard -> 0.0
+            // [BASAL FLOOR] Rising & > 85 mg/dL -> Maintain floor (50%) instead of 0.0
+            // Only if prediction would otherwise set it to 0.0 (e.g. safety logic)
+            // We check this floor *inside* the safe zone (> hypoGuard).
+            rateAdjustment == 0.0 && bgNow > 85.0 && delta > 1.0 && !isMealMode && !isLgsEnabled -> {
+                 rT.reason.append(" [BASAL_FLOOR] ")
+                 profile.current_basal * 0.5
+            }
             bypassSafety       -> rateAdjustment.coerceIn(0.0, profile.max_basal)
             else               -> rateAdjustment.coerceIn(0.0, maxSafe)
         }
@@ -1309,6 +1317,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         
         if (safeCap < proposedFloat) {
              rT.reason.appendLine(context.getString(R.string.limits_smb, proposedFloat, safeCap))
+             consoleLog.add("SMB_CAP: Proposed=$proposedFloat Allowed=$safeCap Reason=$reasonHeader")
+             consoleLog.add("  -> Limits: MaxSMB=$baseLimit MaxIOB=${this.maxIob} IOB=${this.iob}")
+             if (safeCap == 0f && this.iob >= this.maxIob) {
+                 consoleLog.add("  -> BLOCK: IOB_SATURATION (IOB ${this.iob} >= MaxIOB ${this.maxIob})")
+             }
         }
     }
 
@@ -1484,7 +1497,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         }
         // Ensuite, vérifiez si la somme de iob et smbToGive dépasse maxIob
         if (iob + result > maxIob) {
-            result = maxIob.toFloat() - iob
+            val room = maxIob.toFloat() - iob
+            if (room < 0) {
+                 // Debug pour tracking
+                 // consoleLog.add("DEBUG: Negative Room detected in applyMaxLimits ($room). Clamped to 0.") 
+            }
+            result = max(0.0f, room)
         }
 
         return result
@@ -1995,9 +2013,27 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private fun determineCriticalConditions(ctx:Context,context: SafetyContext): List<String> {
         val conditions = mutableListOf<String>()
 
+        // Fallback Logic usage
+        // Note: SafetyContext does not have profile objects, but it has maxIob, targetBg.
+        // We reconstruct the fallback check locally.
+        val fallback = (context.bg > context.targetBg + 30.0) &&
+                       (context.delta >= 2.0) &&
+                       (context.iob < context.maxIob * 0.8)
+
+        if (fallback) {
+             // Log fallback active in logs? context object doesn't have logger, 
+             // but caller checks conditions. We can rely on emptiness or specific code.
+             // We just skip adding the BLOCKING condition.
+        }
+
         // Vérification des conditions critiques avec des noms explicites
         //if (isHypoBlocked(context)) conditions.add("hypoGuard")
-        if (isHypoBlocked(context)) conditions.add(ctx.getString(R.string.condition_hypoguard))
+        if (isHypoBlocked(context) && !fallback) conditions.add(ctx.getString(R.string.condition_hypoguard))
+        else if (fallback && isHypoBlocked(context)) {
+             // If it WAS blocked but we bypassed it:
+             // Maybe we want a trace?
+        }
+
         //if (isNosmbHm(context)) conditions.add("nosmbHM")
         // REMOVED: Caused strict SMB block in Honeymoon mode (IOB > 0.7).
         // if (isNosmbHm(context)) conditions.add(ctx.getString(R.string.condition_nosmbhm))
@@ -2012,6 +2048,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         //if (isBelowMinThreshold(context)) conditions.add("belowMinThreshold")
         if (isBelowMinThreshold(context)) conditions.add(ctx.getString(R.string.condition_belowminthreshold))
         //if (isNewCalibration(context)) conditions.add("isNewCalibration")
+        // Calibration shouldn't block SMB if we are high and rising? Maybe risky if calibration is wrong by 100pts?
+        // Let's keep calibration block safe.
         if (isNewCalibration(context)) conditions.add(ctx.getString(R.string.condition_newcalibration))
         //if (isBelowTargetAndDropping(context)) conditions.add("belowTargetAndDropping")
         if (isBelowTargetAndDropping(context)) conditions.add(ctx.getString(R.string.condition_belowtarget_dropping))
@@ -2024,7 +2062,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         //if (isDroppingVeryFast(context)) conditions.add("droppingVeryFast")
         if (isDroppingVeryFast(context)) conditions.add(ctx.getString(R.string.condition_droppingveryfast))
         //if (isPrediction(context)) conditions.add("prediction")
-        if (isPrediction(context)) conditions.add(ctx.getString(R.string.condition_prediction))
+        if (isPrediction(context) && !fallback) conditions.add(ctx.getString(R.string.condition_prediction))
         //if (isBg90(context)) conditions.add("bg90")
         if (isBg90(context)) conditions.add(ctx.getString(R.string.condition_bg90))
         //if (isAcceleratingDown(context)) conditions.add("acceleratingDown")
@@ -3302,16 +3340,34 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         DinMaxIob = ((bg / 100.0) * (bg / 55.0) + (combinedDelta / 2.0)).toFloat()
 
 // Sécurisation : imposer une borne minimale et une borne maximale
-        DinMaxIob = DinMaxIob.coerceAtLeast(1.0f).coerceAtMost(maxIob.toFloat() * 1.3f)
+        // [FIX] Relax clamp for Autodrive to handle aggressive rises (e.g. 176 +10 -> Need room > 1.3x)
+        val clampFactor = if (autodrive && combinedDelta > 3.0) 3.0f else 1.3f
+        DinMaxIob = DinMaxIob.coerceAtLeast(1.0f).coerceAtMost(maxIob.toFloat() * clampFactor)
 
 // Réduction de l'augmentation si on est la nuit (0h-6h)
         if (hourOfDay in 0..5 && bg < 160) {
             DinMaxIob = DinMaxIob.coerceAtMost(maxIob.toFloat())
         }
+        
+        // [FIX] Autodrive Safety: Ensure Dynamic MaxIOB never completely blocks a necessary action 
+        // due to previous IOB being momentarily equal/higher. 
+        // We force a minimal "breathing room" of 0.05U above current IOB if Autodrive is engaged.
+        if (autodrive) {
+            val minSafetyRoom = iob + 0.05f
+            if (DinMaxIob < minSafetyRoom) {
+                consoleLog.add("DinMaxIOB ($DinMaxIob) < IOB+0.05 ($minSafetyRoom) -> Forced Expansion for Autodrive")
+                DinMaxIob = minSafetyRoom
+            }
+        }
 
-        this.maxIob = if (autodrive) DinMaxIob.toDouble() else maxIob
+        // [FIX] User fallback: If Dynamic logic clamps too hard (e.g. close to 0 or 1), 
+        // trust the User Preference (Variable) as the baseline. 
+        // Logic: Dynamic should EXTEND capabilities, not restrict below user config.
+        val finalDinMaxIob = max(DinMaxIob.toDouble(), maxIob)
+        this.maxIob = if (autodrive) finalDinMaxIob else maxIob
         //rT.reason.append(", MaxIob: $maxIob")
         rT.reason.append(context.getString(R.string.reason_max_iob, maxIob))
+        consoleLog.add("MAX_IOB_CALC: Pref=$maxIob Effective=${this.maxIob} (Autodrive=$autodrive)")
         this.maxSMB = preferences.get(DoubleKey.OApsAIMIMaxSMB)
         this.maxSMBHB = preferences.get(DoubleKey.OApsAIMIHighBGMaxSMB)
         // Calcul initial avec ajustement basé sur la glycémie et le delta
@@ -3336,7 +3392,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         //val DynMaxSmb = (bg / 200) * (bg / 100) + (delta / 2)
         val enableUAM = profile.enableUAM
 
-        this.maxSMBHB = if (autodrive && !honeymoon) DynMaxSmb.toDouble() else preferences.get(DoubleKey.OApsAIMIHighBGMaxSMB)
+        val prefHighBgMaxSmb = preferences.get(DoubleKey.OApsAIMIHighBGMaxSMB)
+        // [FIX] User fallback: Ensure DynMaxSmb doesn't drop to 0.0 if calculations go weird. 
+        // Use Preference as floor if Autodrive is on.
+        val finalDynMaxSmb = max(DynMaxSmb.toDouble(), prefHighBgMaxSmb)
+        
+        this.maxSMBHB = if (autodrive && !honeymoon) finalDynMaxSmb else prefHighBgMaxSmb
         this.maxSMB = if (bg > 120 && !honeymoon && mealData.slopeFromMinDeviation >= 1.0 || bg > 180 && honeymoon && mealData.slopeFromMinDeviation >= 1.4) maxSMBHB else maxSMB
         val ngrConfig = buildNightGrowthResistanceConfig(profile, autosens_data, glucoseStatus, targetBg.toDouble())
         this.tir1DAYabove = tirCalculator.averageTIR(tirCalculator.calculate(1, 65.0, 180.0))?.abovePct()!!
@@ -3716,6 +3777,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 // val msg = context.getString(R.string.manual_meal_prebolus, manualPrebolus) 
                 // Using generic string construction to include Mode Name
                 val msg = "🍱 Manual Mode ($manualModeName): Force Prebolus ${manualPrebolus}U"
+                consoleLog.add("MODE_PREBOLUS_TRIGGER name=$manualModeName amount=$manualPrebolus reason=ManualOverrides")
                 finalizeAndCapSMB(rT, manualPrebolus, msg)
                 return rT
             }
@@ -3742,6 +3804,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         if (!nightbis && autodrive && bg >= 80 && !isPostHypo && isDriftTerminatorCondition(bg.toFloat(), terminatorTarget.toFloat(), delta.toFloat(), totalBolusLastHour, reason) && modesCondition) {
             val terminatortap = dynamicPbolusSmall
             reason.append("→ Drift Terminator (Trigger +${terminatorThresholdAdd}): Micro-Tap ${terminatortap}U\n")
+            consoleLog.add("AD_EARLY_TBR_TRIGGER rate=0.0 duration=0 reason=DriftTerminator_Tap") // Actually a bolus tap, not TBR, but fits "Early Action" category
+            consoleLog.add("AD_SMALL_PREBOLUS_TRIGGER amount=$terminatortap reason=DriftTerminator")
             finalizeAndCapSMB(rT, terminatortap, reason.toString())
             return rT
         }
@@ -3751,6 +3815,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             // FIX: If Post-Hypo OR Gentle Rise (delta < 5 and bg < Target+30), force Small Bolus.
             val pbolusA = if (isPostHypo || (delta < 5.0f && bg < targetBg + 30.0f)) dynamicPbolusSmall else dynamicPbolusLarge
             
+            val logTag = if (pbolusA == dynamicPbolusSmall) "AD_SMALL_PREBOLUS_TRIGGER" else "AD_BIG_PREBOLUS_TRIGGER"
+            consoleLog.add("$logTag amount=$pbolusA reason=AutodriveMain")
+
             // 📈 Innovation: Adaptive Prebolus & Resistance Hammer
             // 🛡️ Disabled if Post-Hypo (Already handled by logic below, but pbolusA is now safer too)
             var adaptiveUnits = if (isPostHypo) pbolusA else calculateAdaptivePrebolus(pbolusA, delta, reason)
