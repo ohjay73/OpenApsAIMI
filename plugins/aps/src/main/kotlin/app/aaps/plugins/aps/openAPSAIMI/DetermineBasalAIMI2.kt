@@ -1327,7 +1327,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             maxIob = this.maxIob
         )
         
-        rT.units = safeCap.toDouble()
+        rT.units = safeCap.toDouble().coerceAtLeast(0.0)
         rT.reason.append(reasonHeader)
         
         if (safeCap < proposedFloat) {
@@ -3527,6 +3527,14 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // TODO eliminate
         val bgTime = glucoseStatus.date
         val minAgo = round((systemTime - bgTime) / 60.0 / 1000.0, 1)
+        
+        // 🔒 SAFETY FCL 14.0: Stale Data Check
+        // If data is > 12 mins old, disable Autodrive/SMBs to prevent unwanted late boluses.
+        if (minAgo > 12.0) {
+            reason.append("⚠️ Data Stale (${minAgo.toInt()}m) -> Logic Paused\n")
+            consoleError.add("Data Stale (${minAgo}m) -> Logic Paused")
+            return rT
+        }
         val windowSinceDoseMin = if (iob_data.lastBolusTime > 0) {
             ((systemTime - iob_data.lastBolusTime) / 60000.0).coerceAtLeast(0.0)
         } else 0.0
@@ -3691,7 +3699,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // Only fires if Main Autodrive (Heavy) logic above fell through (e.g. slope too gentle).
         // Refractory Check for Large:
         // Ensure no Large bolus in last 30m
-        if (hasReceivedRecentBolus(30)) {
+        if (hasReceivedRecentBolus(45)) {
              reason.append("⏳ Autodrive Refractory (Main): Recent Large -> Skip\n")
              // Fallback to ML
         } else {
@@ -3709,20 +3717,25 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         
         if (estimatedCarbs > 10.0 && timeSinceEstimateMin in 0.0..120.0 && bg >= 60) {
             // We have a recent photo estimate!
-            // If delta is rising fast (> 5) or we are high (> target + 30), treat as unbolused meal.
-            if ((delta > 5.0 || bg > targetBg + 30) && modesCondition) {
-                // Determine aggression based on estimated load:
-                // Small (< 30g) -> Standard
-                // Medium (30-60g) -> Large
-                // Large (> 60g) -> Extra Large (Simulated by scaling Dynamic Pbolus)
+            // [User Spec]: Trigger if Delta positive (Start of meal)
+            if (delta > 0.0 && modesCondition) {
                 
-                // Base calculation
+                // 1. Force High Basal (30 min)
+                val maxBasalPref = preferences.get(DoubleKey.meal_modes_MaxBasal)
+                val safeMax = if (maxBasalPref > 0.1) maxBasalPref else profile.max_basal
+                rT.rate = safeMax
+                rT.duration = 30
+                
+                // 2. Force Bolus
                 val urgencyFactor = if (estimatedCarbs > 60) 1.5 else 1.0
                 val targetUnits = calculateAdaptivePrebolus(dynamicPbolusLarge * urgencyFactor, delta, reason)
                 
-                val msg = "📸 Meal Advisor: Targeting ~${estimatedCarbs.toInt()}g (Est. ${timeSinceEstimateMin.toInt()}m ago) -> Force ${targetUnits}U"
+                val msg = "📸 Meal Advisor: Targeting ~${estimatedCarbs.toInt()}g (Est. ${timeSinceEstimateMin.toInt()}m ago) -> Force ${targetUnits}U + Basal ${safeMax}U/h"
                 reason.append(msg + "\n")
                 
+                // Explicit User Action = true (bypass dropping fast if delta > 0 is true, wait, delta>0 implies not dropping fast?)
+                // Actually if delta > 0, we are rising. So "Dropping Fast" guard won't trigger anyway.
+                // But we pass 'true' to be consistent with "Manual/User" intent.
                 finalizeAndCapSMB(rT, targetUnits, reason.toString(), mealData, threshold, true)
                 return rT
             }
@@ -4732,7 +4745,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
 
         rate?.let {
-            rT.rate = it
+            rT.rate = it.coerceAtLeast(0.0)
             rT.deliverAt = deliverAt
             rT.duration = 30
             return rT
