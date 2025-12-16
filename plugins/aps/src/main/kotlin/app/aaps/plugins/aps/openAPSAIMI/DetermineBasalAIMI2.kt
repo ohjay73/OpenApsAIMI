@@ -3715,10 +3715,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val estimatedCarbsTime = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbTime).toLong() // Stored as Double, cast to Long
         val timeSinceEstimateMin = (System.currentTimeMillis() - estimatedCarbsTime) / 60000.0
         
+        
         if (estimatedCarbs > 10.0 && timeSinceEstimateMin in 0.0..120.0 && bg >= 60) {
             // We have a recent photo estimate!
             // [User Spec]: Trigger if Delta positive (Start of meal)
-            if (delta > 0.0 && modesCondition) {
+            // 🛑 SAFETY: Ensure we haven't already bolused for this meal recently (45m Refractory)
+            if (delta > 0.0 && modesCondition && !hasReceivedRecentBolus(45)) {
                 
                 // 1. Force High Basal (30 min)
                 val maxBasalPref = preferences.get(DoubleKey.meal_modes_MaxBasal)
@@ -3733,13 +3735,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 val msg = "📸 Meal Advisor: Targeting ~${estimatedCarbs.toInt()}g (Est. ${timeSinceEstimateMin.toInt()}m ago) -> Force ${targetUnits}U + Basal ${safeMax}U/h"
                 reason.append(msg + "\n")
                 
-                // Explicit User Action = true (bypass dropping fast if delta > 0 is true, wait, delta>0 implies not dropping fast?)
-                // Actually if delta > 0, we are rising. So "Dropping Fast" guard won't trigger anyway.
-                // But we pass 'true' to be consistent with "Manual/User" intent.
+                // Explicit User Action = true
                 finalizeAndCapSMB(rT, targetUnits, reason.toString(), mealData, threshold, true)
                 return rT
             }
         }
+        // If we fall through here (because of Refractory), we continue to standard SMB/ML logic.
+        // The High Basal for Meal Advisor is handled by the 'rate' calculation at the end of the file.
 
         // 🍽️ FCL 14.0: Manual Meal Mode Enforcer
         // Ensures explicit user intent (Notes: Snack, Meal, Bfast...) ALWAYS fires the configured prebolus.
