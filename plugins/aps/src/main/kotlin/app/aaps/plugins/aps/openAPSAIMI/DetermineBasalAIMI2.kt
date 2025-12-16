@@ -916,7 +916,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
     private fun calculateRate(basal: Double, currentBasal: Double, multiplier: Double, reason: String, currenttemp: CurrentTemp, rT: RT, overrideSafety: Boolean = false): Double {
         rT.reason.append("${currenttemp.duration}m@${(currenttemp.rate).toFixed2()} $reason")
-        return if (overrideSafety || basal == 0.0) currentBasal * multiplier else roundBasal(basal * multiplier)
+        val rawRate = if (overrideSafety || basal == 0.0) currentBasal * multiplier else roundBasal(basal * multiplier)
+        return rawRate.coerceAtLeast(0.0)
     }
     private fun calculateBasalRate(basal: Double, currentBasal: Double, multiplier: Double): Double =
         if (basal == 0.0) currentBasal * multiplier else roundBasal(basal * multiplier)
@@ -1312,11 +1313,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             pkpdRuntime = null, // Optional
             ignoreSafetyConditions = isExplicitUserAction
          )
-
+         
          if (safetyCappedUnits < proposedFloat) {
               consoleLog.add("Safety Precautions reduced SMB: $proposedFloat -> $safetyCappedUnits")
          }
-
+         
          val safeCap = capSmbDose(
              proposedSmb = safetyCappedUnits, // Use the safety-reduced amount as base
             bg = this.bg,
@@ -4698,8 +4699,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     calculateRate(basal, profile_current_basal, boostedRate/profile_current_basal, "Global Hyper Kicker (Active)", currenttemp, rT, overrideSafety = true)
                 } else null
             }
-            //fastingTime -> calculateRate(profile_current_basal, profile_current_basal, delta.toDouble(), "AI Force basal because fastingTime", currenttemp, rT)
-            fastingTime -> calculateRate(profile_current_basal, profile_current_basal, delta.toDouble(), context.getString(R.string.ai_force_basal_reason_fasting), currenttemp, rT)
+            // Fix: Clamp delta multiplier to 0.0 to prevent negative basal (delta is Float)
+            //fastingTime -> calculateRate(profile_current_basal, profile_current_basal, delta.coerceAtLeast(0.0f).toDouble(), "AI Force basal because fastingTime", currenttemp, rT)
+            fastingTime -> calculateRate(profile_current_basal, profile_current_basal, delta.coerceAtLeast(0.0f).toDouble(), context.getString(R.string.ai_force_basal_reason_fasting), currenttemp, rT)
             else -> null
         }
 
