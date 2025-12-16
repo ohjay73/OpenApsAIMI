@@ -4671,7 +4671,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         
         rT.reason.append(savedReason)
         val maxBasalPref = preferences.get(DoubleKey.meal_modes_MaxBasal)
-        var rate = when {
+        val rate = when {
           //snackTime && snackrunTime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 4.0, "AI Force basal because mealTime $snackrunTime.", currenttemp, rT, overrideSafety = true)
           //mealTime && mealruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because mealTime $mealruntime.", currenttemp, rT, overrideSafety = true)
           //bfastTime && bfastruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because bfastTime $bfastruntime.", currenttemp, rT, overrideSafety = true)
