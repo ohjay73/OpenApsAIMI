@@ -1293,17 +1293,32 @@ class DetermineBasalaimiSMB2 @Inject constructor(
      * 🛡️ Centralized Safety Enforcement for "Innovation" Modes
      * Ensures consistent application of MaxIOB and MaxSMB limits using capSmbDose.
      */
-    private fun finalizeAndCapSMB(rT: RT, proposedUnits: Double, reasonHeader: String) {
+    private fun finalizeAndCapSMB(rT: RT, proposedUnits: Double, reasonHeader: String, mealData: MealData, hypoThreshold: Double, isExplicitUserAction: Boolean = false) {
         val proposedFloat = proposedUnits.toFloat()
         
         // Use maxSMB (Preferences) as the hard limit.
         // We use 'maxSMB' instead of 'maxSMBHB' to ensure strict safety unless explicitly handled otherwise.
         // 1. Determine dynamic baseline limit (Normal vs High BG)
         // If BG > 120, use the High BG Max SMB preference (MaxSMBHB).
-        val baseLimit = if (this.bg > 120) this.maxSMBHB else this.maxSMB
-        
-        val safeCap = capSmbDose(
-            proposedSmb = proposedFloat,
+         val baseLimit = if (this.bg > 120) this.maxSMBHB else this.maxSMB
+
+         // 🔒 FCL Safety: Enforce Safety Precautions (Dropping Fast, Hypo Risk, etc)
+         // finalizeAndCapSMB often handles forced boluses, but they MUST yield to critical physical safety.
+         val safetyCappedUnits = applySafetyPrecautions(
+            mealData = mealData,
+            smbToGiveParam = proposedFloat,
+            hypoThreshold = hypoThreshold,
+            reason = rT.reason,
+            pkpdRuntime = null, // Optional
+            ignoreSafetyConditions = isExplicitUserAction
+         )
+         
+         if (safetyCappedUnits < proposedFloat) {
+              consoleLog.add("Safety Precautions reduced SMB: $proposedFloat -> $safetyCappedUnits")
+         }
+         
+         val safeCap = capSmbDose(
+             proposedSmb = safetyCappedUnits, // Use the safety-reduced amount as base
             bg = this.bg,
             // 2. Allow manual/forced boluses to exceed this baseline, up to MaxIOB.
             // We pass the larger of (Dynamic Limit, Proposed Amount) as the config cap.
@@ -1395,13 +1410,14 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         reason: StringBuilder? = null,
         pkpdRuntime: PkPdRuntime? = null,
         exerciseFlag: Boolean = false,
-        suspectedLateFatMeal: Boolean = false
+        suspectedLateFatMeal: Boolean = false,
+        ignoreSafetyConditions: Boolean = false
     ): Float {
         var smbToGive = smbToGiveParam
         val mealWeights = computeMealAggressionWeights(mealData, hypoThreshold)
 
         val (isCrit, critMsg) = isCriticalSafetyCondition(mealData, hypoThreshold,context)
-        if (isCrit) {
+        if (isCrit && !ignoreSafetyConditions) {
             reason?.appendLine("🛑 $critMsg → SMB=0")
             consoleLog.add("SMB forced to 0 by critical safety: $critMsg")
             return 0f
@@ -1508,19 +1524,14 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         return result
     }
 
-    // Helper to check for recent Autodrive boluses (A or AS)
-    private fun hasReceivedPbolusMatches(big: Double, small: Double, minutes: Int): Boolean {
-        if (big <= 0.0 && small <= 0.0) return false // No strict matching if prefs not set
-        
+    // Helper to check for recent bolus activity (prevent double dosing)
+    // [FIX] Relaxed strict amount matching. Any significant bolus triggers refractory.
+    private fun hasReceivedRecentBolus(minutes: Int): Boolean {
         val lookbackTime = dateUtil.now() - minutes * 60 * 1000L
         val boluses = persistenceLayer.getBolusesFromTime(lookbackTime, true).blockingGet()
-        val epsilon = 0.02
         
-        // Check if ANY recent bolus matches our Autodrive amounts
-        return boluses.any { 
-            (big > 0 && Math.abs(it.amount - big) < epsilon) || 
-            (small > 0 && Math.abs(it.amount - small) < epsilon)
-        }
+        // If any bolus > 0.3U was delivered in the window, we consider it "Recent Activity"
+        return boluses.any { it.amount > 0.3 }
     }
 
 
@@ -1775,6 +1786,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 combinedDelta >= autodriveDelta &&
                 autodrive &&
                 predictedBg > dynamicPredictedThreshold &&
+                // FCL Safety: Prevent Autodrive on falling BG (Delta must be near stable or rising)
+                delta >= -2.0f &&
                 (slopeFromMinDeviation >= autodriveMinDeviation || combinedDelta > 10.0f || combinedDelta > autodriveDelta * 2.0f) &&
                 bg >= dynamicBgThreshold
 
@@ -3669,18 +3682,23 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // See Lines 3489+.
             // MOVED to after Main Autodrive.
 
+        // 🛡️ Hoisted Safety Variables for Autodrive & Early Terminators
+        fun safe(v: Double) = if (v.isFinite()) v else Double.POSITIVE_INFINITY
+        val minBg = minOf(safe(bg), safe(predictedBg.toDouble()), safe(rT.eventualBG?: bg))
+        val threshold = computeHypoThreshold(minBg, profile.lgsThreshold)
+
         // 🥞 FCL 10.8: Early Meal Detection / Snack (Fallback)
         // Only fires if Main Autodrive (Heavy) logic above fell through (e.g. slope too gentle).
         // Refractory Check for Large:
         // Ensure no Large bolus in last 30m
-        if (hasReceivedPbolusMatches(dynamicPbolusLarge, 0.0, 30)) {
+        if (hasReceivedRecentBolus(30)) {
              reason.append("⏳ Autodrive Refractory (Main): Recent Large -> Skip\n")
              // Fallback to ML
         } else {
              // Fire Large
              val adaptiveUnits = calculateAdaptivePrebolus(dynamicPbolusLarge, delta, reason)
              reason.append("🚀 Autodrive (Main) -> Force Bolus ${adaptiveUnits}U\n")
-             finalizeAndCapSMB(rT, adaptiveUnits, reason.toString())
+             finalizeAndCapSMB(rT, adaptiveUnits, reason.toString(), mealData, threshold)
              return rT
         }
 
@@ -3705,7 +3723,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 val msg = "📸 Meal Advisor: Targeting ~${estimatedCarbs.toInt()}g (Est. ${timeSinceEstimateMin.toInt()}m ago) -> Force ${targetUnits}U"
                 reason.append(msg + "\n")
                 
-                finalizeAndCapSMB(rT, targetUnits, reason.toString())
+                finalizeAndCapSMB(rT, targetUnits, reason.toString(), mealData, threshold, true)
                 return rT
             }
         }
@@ -3767,7 +3785,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 // Using generic string construction to include Mode Name
                 val msg = "🍱 Manual Mode ($manualModeName): Force Prebolus ${manualPrebolus}U"
                 consoleLog.add("MODE_PREBOLUS_TRIGGER name=$manualModeName amount=$manualPrebolus reason=ManualOverrides")
-                finalizeAndCapSMB(rT, manualPrebolus, msg)
+                finalizeAndCapSMB(rT, manualPrebolus, msg, mealData, threshold, true)
                 return rT
             }
         }
@@ -3791,12 +3809,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         // 🧹 Innovation: FCL 5.0 Drift Terminator (Blocked by Post-Hypo)
         // Independent Refractory: Only block if 'Small' was given recently.
-        if (!nightbis && autodrive && bg >= 80 && !isPostHypo && !hasReceivedPbolusMatches(0.0, dynamicPbolusSmall, 45) && isDriftTerminatorCondition(bg.toFloat(), terminatorTarget.toFloat(), delta.toFloat(), totalBolusLastHour, reason) && modesCondition) {
+        if (!nightbis && autodrive && bg >= 80 && !isPostHypo && !hasReceivedRecentBolus(45) && isDriftTerminatorCondition(bg.toFloat(), terminatorTarget.toFloat(), delta.toFloat(), totalBolusLastHour, reason) && modesCondition) {
             val terminatortap = dynamicPbolusSmall
             reason.append("→ Drift Terminator (Trigger +${terminatorThresholdAdd}): Micro-Tap ${terminatortap}U\n")
             consoleLog.add("AD_EARLY_TBR_TRIGGER rate=0.0 duration=0 reason=DriftTerminator_Tap") // Actually a bolus tap, not TBR, but fits "Early Action" category
             consoleLog.add("AD_SMALL_PREBOLUS_TRIGGER amount=$terminatortap reason=DriftTerminator")
-            finalizeAndCapSMB(rT, terminatortap, reason.toString())
+            finalizeAndCapSMB(rT, terminatortap, reason.toString(), mealData, threshold)
             return rT
         }
         
@@ -3807,14 +3825,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             val isSmall = (pbolusA == dynamicPbolusSmall)
 
             // 5. Refractory Period (Antidumping)
-            // [User Request]: Resume normal Autodrive 30 minutes after a large bolus (instead of 45).
-            // Check Main Autodrive (Large)
-            if (hasReceivedPbolusMatches(dynamicPbolusLarge, 0.0, 30)) {
-                rT.reason.append("⏳ Autodrive Refractory (Main): Recent Large Bolus -> Fallback ML\n")
-                // Fallthrough to ML logic (skips the else block below)
-            } else if (isSmall && hasReceivedPbolusMatches(0.0, dynamicPbolusSmall, 30)) {
-                 // Check Small
-                 rT.reason.append("⏳ Autodrive Refractory (Small): Recent Small Bolus -> Fallback ML\n")
+            // 5. Refractory Period (Antidumping)
+            // [User Request]: Resume normal Autodrive 30 minutes after ANY significant bolus.
+            // This prevents double dialing if the first bolus was capped or slightly different.
+            if (hasReceivedRecentBolus(30)) {
+                rT.reason.append("⏳ Autodrive Refractory: Recent Bolus detected -> Fallback ML\n")
+                // Fallthrough to ML logic
             } else {
                  val logTag = if (isSmall) "AD_SMALL_PREBOLUS_TRIGGER" else "AD_BIG_PREBOLUS_TRIGGER"
                  consoleLog.add("$logTag amount=$pbolusA reason=AutodriveMain")
@@ -3822,16 +3838,16 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                  val adaptiveUnits = calculateAdaptivePrebolus(pbolusA, delta, reason)
                  reason.append("🚀 Autodrive Main -> Force Bolus ${adaptiveUnits}U\n")
                  
-                 finalizeAndCapSMB(rT, adaptiveUnits, reason.toString())
+                 finalizeAndCapSMB(rT, adaptiveUnits, reason.toString(), mealData, threshold)
                  return rT
             }
         }
 
 
         val autodriveCondition = adjustAutodriveCondition(bgTrend, predictedBg, combinedDelta.toFloat(), reason, targetBg + 30f)
-        if (bg > targetBg + 10 && predictedBg > targetBg + 30 && !nightbis && !hasReceivedPbolusMatches(0.0, dynamicPbolusSmall, 60) && autodrive && detectMealOnset(delta, predicted.toFloat(), bgAcceleration.toFloat(), predictedBg, targetBg) && modesCondition && bg >= 80) {
+        if (bg > targetBg + 10 && predictedBg > targetBg + 30 && !nightbis && !hasReceivedRecentBolus(60) && autodrive && detectMealOnset(delta, predicted.toFloat(), bgAcceleration.toFloat(), predictedBg, targetBg) && modesCondition && bg >= 80) {
             val msg = context.getString(R.string.reason_autodrive_early_meal, dynamicPbolusSmall, combinedDelta, predicted, bgAcceleration.toDouble())
-            finalizeAndCapSMB(rT, dynamicPbolusSmall, msg)
+            finalizeAndCapSMB(rT, dynamicPbolusSmall, msg, mealData, threshold)
             return rT
         }
 
@@ -3839,13 +3855,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         if (!nightbis && autodrive && bg >= 80 && isZeroIOBPrimingCondition(iob.toDouble(), delta, bgAcceleration.toFloat(), reason) && modesCondition) {
             val primeBolus = calculateDynamicMicroBolus(effectiveISF, 15.0, reason) // Safe priming scaled to context
             reason.append("→ Zero-IOB Priming with ${primeBolus}U\n")
-            finalizeAndCapSMB(rT, primeBolus, reason.toString())
+            finalizeAndCapSMB(rT, primeBolus, reason.toString(), mealData, threshold)
             return rT
         }
         if (isbfastModeCondition() && bg >= 60) {
             val pbolusbfast: Double = preferences.get(DoubleKey.OApsAIMIBFPrebolus)
             val msg = context.getString(R.string.reason_prebolus_bfast1, pbolusbfast)
-            finalizeAndCapSMB(rT, pbolusbfast, msg)
+            finalizeAndCapSMB(rT, pbolusbfast, msg, mealData, threshold, true)
             return rT
         }
         if (isbfast2ModeCondition() && bg >= 60) {
@@ -3859,45 +3875,45 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         if (isLunchModeCondition() && bg >= 60) {
             val pbolusLunch: Double = preferences.get(DoubleKey.OApsAIMILunchPrebolus)
             val msg = context.getString(R.string.reason_prebolus_lunch1, pbolusLunch)
-            finalizeAndCapSMB(rT, pbolusLunch, msg)
+            finalizeAndCapSMB(rT, pbolusLunch, msg, mealData, threshold, true)
             return rT
         }
         if (isLunch2ModeCondition() && bg >= 60) {
             val pbolusLunch2: Double = preferences.get(DoubleKey.OApsAIMILunchPrebolus2)
             this.maxSMB = pbolusLunch2
             val msg = context.getString(R.string.reason_prebolus_lunch2, pbolusLunch2)
-            finalizeAndCapSMB(rT, pbolusLunch2, msg)
+            finalizeAndCapSMB(rT, pbolusLunch2, msg, mealData, threshold, true)
             return rT
         }
         if (isDinnerModeCondition() && bg >= 60) {
             val pbolusDinner: Double = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus)
             val msg = context.getString(R.string.reason_prebolus_dinner1, pbolusDinner)
-            finalizeAndCapSMB(rT, pbolusDinner, msg)
+            finalizeAndCapSMB(rT, pbolusDinner, msg, mealData, threshold, true)
             return rT
         }
         if (isDinner2ModeCondition() && bg >= 60) {
             val pbolusDinner2: Double = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus2)
             this.maxSMB = pbolusDinner2
             val msg = context.getString(R.string.reason_prebolus_dinner2, pbolusDinner2)
-            finalizeAndCapSMB(rT, pbolusDinner2, msg)
+            finalizeAndCapSMB(rT, pbolusDinner2, msg, mealData, threshold, true)
             return rT
         }
         if (isHighCarbModeCondition() && bg >= 60) {
             val pbolusHC: Double = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus)
             val msg = context.getString(R.string.reason_prebolus_highcarb, pbolusHC)
-            finalizeAndCapSMB(rT, pbolusHC, msg)
+            finalizeAndCapSMB(rT, pbolusHC, msg, mealData, threshold, true)
             return rT
         }
         if (isHighCarb2ModeCondition() && bg >= 60) {
             val pbolusHC2: Double = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus2)
             val msg = context.getString(R.string.reason_prebolus_highcarb2, pbolusHC2)
-            finalizeAndCapSMB(rT, pbolusHC2, msg)
+            finalizeAndCapSMB(rT, pbolusHC2, msg, mealData, threshold, true)
             return rT
         }
         if (issnackModeCondition() && bg >= 60) {
             val pbolussnack: Double = preferences.get(DoubleKey.OApsAIMISnackPrebolus)
             val msg = context.getString(R.string.reason_prebolus_snack, pbolussnack)
-            finalizeAndCapSMB(rT, pbolussnack, msg)
+            finalizeAndCapSMB(rT, pbolussnack, msg, mealData, threshold, true)
             return rT
         }
         //rT.reason.append(", MaxSMB: $maxSMB")
@@ -4237,7 +4253,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         this.basalaimi = if (honeymoon && basalaimi > profile_current_basal * 2) (profile_current_basal.toFloat() * 2) else basalaimi
 
-        //this.basalaimi = if (basalaimi < 0.0f) 0.0f else basalaimi
+        this.basalaimi = if (basalaimi < 0.0f) 0.0f else basalaimi
         val deltaAcceleration = glucoseStatus.delta - glucoseStatus.shortAvgDelta
         if (deltaAcceleration > 1.5 && bg > 130) {
             // Si la glycémie accélère (+1.5mg/dL/5min par rapport à la moyenne), on augmente le basal
@@ -4441,12 +4457,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 consoleError.add(context.getString(R.string.console_max_bg_unchanged, max_bg))
             }
         }
-        fun safe(v: Double) = if (v.isFinite()) v else Double.POSITIVE_INFINITY
+        //fun safe(v: Double) = if (v.isFinite()) v else Double.POSITIVE_INFINITY
         //val expectedDelta = calculateExpectedDelta(target_bg, eventualBG, bgi)
         val modelcal = calculateSMBFromModel(rT.reason)
         //val smbProposed = modelcal.toDouble()
-        val minBg = minOf(safe(bg), safe(predictedBg.toDouble()), safe(eventualBG))
-        val threshold = computeHypoThreshold(minBg, profile.lgsThreshold)
+        //val minBg = minOf(safe(bg), safe(predictedBg.toDouble()), safe(eventualBG))
+        //val threshold = computeHypoThreshold(minBg, profile.lgsThreshold)
 
         var isHypoBlocked = shouldBlockHypoWithHysteresis(
                 bg = bg,
