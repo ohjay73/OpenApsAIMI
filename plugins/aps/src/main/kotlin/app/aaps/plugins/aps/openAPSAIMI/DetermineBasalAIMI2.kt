@@ -3661,17 +3661,20 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 // Set Eventual BG
                 rT.eventualBG = lastPred
                 
-                // Populate rT.predBGs for UI Graph
+                // Populate rT.predBGs for UI Graph (Modern)
                 rT.predBGs = Predictions().apply {
                     IOB = IOBpredBGs.map { it.toInt() }
                     COB = COBpredBGs.map { it.toInt() }
                     ZT  = ZTpredBGs.map { it.toInt() }
                     UAM = UAMpredBGs.map { it.toInt() }
                 }
+
+                // (Legacy assignments removed - fields do not exist in RT)
                 
-                // Debug logging mimicking SMB for consistency
-                consoleError.add("🔮 PREDICT SUCCESS: ${intsPredictions.size} points. Eventual: $lastPred Min: $minPred")
+                // Debug logging mimicking SMB for consistency (FIX B3)
+                consoleError.add("🔮 PREDICT GRAPH: IOB=${IOBpredBGs.size} COB=${COBpredBGs.size} ZT=${ZTpredBGs.size} UAM=${UAMpredBGs.size}")
                 consoleError.add("minGuardBG ${minPred.toInt()} IOBpredBG ${lastPred.toInt()}")
+                if (UAMpredBGs.size < 6) consoleError.add("⚠ WARNING: UAM Series too short (<6) for Graph!")
                 
             } else {
                  consoleError.add("🔮 PREDICT WARNING: Empty prediction list returned (Input Size: ${advancedPredictions.size})")
@@ -3703,7 +3706,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // 1. Manual Mode Check
         // PRIORITY 1: SAFETY (LGS / HYPO / STALE)
         // Evaluated FIRST. Can apply TBR=0.0. Terminate if Applied.
-        val safetyRes = trySafetyStart(bg, delta, profile, iob_data, glucoseStatus.noise.toInt())
+        // PRIORITY 1: SAFETY (LGS / HYPO / STALE)
+        // Evaluated FIRST. Can apply TBR=0.0. Terminate if Applied.
+        val safetyRes = trySafetyStart(bg, delta, profile, iob_data, glucoseStatus.noise.toInt(), predictedBg.toDouble(), (rT.eventualBG ?: bg).toDouble())
         if (safetyRes is DecisionResult.Applied) {
             consoleLog.add("SAFETY_APPLIED_TBR_ZERO intent=${safetyRes.tbrUph}")
             if (safetyRes.tbrUph != null) {
@@ -5327,16 +5332,33 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         delta: Float, 
         profile: OapsProfileAimi, 
         iob: IobTotal,
-        noise: Int
+        noise: Int,
+        predBg: Double,
+        eventualBg: Double
     ): DecisionResult {
-        // 1. Extreme Low / LGS
-        if (bg < profile.min_bg || (bg < 70 && delta < 0)) {
+        // 0. Sanity Check (Units/Calibration)
+        if (bg < 25 || bg > 600) {
+             consoleLog.add("⚠ Unit Mismatch Suspected? BG=$bg")
+        }
+
+        // 1. Extreme Low / LGS (Correct Logic)
+        // Explicit Debug Structure
+        fun safe(v: Double) = if (v.isFinite()) v else 999.0
+        val bgNow = safe(bg)
+        val predNow = safe(predBg)
+        val eventualNow = safe(eventualBg)
+        val lgsMin = minOf(bgNow, predNow, eventualNow)
+        val lgsTh = computeHypoThreshold(lgsMin, profile.lgsThreshold) // Uses member function
+
+        if (lgsMin < lgsTh || (bg < 70 && delta < 0)) {
+            val reasonStr = "Hypo guard+hystérèse: minBG=${lgsMin.toInt()} <= Th=${lgsTh.toInt()} (BG=$bgNow, pred=${predNow.toInt()}, ev=${eventualNow.toInt()})"
+            consoleLog.add("SAFETY_APPLIED_TBR_ZERO reason=$reasonStr")
             return DecisionResult.Applied(
                 source = "SafetyLGS",
                 bolusU = 0.0,
-                tbrUph = 0.0,
+                tbrUph = 0.0, // Strict 0.0
                 tbrMin = 30,
-                reason = "Target Low (LGS) - Force TBR 0.0"
+                reason = reasonStr
             )
         }
         
@@ -5347,7 +5369,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 bolusU = 0.0,
                 tbrUph = 0.0, 
                 tbrMin = 30,
-                reason = "High Noise - Force TBR 0.0"
+                reason = "High Noise ($noise) - Force TBR 0.0"
             )
         }
         
