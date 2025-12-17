@@ -72,8 +72,8 @@ enum class ActionKind {
 
 sealed class DecisionResult {
     data class Applied(
-        val kind: ActionKind,
-        val bolusU: Double = 0.0,
+        val source: String,
+        val bolusU: Double? = null,
         val tbrUph: Double? = null,
         val tbrMin: Int? = null,
         val reason: String

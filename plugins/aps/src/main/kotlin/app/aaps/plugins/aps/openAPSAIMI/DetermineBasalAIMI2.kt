@@ -43,8 +43,9 @@ import app.aaps.plugins.aps.openAPSAIMI.extensions.asRounded
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.plugins.aps.openAPSAIMI.model.Constants
 import app.aaps.plugins.aps.openAPSAIMI.model.SmbPlan
+// Imports updated for strict patch
 import app.aaps.plugins.aps.openAPSAIMI.model.DecisionResult
-import app.aaps.plugins.aps.openAPSAIMI.model.ActionKind
+
 import app.aaps.plugins.aps.openAPSAIMI.model.LoopContext
 import app.aaps.plugins.aps.openAPSAIMI.model.PumpCaps
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdCsvLogger
@@ -3700,27 +3701,47 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // Priority: 1. Manual -> 2. Advisor -> 3. Autodrive -> Fallback (Global)
 
         // 1. Manual Mode Check
-        val manualRes = tryManualModes(bg, delta, profile)
-        if (manualRes is DecisionResult.Applied) {
-            // Apply Manual Action
-            if (manualRes.tbrUph != null) {
-                setTempBasal(manualRes.tbrUph, manualRes.tbrMin ?: 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+        // PRIORITY 1: SAFETY (LGS / HYPO / STALE)
+        // Evaluated FIRST. Can apply TBR=0.0. Terminate if Applied.
+        val safetyRes = trySafetyStart(bg, delta, profile, iob_data, glucoseStatus.noise.toInt())
+        if (safetyRes is DecisionResult.Applied) {
+            consoleLog.add("SAFETY_APPLIED_TBR_ZERO intent=${safetyRes.tbrUph}")
+            if (safetyRes.tbrUph != null) {
+                setTempBasal(safetyRes.tbrUph, safetyRes.tbrMin ?: 30, profile, rT, currenttemp, overrideSafetyLimits = true)
             }
-            finalizeAndCapSMB(rT, manualRes.bolusU, manualRes.reason, mealData, threshold, true)
+            // Block all boluses
+            rT.insulinReq = 0.0
+            rT.reason.append(" | ⚠ Safety Halt: ${safetyRes.reason}")
             return rT
         }
 
-        // 2. Meal Advisor Check
+        // PRIORITY 2: MANUAL MODES (Stateful)
+        val manualRes = tryManualModes(bg, delta, profile)
+        if (manualRes is DecisionResult.Applied) {
+            consoleLog.add("MODE_ACTIVE source=${manualRes.source} bolus=${manualRes.bolusU}")
+            if (manualRes.tbrUph != null) {
+                setTempBasal(manualRes.tbrUph, manualRes.tbrMin ?: 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+            }
+            if (manualRes.bolusU != null && manualRes.bolusU > 0) {
+                 finalizeAndCapSMB(rT, manualRes.bolusU, manualRes.reason, mealData, threshold, true)
+            }
+            return rT
+        }
+
+        // PRIORITY 3: MEAL ADVISOR
         val advisorRes = tryMealAdvisor(bg, delta, iob_data, profile, lastBolusTimeMs ?: 0L, modesCondition)
         if (advisorRes is DecisionResult.Applied) {
+             consoleLog.add("MEAL_ADVISOR_APPLIED source=${advisorRes.source} bolus=${advisorRes.bolusU}")
              if (advisorRes.tbrUph != null) {
                   setTempBasal(advisorRes.tbrUph, advisorRes.tbrMin ?: 30, profile, rT, currenttemp, overrideSafetyLimits = true)
              }
-             finalizeAndCapSMB(rT, advisorRes.bolusU, advisorRes.reason, mealData, threshold, true)
+             if (advisorRes.bolusU != null && advisorRes.bolusU > 0) {
+                  finalizeAndCapSMB(rT, advisorRes.bolusU, advisorRes.reason, mealData, threshold, true)
+             }
              return rT
         }
 
-        // 3. Autodrive Check
+        // PRIORITY 4: AUTODRIVE (Strict)
         val autoRes = tryAutodrive(
             bg, delta, shortAvgDelta, profile, lastBolusTimeMs ?: 0L, predictedBg, mealData.slopeFromMinDeviation, targetBg, reason,
             preferences.get(BooleanKey.OApsAIMIautoDrive),
@@ -3728,33 +3749,39 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         )
         
         if (autoRes is DecisionResult.Applied) {
-             // 🟢 Validated Intent. Now checking Safety Constraints (R3: No-Op Fallback)
-
-             // 1. Apply TBR (System Intent)
+             // 1. Apply TBR (System Intent) if present
              if (autoRes.tbrUph != null) {
                   setTempBasal(autoRes.tbrUph, autoRes.tbrMin ?: 30, profile, rT, currenttemp, overrideSafetyLimits = false)
              }
+             
+             // 2. Apply Bolus Intent (if present)
+             val intentBolus = autoRes.bolusU ?: 0.0
+             if (intentBolus > 0) {
+                  finalizeAndCapSMB(rT, intentBolus, autoRes.reason, mealData, threshold, false)
+             }
 
-             // 2. Calculate Cap (Safety)
-             finalizeAndCapSMB(rT, autoRes.bolusU, autoRes.reason, mealData, threshold, false)
-
-             // 3. Verify EFFECTIVE Action (R3)
+             // 3. Verify EFFECTIVE Action (R3 / User Spec)
+             // "If bolus capped to 0 AND no meaningful TBR -> Fallthrough"
              val effectiveBolus = rT.insulinReq ?: 0.0
              val effectiveDuration = rT.duration ?: 0
+             // Action is meaningful if we are giving insulin OR setting a HIGH temp (greater than current or 0).
+             // Strictly: "NE DOIT JAMAIS retourner Applied s’il n’a RIEN appliqué."
 
              if (effectiveBolus > 0.05 || effectiveDuration > 0) {
                  lastAutodriveActionTime = System.currentTimeMillis() // 🟢 Update Strict Cooldown
-                 consoleLog.add("AD_APPLIED intent=${autoRes.bolusU} actual=$effectiveBolus")
+                 consoleLog.add("AUTODRIVE_APPLIED intent=${intentBolus} actual=$effectiveBolus")
                  return rT
              } else {
-                 consoleLog.add("AD_NOOP_FALLBACK reason=CappedToZero")
-                 reason.append(" (Fallback: Autodrive Result Capped to 0)")
-                 // FALL THROUGH to Global AIMI logic
+                 consoleLog.add("AUTODRIVE_NOOP_FALLBACK reason=CappedToZero")
+                 // Reset rT to clean state for Global Fallback?
+                 // Actually rT might have some partial strings.
+                 // We should proceed to Global AIMI.
+                 rT.insulinReq = 0.0 // Ensure 0
              }
-        } else if (autoRes is DecisionResult.Fallthrough) {
-            // Log fallback reason if relevant?
-            // consoleLog.add("AD_SKIP: ${autoRes.reason}")
         }
+
+        // AUTODRIVE FALLTHROUGH LOGGING handled inside tryAutodrive returns
+
 
         // 🛡️ Innovation: FCL 6.0 Safety Net
         val isPostHypo = isPostHypoProtectionCondition(recentBGs, reason)
@@ -4543,7 +4570,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val estimatedCarbs = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbs)
         val estimatedCarbsTime = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbTime).toLong()
         val timeSinceEstimateMin = (System.currentTimeMillis() - estimatedCarbsTime) / 60000.0
-
+        
         val maxBasalPref = preferences.get(DoubleKey.meal_modes_MaxBasal)
         val rate: Double? = when {
           //snackTime && snackrunTime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 4.0, "AI Force basal because snackTime $snackrunTime.", currenttemp, rT, overrideSafety = true)
@@ -4559,7 +4586,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             dinnerTime && dinnerruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, context.getString(R.string.ai_force_basal_reason_dinner) + " ($dinnerruntime m).", currenttemp, rT, overrideSafety = true)
             highCarbTime && highCarbrunTime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, context.getString(R.string.ai_force_basal_reason_highcarb) + " ($highCarbrunTime m).", currenttemp, rT, overrideSafety = true)
             // 📸 Meal Advisor Forced Basal REMOVED (Duplicate of Pipeline)
-
             
             // 🔥 Patch Post-Meal Hyper Boost (AIMI 2.0)
             // Added: Treat Recent Meal Advisor (< 120m) as implicit Meal Mode
@@ -5293,10 +5319,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     // -----------------------------------------------------
 
     private data class ModeState(
-         val name: String = "",
-         val startMs: Long = 0L,
-         val pre1: Boolean = false,
-         val pre2: Boolean = false
+         var name: String = "",
+         var startMs: Long = 0L,
+         var pre1: Boolean = false,
+         var pre2: Boolean = false
     ) {
          fun serialize(): String = "$name|$startMs|$pre1|$pre2"
          companion object {
@@ -5311,6 +5337,41 @@ class DetermineBasalaimiSMB2 @Inject constructor(
          }
     }
 
+    // ==========================================
+    // 🛡️ PRIORITY 1: SAFETY (LGS/HYPO)
+    // ==========================================
+    private fun trySafetyStart(
+        bg: Double,
+        delta: Float,
+        profile: OapsProfileAimi,
+        iob: IobTotal,
+        noise: Int
+    ): DecisionResult {
+        // 1. Extreme Low / LGS
+        if (bg < profile.min_bg || (bg < 70 && delta < 0)) {
+            return DecisionResult.Applied(
+                source = "SafetyLGS",
+                bolusU = 0.0,
+                tbrUph = 0.0,
+                tbrMin = 30,
+                reason = "Target Low (LGS) - Force TBR 0.0"
+            )
+        }
+
+        // 2. High Noise / Stale Data
+        if (noise >= 3) {
+             return DecisionResult.Applied(
+                source = "SafetyNoise",
+                bolusU = 0.0,
+                tbrUph = 0.0,
+                tbrMin = 30,
+                reason = "High Noise - Force TBR 0.0"
+            )
+        }
+
+        return DecisionResult.Fallthrough("Safety OK")
+    }
+
     private fun tryManualModes(bg: Double, delta: Float, profile: OapsProfileAimi): DecisionResult {
         if (bg < 60) return DecisionResult.Fallthrough("BG too low (<60)")
 
@@ -5319,7 +5380,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         var activeRuntimeMin = -1
         var pre1Config = 0.0
         var pre2Config = 0.0
-
+        
         // Priority check (same order as original)
         if (highCarbrunTime in 0..120) {
             if (highCarbrunTime in 0..30) { 
@@ -5356,10 +5417,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             return DecisionResult.Fallthrough("No Active Mode")
         }
 
-        // 2. Load Persisted State
-        val rawState = preferences.get(StringKey.OApsAIMIUnstableModeState)
-        var state = ModeState.deserialize(rawState)
+        // 2. Load State (Persisted)
+        val stateKey = StringKey.OApsAIMIUnstableModeState
+        val rawState = preferences.get(stateKey)
         val now = System.currentTimeMillis()
+        var state = ModeState.deserialize(rawState)
 
         // 3. Sync State with Reality
         val approxStart = now - (activeRuntimeMin * 60000L)
@@ -5405,10 +5467,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             
             consoleLog.add("MODE_DECISION mode=$activeName phase=$actionPhase amount=$actionBolus tbr=$modeTbr")
             return DecisionResult.Applied(
-                kind = ActionKind.MANUAL_MODE,
+                source = "ManualMode_$activeName",
                 bolusU = actionBolus,
-                tbrUph = modeTbr,
-                tbrMin = 30,
+                tbrUph = modeTbr, 
+                tbrMin = 30, // 30 min fixed
                 reason = "🍱 Manual Mode ($activeName $actionPhase): Force ${actionBolus}U + TBR ${modeTbr}U/h"
             )
         }
@@ -5437,13 +5499,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 val netNeeded = (insulinForCarbs - iobData.iob - coveredByBasal).coerceAtLeast(0.0)
 
                 consoleLog.add("ADVISOR_CALC carbs=${estimatedCarbs.toInt()} net=$netNeeded")
-                return DecisionResult.Applied(
-                    kind = ActionKind.MEAL_ADVISOR,
-                    bolusU = netNeeded,
-                    tbrUph = safeMax,
-                    tbrMin = 30,
-                    reason = "📸 Meal Advisor: ${estimatedCarbs.toInt()}g -> ${"%.2f".format(netNeeded)}U"
-                )
+                     return DecisionResult.Applied(
+                        source = "MealAdvisor",
+                        bolusU = netNeeded,
+                        tbrUph = safeMax,
+                        tbrMin = 30,
+                        reason = "📸 Meal Advisor: ${estimatedCarbs.toInt()}g -> ${"%.2f".format(netNeeded)}U"
+                    )
             }
         }
         return DecisionResult.Fallthrough("No active Meal Advisor request")
@@ -5504,13 +5566,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val safeAutoMax = minOf(scalarAuto, profile.max_basal.toDouble())
         
         consoleLog.add("AD_INTENT amount=$amount tbr=$safeAutoMax")
-        return DecisionResult.Applied(
-            kind = ActionKind.AUTODRIVE,
-            bolusU = amount,
-            tbrUph = safeAutoMax,
-            tbrMin = 30,
-            reason = "🚀 Autodrive [$stateReason] -> Force ${amount}U"
-        )
+             return DecisionResult.Applied(
+                source = "Autodrive",
+                bolusU = amount,
+                tbrUph = safeAutoMax,
+                tbrMin = 30,
+                reason = "🚀 Autodrive [$stateReason] -> Force ${amount}U"
+            )
     }
 
 }
