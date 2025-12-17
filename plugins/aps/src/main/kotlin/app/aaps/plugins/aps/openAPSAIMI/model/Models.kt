@@ -62,4 +62,25 @@ data class SmbPlan(val units: Double, val deliverAtMillis: Long, val reason: Str
 data class SafetyReport(val hypoBlocked: Boolean, val notes: List<String> = emptyList())
 data class Decision(val basal: BasalPlan?, val smb: SmbPlan?, val safety: SafetyReport)
 
+enum class ActionKind {
+    MANUAL_MODE,
+    MEAL_ADVISOR,
+    AUTODRIVE,
+    GLOBAL_AIMI,
+    SAFETY_HALT
+}
+
+/**
+ * Unified result for Decision Pipeline.
+ * Enforces priority and feedback loops (No-Op).
+ */
+data class ActionResult(
+    val kind: ActionKind,
+    val requestedBolus: Double = 0.0,
+    val requestedTbrRate: Double? = null, // null means no TBR change requested
+    val requestedTbrDuration: Int = 0,
+    val reason: String = "",
+    val noOp: Boolean = false // If TRUE, the logic calculated something but resulted in no effective action (fallthrough)
+)
+
 
