@@ -3736,20 +3736,30 @@ class DetermineBasalaimiSMB2 @Inject constructor(
              } else if (delta >= 2.0) {
                  state = 1 // Early
                  amount = dynamicPbolusSmall
-                 stateReason = "Early: Delta>2"
+                  stateReason = "Early: Delta>2"
              } else {
                  state = 0
                  stateReason = "Off: Conditions not met"
              }
+             
+             // [Lyra Verification] Explicit State Log
+             val stateName = when(state) { 2 -> "CONFIRMED"; 1 -> "EARLY"; else -> "OFF" }
+             if (state != 0) consoleLog.add("AD_STATE=$stateName reason='$stateReason'")
 
              when (state) {
                  2 -> {
                      reason.append("🚀 Autodrive [Confirmed]: $stateReason -> Force ${amount}U\n")
+                     // [Lyra Fix] Maintain High Basal during Autodrive
+                     setTempBasal(profile.max_basal, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+                     
                      finalizeAndCapSMB(rT, amount, reason.toString(), mealData, threshold)
                      return rT
                  }
                  1 -> {
                      reason.append("🚀 Autodrive [Early]: $stateReason -> Force ${amount}U\n")
+                     // [Lyra Fix] Maintain High Basal during Autodrive
+                     setTempBasal(profile.max_basal, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+                     
                      finalizeAndCapSMB(rT, amount, reason.toString(), mealData, threshold)
                      return rT
                  }
@@ -3784,11 +3794,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 val insulinForCarbs = estimatedCarbs / profile.carb_ratio
                 val coveredByBasal = safeMax * 0.5 // 30 mins of High Basal
                 val netNeeded = insulinForCarbs - iob_data.iob - coveredByBasal
-                
-                // Ensure non-negative
-                val targetUnits = netNeeded.coerceAtLeast(0.0)
-                
-                val msg = "📸 Meal Advisor: ${estimatedCarbs.toInt()}g / IC ${"%.1f".format(profile.carb_ratio)} - IOB ${"%.2f".format(iob_data.iob)} - Basal ${"%.2f".format(coveredByBasal)} = ${"%.2f".format(targetUnits)}U"
+                                // Ensure non-negative
+                 val targetUnits = netNeeded.coerceAtLeast(0.0)
+                 
+                 // [Lyra Verification] Detailed Calc Log
+                 consoleLog.add("MEAL_PREBOLUS_CALC carbs=${estimatedCarbs.toInt()} IC=${profile.carb_ratio} IOB=${"%.2f".format(iob_data.iob)} BasalCover=${"%.2f".format(coveredByBasal)} -> $targetUnits")
+
+                 val msg = "📸 Meal Advisor: ${estimatedCarbs.toInt()}g / IC ${"%.1f".format(profile.carb_ratio)} - IOB ${"%.2f".format(iob_data.iob)} - Basal ${"%.2f".format(coveredByBasal)} = ${"%.2f".format(targetUnits)}U"
                 reason.append(msg + "\n")
                 
                 // Explicit User Action = true
@@ -3858,10 +3870,14 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 consoleLog.add("MODE_PREBOLUS_TRIGGER name=$manualModeName amount=$manualPrebolus reason=ManualOverrides")
                 
                 // [FIX] Structural Safety: Ensure Basal is set (maintain current profile basal) via proper gate
-                setTempBasal(profile.current_basal, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
-                
-                finalizeAndCapSMB(rT, manualPrebolus, msg, mealData, threshold, true)
-                return rT
+                 setTempBasal(profile.current_basal, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+                 
+                 // [Lyra Verification] Standardized Log
+                 val phase = if (manualModeName.endsWith(" 2")) "PRE2" else "PRE1"
+                 consoleLog.add("MODE_${phase}_SENT amount=$manualPrebolus mode=$manualModeName")
+
+                 finalizeAndCapSMB(rT, manualPrebolus, msg, mealData, threshold, true)
+                 return rT
             } else if (manualModeName.isNotEmpty()) {
                 // Mode detected but Amount is 0.
                 reason.append("⚠️ Manual Mode ($manualModeName) detected but Prebolus config is 0.0U\n")
