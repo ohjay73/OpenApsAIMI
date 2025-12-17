@@ -43,7 +43,7 @@ import app.aaps.plugins.aps.openAPSAIMI.extensions.asRounded
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.plugins.aps.openAPSAIMI.model.Constants
 import app.aaps.plugins.aps.openAPSAIMI.model.SmbPlan
-import app.aaps.plugins.aps.openAPSAIMI.model.ActionResult
+import app.aaps.plugins.aps.openAPSAIMI.model.DecisionResult
 import app.aaps.plugins.aps.openAPSAIMI.model.ActionKind
 import app.aaps.plugins.aps.openAPSAIMI.model.LoopContext
 import app.aaps.plugins.aps.openAPSAIMI.model.PumpCaps
@@ -1548,29 +1548,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         return false
     }
 
-    private fun isZeroIOBPrimingCondition(
-        iob: Double,
-        delta: Float,
-        acceleration: Float,
-        reason: StringBuilder,
-        lastBolusTimeMs: Long
-    ): Boolean {
-        // Condition 1: Empty Tank
-        if (iob > 0.2) return false
 
-        // Condition 2: Early Rise
-        // [FIX] Safety Hardening: Explicitly check Refractory Period. 
-        if (hasReceivedRecentBolus(60, lastBolusTimeMs)) {
-            reason.append("🛡️ Zero-IOB Priming Blocked: Recent Bolus detected (Refractory 60m)\n")
-            return false
-        }
-
-        if (delta > 0 && acceleration > 0) {
-             reason.append("🚀 Zero-IOB Priming: IOB < 0.2 & acceleration > 0 -> ENGAGED\n")
-             return true
-        }
-        return false
-    }
 
     private fun calculateAdaptivePrebolus(
         baseBolus: Double,
@@ -3717,262 +3695,67 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val threshold = computeHypoThreshold(minBg, profile.lgsThreshold)
 
         // -----------------------------------------------------
-        // ⚔️ DECISION PIPELINE EXECUTION (Refactor v2)
+        // ⚔️ DECISION PIPELINE EXECUTION (Refactor v2.2 Strict)
         // -----------------------------------------------------
         // Priority: 1. Manual -> 2. Advisor -> 3. Autodrive -> Fallback (Global)
 
         // 1. Manual Mode Check
         val manualRes = tryManualModes(bg, delta, profile)
-        if (manualRes != null && !manualRes.noOp) {
+        if (manualRes is DecisionResult.Applied) {
             // Apply Manual Action
-            if (manualRes.requestedTbrRate != null) {
-                setTempBasal(manualRes.requestedTbrRate, manualRes.requestedTbrDuration, profile, rT, currenttemp, overrideSafetyLimits = false)
+            if (manualRes.tbrUph != null) {
+                setTempBasal(manualRes.tbrUph, manualRes.tbrMin ?: 30, profile, rT, currenttemp, overrideSafetyLimits = false)
             }
-            finalizeAndCapSMB(rT, manualRes.requestedBolus, manualRes.reason, mealData, threshold, true)
+            finalizeAndCapSMB(rT, manualRes.bolusU, manualRes.reason, mealData, threshold, true)
             return rT
         }
 
         // 2. Meal Advisor Check
         val advisorRes = tryMealAdvisor(bg, delta, iob_data, profile, lastBolusTimeMs ?: 0L, modesCondition)
-        if (advisorRes != null && !advisorRes.noOp) {
-             // Apply Advisor Action
-             if (advisorRes.requestedTbrRate != null) {
-                  setTempBasal(advisorRes.requestedTbrRate, advisorRes.requestedTbrDuration, profile, rT, currenttemp, overrideSafetyLimits = true)
+        if (advisorRes is DecisionResult.Applied) {
+             if (advisorRes.tbrUph != null) {
+                  setTempBasal(advisorRes.tbrUph, advisorRes.tbrMin ?: 30, profile, rT, currenttemp, overrideSafetyLimits = true)
              }
-             finalizeAndCapSMB(rT, advisorRes.requestedBolus, advisorRes.reason, mealData, threshold, true)
+             finalizeAndCapSMB(rT, advisorRes.bolusU, advisorRes.reason, mealData, threshold, true)
              return rT
         }
 
         // 3. Autodrive Check
         val autoRes = tryAutodrive(
             bg, delta, shortAvgDelta, profile, lastBolusTimeMs ?: 0L, predictedBg, mealData.slopeFromMinDeviation, targetBg, reason,
-            preferences.get(BooleanKey.OApsAIMIautoDrive), // autodrive param boolean
+            preferences.get(BooleanKey.OApsAIMIautoDrive),
             dynamicPbolusLarge, dynamicPbolusSmall
         )
         
-        if (autoRes != null && !autoRes.noOp) {
-            // Apply Autodrive Action
-            lastAutodriveActionTime = System.currentTimeMillis() // 🟢 Update Persistence (Gate R2 Reset)
-            
-            if (autoRes.requestedTbrRate != null) {
-                 setTempBasal(autoRes.requestedTbrRate, autoRes.requestedTbrDuration, profile, rT, currenttemp, overrideSafetyLimits = false)
-            }
-            finalizeAndCapSMB(rT, autoRes.requestedBolus, autoRes.reason, mealData, threshold, false) // explicitUser=false
-            
-            // 🛡️ Gate R3: No-Op Fallback (Post-Cap Validation)
-            // Even if Autodrive "wanted" an action, safety caps (IOB, MaxSMB) might have zeroed it.
-            // If the effective result is negligible, we MUST release control to Global AIMI/Modes.
-            val effectiveBolus = rT.insulinReq ?: 0.0
-            val effectiveDuration = rT.duration ?: 0
-            
-            if (effectiveBolus > 0.05 || effectiveDuration > 0) {
-                 consoleLog.add("AD_APPLIED intent=${autoRes.requestedBolus} actual=$effectiveBolus")
-                 return rT
-            } else {
-                 consoleLog.add("AD_NOOP_FALLBACK reason=CappedToZero")
-                 reason.append(" (Fallback: Autodrive Result Capped to 0)")
-                 // FALL THROUGH to Global AIMI logic below
-            }
-        } else if (autoRes != null && autoRes.noOp) {
-             consoleLog.add("AD_NOOP_IGNORED reason=${autoRes.reason}")
-        }
-        
-        // If we get here, no high-priority action was taken.
-        // Proceed to Global AIMI Logic / Safety Nets below.
-        // Ensures explicit user intent (Notes: Snack, Meal, Bfast...) ALWAYS fires the configured prebolus.
-        // Relaxed BG threshold to 60 as per user intent for prebolusing.
-        if (bg >= 60) {
-            var manualPrebolus: Double = 0.0
-            var manualModeName: String = ""
-
-            // 1. High Carb
-            if (isHighCarbModeCondition()) {
-                manualPrebolus = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus)
-                manualModeName = "HighCarb"
-            } else if (isHighCarb2ModeCondition()) {
-                manualPrebolus = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus2)
-                manualModeName = "HighCarb 2"
-            }
-            // 2. Dinner
-            else if (isDinnerModeCondition()) {
-                manualPrebolus = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus)
-                manualModeName = "Dinner"
-            } else if (isDinner2ModeCondition()) {
-                manualPrebolus = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus2)
-                manualModeName = "Dinner 2"
-            }
-            // 3. Lunch
-            else if (isLunchModeCondition()) {
-                manualPrebolus = preferences.get(DoubleKey.OApsAIMILunchPrebolus)
-                manualModeName = "Lunch"
-            } else if (isLunch2ModeCondition()) {
-                manualPrebolus = preferences.get(DoubleKey.OApsAIMILunchPrebolus2)
-                manualModeName = "Lunch 2"
-            }
-            // 4. Breakfast
-            else if (isbfastModeCondition()) {
-                manualPrebolus = preferences.get(DoubleKey.OApsAIMIBFPrebolus)
-                manualModeName = "Breakfast"
-            } else if (isbfast2ModeCondition()) {
-                manualPrebolus = preferences.get(DoubleKey.OApsAIMIBFPrebolus2)
-                manualModeName = "Breakfast 2"
-            }
-            // 5. Generic Meal
-            else if (isMealModeCondition()) {
-                manualPrebolus = preferences.get(DoubleKey.OApsAIMIMealPrebolus)
-                manualModeName = "Meal"
-            }
-            // 6. Snack
-            else if (issnackModeCondition()) {
-                manualPrebolus = preferences.get(DoubleKey.OApsAIMISnackPrebolus)
-                manualModeName = "Snack"
-            }
-
-            // Execute if a mode was found
-            if (manualPrebolus > 0.0) {
-                val msg = "🍱 Manual Mode ($manualModeName): Force Prebolus ${manualPrebolus}U"
-                consoleLog.add("MODE_PREBOLUS_TRIGGER name=$manualModeName amount=$manualPrebolus reason=ManualOverrides")
-                
-                // [FIX] Structural Safety: Ensure Basal is set (maintain current profile basal or mode default)
-                // Use profile.current_basal (Standard Reference)
-                setTempBasal(profile.current_basal, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
-                 
-                 // [Lyra Verification] Standardized Log
-                 val phase = if (manualModeName.endsWith(" 2")) "PRE2" else "PRE1"
-                 consoleLog.add("MODE_${phase}_SENT amount=$manualPrebolus mode=$manualModeName")
-
-                 finalizeAndCapSMB(rT, manualPrebolus, msg, mealData, threshold, true)
-                 return rT
-            } else if (manualModeName.isNotEmpty()) {
-                reason.append("⚠️ Manual Mode ($manualModeName) detected but Prebolus config is 0.0U\n")
-            }
-        }
-
-        // -----------------------------------------------------
-        // 2. 📸 Meal Advisor Integration (Priority: Explicit Data)
-        // -----------------------------------------------------
-        val estimatedCarbs = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbs)
-        val estimatedCarbsTime = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbTime).toLong() 
-        val timeSinceEstimateMin = (System.currentTimeMillis() - estimatedCarbsTime) / 60000.0
-        
-        if (estimatedCarbs > 10.0 && timeSinceEstimateMin in 0.0..120.0 && bg >= 60) {
-            // [User Spec]: Trigger if Delta positive (Start of meal)
-            // 🛑 SAFETY: Ensure we haven't already bolused for this meal recently (45m Refractory)
-            if (delta > 0.0 && modesCondition && !hasReceivedRecentBolus(45, lastBolusTimeMs ?: 0L)) {
-                
-                // 1. Force High Basal (30 min)
-                val maxBasalPref = preferences.get(DoubleKey.meal_modes_MaxBasal)
-                val safeMax = if (maxBasalPref > 0.1) maxBasalPref else profile.max_basal
-                
-                // [FIX] Structural Safety: Use setTempBasal to enforce LGS/Clamps
-                setTempBasal(safeMax, 30, profile, rT, currenttemp, overrideSafetyLimits = true)
-                
-                // 2. Force Bolus (Proportional Logic)
-                val insulinForCarbs = estimatedCarbs / profile.carb_ratio
-                val coveredByBasal = safeMax * 0.5 // 30 mins of High Basal
-                val netNeeded = insulinForCarbs - iob_data.iob - coveredByBasal
-                 val targetUnits = netNeeded.coerceAtLeast(0.0)
-                 
-                 consoleLog.add("MEAL_PREBOLUS_CALC carbs=${estimatedCarbs.toInt()} IC=${profile.carb_ratio} IOB=${"%.2f".format(iob_data.iob)} BasalCover=${"%.2f".format(coveredByBasal)} -> $targetUnits")
-
-                 val msg = "📸 Meal Advisor: ${estimatedCarbs.toInt()}g / IC ${"%.1f".format(profile.carb_ratio)} - IOB ${"%.2f".format(iob_data.iob)} - Basal ${"%.2f".format(coveredByBasal)} = ${"%.2f".format(targetUnits)}U"
-                reason.append(msg + "\n")
-                
-                // Explicit User Action = true
-                finalizeAndCapSMB(rT, targetUnits, reason.toString(), mealData, threshold, true)
-                return rT
-            }
-        }
-
-        // -----------------------------------------------------
-        // 3. 🥞 Autodrive (Priority: System Reaction)
-        // -----------------------------------------------------
-        // Only fires if no Manual/Advisor action was taken.
-        // Refractory Check:
-        if (hasReceivedRecentBolus(45, lastBolusTimeMs ?: 0L)) {
-             reason.append("⏳ Autodrive Refractory (Main): Recent Large -> Skip\n")
-             // Fallback to ML
-        } else {
-             // [Refactor] Autodrive State Machine (Off, Early, Confirmed)
-             var state = 0 
-             var amount = 0.0
-             var stateReason = ""
-
-             if (delta <= 0.0) {
-                 state = 0
-                 stateReason = "Off: Delta <= 0"
-             } else if (bg >= 100.0 && delta >= 5.0 && shortAvgDelta >= 3.0) {
-                 state = 2 // Confirmed
-                 amount = dynamicPbolusLarge
-                 stateReason = "Confirmed: Bg>100 & Delta>5 & Avg>3"
-             } else if (delta >= 2.0) {
-                 state = 1 // Early
-                 amount = dynamicPbolusSmall
-                  stateReason = "Early: Delta>2"
-             } else {
-                 state = 0
-                 stateReason = "Off: Conditions not met"
+        if (autoRes is DecisionResult.Applied) {
+             // 🟢 Validated Intent. Now checking Safety Constraints (R3: No-Op Fallback)
+             
+             // 1. Apply TBR (System Intent)
+             if (autoRes.tbrUph != null) {
+                  setTempBasal(autoRes.tbrUph, autoRes.tbrMin ?: 30, profile, rT, currenttemp, overrideSafetyLimits = false)
              }
              
-             // [Lyra Verification] Explicit State Log
-             val stateName = when(state) { 2 -> "CONFIRMED"; 1 -> "EARLY"; else -> "OFF" }
-             if (state != 0) consoleLog.add("AD_STATE=$stateName reason='$stateReason'")
-
-             when (state) {
-                 2 -> {
-                     reason.append("🚀 Autodrive [Confirmed]: $stateReason -> Force ${amount}U\n")
-                     // [Lyra Fix] Maintain High Basal during Autodrive
-                     // Use specific Autodrive Max Basal if available, else profile max
-                     val rawAutoMax = preferences.get(DoubleKey.autodriveMaxBasal) ?: 0.0
-                     val scalarAuto: Double = if (rawAutoMax > 0.1) rawAutoMax.toDouble() else profile.max_basal.toDouble()
-                     val scalarProfile: Double = profile.max_basal.toDouble()
-                     val safeAutoMax = if (scalarAuto < scalarProfile) scalarAuto else scalarProfile
-                     setTempBasal(safeAutoMax, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
-                     
-                     finalizeAndCapSMB(rT, amount, reason.toString(), mealData, threshold)
-                     
-                     // 🛡️ Autodrive NO-OP Check
-                     // If Bolus is 0 AND (TBR is Same as Current OR Duration is 0) -> Fallback
-                     val effectiveBolus = rT.insulinReq ?: 0.0
-                     val effectiveDuration = rT.duration ?: 0
-                     
-                     if (effectiveBolus > 0.05 || effectiveDuration > 0) {
-                         return rT
-                     } else {
-                         reason.append("⚠️ Autodrive NO-OP (Zero Bolus & Zero Duration) -> Fallback to Global.\n")
-                         consoleLog.add("AD_NOOP: Intent=${amount}U Actual=${effectiveBolus}U Dur=${effectiveDuration}m -> FALLBACK")
-                         // Do NOT return. Fallback to Global AIMI logic.
-                     }
-                 }
-                 1 -> {
-                     reason.append("🚀 Autodrive [Early]: $stateReason -> Force ${amount}U\n")
-                     // [Lyra Fix] Maintain High Basal during Autodrive
-                     val rawAutoMax = preferences.get(DoubleKey.autodriveMaxBasal) ?: 0.0
-                     val scalarAuto: Double = if (rawAutoMax > 0.1) rawAutoMax.toDouble() else profile.max_basal.toDouble()
-                     val scalarProfile: Double = profile.max_basal.toDouble()
-                     val safeAutoMax = if (scalarAuto < scalarProfile) scalarAuto else scalarProfile
-                     setTempBasal(safeAutoMax, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
-                     
-                     finalizeAndCapSMB(rT, amount, reason.toString(), mealData, threshold)
-                     
-                     // 🛡️ Autodrive NO-OP Check
-                     val effectiveBolus = rT.insulinReq ?: 0.0
-                     val effectiveDuration = rT.duration ?: 0
-                     
-                     if (effectiveBolus > 0.05 || effectiveDuration > 0) {
-                         return rT
-                     } else {
-                         reason.append("⚠️ Autodrive NO-OP (Zero Bolus & Zero Duration) -> Fallback to Global.\n")
-                         consoleLog.add("AD_NOOP: Intent=${amount}U Actual=${effectiveBolus}U Dur=${effectiveDuration}m -> FALLBACK")
-                         // Do NOT return. Fallback to Global AIMI logic.
-                     }
-                 }
-                 else -> {
-                     reason.append("🛑 Autodrive [Off]: Fallback to AIMI Global ($stateReason)\n")
-                     // Fall through to standard logic (Meal Advisor or AIMI SMB)
-                 }
+             // 2. Calculate Cap (Safety)
+             finalizeAndCapSMB(rT, autoRes.bolusU, autoRes.reason, mealData, threshold, false)
+             
+             // 3. Verify EFFECTIVE Action (R3)
+             val effectiveBolus = rT.insulinReq ?: 0.0
+             val effectiveDuration = rT.duration ?: 0
+             
+             if (effectiveBolus > 0.05 || effectiveDuration > 0) {
+                 lastAutodriveActionTime = System.currentTimeMillis() // 🟢 Update Strict Cooldown
+                 consoleLog.add("AD_APPLIED intent=${autoRes.bolusU} actual=$effectiveBolus")
+                 return rT
+             } else {
+                 consoleLog.add("AD_NOOP_FALLBACK reason=CappedToZero")
+                 reason.append(" (Fallback: Autodrive Result Capped to 0)")
+                 // FALL THROUGH to Global AIMI logic
              }
+        } else if (autoRes is DecisionResult.Fallthrough) {
+            // Log fallback reason if relevant?
+            // consoleLog.add("AD_SKIP: ${autoRes.reason}")
         }
+
         // 🛡️ Innovation: FCL 6.0 Safety Net
         val isPostHypo = isPostHypoProtectionCondition(recentBGs, reason)
         val isCompression = isCompressionProtectionCondition(delta.toFloat(), reason)
@@ -4002,52 +3785,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             return rT
         }
         
-        if (!nightbis && isAutodriveModeCondition(delta, autodrive, mealData.slopeFromMinDeviation, bg.toFloat(), predictedBg, reason, targetBg) && modesCondition && bg >= 80) {
-            
-            // FCL 7.0: Dynamic Logic
-            val pbolusA = if (isPostHypo || (delta < 5.0f && bg < targetBg + 30.0f)) dynamicPbolusSmall else dynamicPbolusLarge
-            val isSmall = (pbolusA == dynamicPbolusSmall)
+        // Duplicate Autodrive and Zero-IOB Logic Removed (Refactor v2.2)
 
-            // 5. Refractory Period (Antidumping)
-            // 5. Refractory Period (Antidumping)
-            // [User Request]: Resume normal Autodrive 30 minutes after ANY significant bolus.
-            // This prevents double dialing if the first bolus was capped or slightly different.
-            if (hasReceivedRecentBolus(30, lastBolusTimeMs ?: 0L)) {
-                rT.reason.append("⏳ Autodrive Refractory: Recent Bolus detected -> Fallback ML\n")
-                // Fallthrough to ML logic
-            } else {
-                 val logTag = if (isSmall) "AD_SMALL_PREBOLUS_TRIGGER" else "AD_BIG_PREBOLUS_TRIGGER"
-                 consoleLog.add("$logTag amount=$pbolusA reason=AutodriveMain")
-
-                 val adaptiveUnits = calculateAdaptivePrebolus(pbolusA, delta, reason)
-                 reason.append("🚀 Autodrive Main -> Force Bolus ${adaptiveUnits}U\n")
-                 
-                 finalizeAndCapSMB(rT, adaptiveUnits, reason.toString(), mealData, threshold)
-                 return rT
-            }
-        }
-
-
-        val autodriveCondition = adjustAutodriveCondition(bgTrend, predictedBg, combinedDelta.toFloat(), reason, targetBg + 30f)
-        if (bg > targetBg + 10 && predictedBg > targetBg + 30 && !nightbis && !hasReceivedRecentBolus(60, lastBolusTimeMs ?: 0L) && autodrive && detectMealOnset(delta, predicted.toFloat(), bgAcceleration.toFloat(), predictedBg, targetBg) && modesCondition && bg >= 80) {
-            val msg = context.getString(R.string.reason_autodrive_early_meal, dynamicPbolusSmall, combinedDelta, predicted, bgAcceleration.toDouble())
-            finalizeAndCapSMB(rT, dynamicPbolusSmall, msg, mealData, threshold)
-            return rT
-        }
-
-        // 🚀 Innovation: Zero-IOB Priming (Fallback)
-            // Priming logic (Zero IOB)
-            if (isZeroIOBPrimingCondition(iob.toDouble(), delta.toFloat(), bgAcceleration.toFloat(), reason, lastBolusTimeMs ?: 0L)) {
-                 if (!hasReceivedRecentBolus(30, lastBolusTimeMs ?: 0L)) {
-                    val primeBolus = calculateDynamicMicroBolus(effectiveISF, 15.0, reason) // Safe priming scaled to context
-                    reason.append("→ Zero-IOB Priming with ${primeBolus}U\n")
-                    finalizeAndCapSMB(rT, primeBolus, reason.toString(), mealData, threshold)
-                    return rT
-                 } else {
-                    reason.append("⏳ Zero-IOB Priming Refractory: Recent Bolus detected -> Skip\n")
-                 }
-            }
-        // Legacy Manual Mode Blocks Removed (Consolidated above in FCL 14.0 Enforcer)
         // Check lines ~3750 for active logic.
         //rT.reason.append(", MaxSMB: $maxSMB")
         rT.reason.append(context.getString(R.string.reason_maxsmb, maxSMB))
@@ -4798,19 +4537,22 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             variable_sens = "%.0f".format(variableSensitivity.toDouble()).toDouble()
         )
         // 🔮 FCL 11.0: Restore preserved Predictions
-        rT.predBGs = savedPredBGs
         
         rT.reason.append(savedReason)
+        // Re-define for Global Logic
+        val estimatedCarbs = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbs)
+        val estimatedCarbsTime = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbTime).toLong()
+        val timeSinceEstimateMin = (System.currentTimeMillis() - estimatedCarbsTime) / 60000.0
+        
         val maxBasalPref = preferences.get(DoubleKey.meal_modes_MaxBasal)
-        val rate = when {
+        val rate: Double? = when {
             snackTime && snackrunTime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 4.0, "AI Force basal because Snack Time $snackrunTime.", currenttemp, rT, overrideSafety = true)
             mealTime && mealruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because mealTime $mealruntime.", currenttemp, rT, overrideSafety = true)
             bfastTime && bfastruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because Breakfast $bfastruntime.", currenttemp, rT, overrideSafety = true)
             lunchTime && lunchruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because lunchTime $lunchruntime.", currenttemp, rT, overrideSafety = true)
             dinnerTime && dinnerruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because dinnerTime $dinnerruntime.", currenttemp, rT, overrideSafety = true)
             highCarbTime && highCarbrunTime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because highcarb $highCarbrunTime.", currenttemp, rT, overrideSafety = true)
-            // 📸 Meal Advisor Forced Basal (0-30m)
-            (timeSinceEstimateMin <= 30 && estimatedCarbs > 10) -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "📸 AI Force High Basal (Meal Advisor) ${timeSinceEstimateMin.toInt()}m", currenttemp, rT, overrideSafety = true)
+            // 📸 Meal Advisor Forced Basal REMOVED (Duplicate of Pipeline)
             
             // 🔥 Patch Post-Meal Hyper Boost (AIMI 2.0)
             // Added: Treat Recent Meal Advisor (< 120m) as implicit Meal Mode
@@ -4872,20 +4614,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             return rT
         }
 
-        rT.reason.appendLine( //"🚗 Autodrive: $autodrive | Mode actif: ${isAutodriveModeCondition(delta, autodrive, mealData.slopeFromMinDeviation, bg.toFloat(), predictedBg, reason)} | " +
-            context.getString(R.string.autodrive_status, if (autodrive) "✔" else "✘", if (isAutodriveModeCondition(delta, autodrive, mealData.slopeFromMinDeviation, bg.toFloat(), predictedBg, reason, target_bg.toFloat())) "✔" else "✘") +
-//"AutodriveCondition: $autodriveCondition"
-                context.getString(R.string.autodrive_condition, if (autodriveCondition) "✔" else "✘")
-        )
-
         rT.reason.appendLine(
-//    "🔍 BGTrend: ${"%.2f".format(bgTrend)} | ΔCombiné: ${"%.2f".format(combinedDelta)} | " +
-            context.getString(R.string.reason_bg_trend, bgTrend, combinedDelta) +
-//    "Predicted BG: ${"%.0f".format(predictedBg)} | Accélération: ${"%.2f".format(bgacc)} | " +
-                context.getString(R.string.reason_predicted_bg, predictedBg, bgacc) +
-//    "Slope Min Dev.: ${"%.2f".format(mealData.slopeFromMinDeviation)}"
-                context.getString(R.string.reason_slope_min_dev, mealData.slopeFromMinDeviation)
+             context.getString(R.string.autodrive_status, if (autodrive) "✔" else "✘", "N/A")
         )
+        // Cleaned up Logging
 
         rT.reason.appendLine(
             "📊 TIR: <70: ${"%.1f".format(currentTIRLow)}% | 70–180: ${"%.1f".format(currentTIRRange)}% | >180: ${"%.1f".format(currentTIRAbove)}%"
@@ -5560,18 +5292,17 @@ class DetermineBasalaimiSMB2 @Inject constructor(
          }
     }
 
-    private fun tryManualModes(bg: Double, delta: Float, profile: OapsProfileAimi): ActionResult? {
-        if (bg < 60) return null
+    private fun tryManualModes(bg: Double, delta: Float, profile: OapsProfileAimi): DecisionResult {
+        if (bg < 60) return DecisionResult.Fallthrough("BG too low (<60)")
 
         // 1. Detect Active Mode & Configs
         var activeName = ""
         var activeRuntimeMin = -1
         var pre1Config = 0.0
         var pre2Config = 0.0
-        var pre2StartMin = 15
-
+        
         // Priority check (same order as original)
-        if (highCarbrunTime in 0..120) { // arbitrary wide window check, refined below
+        if (highCarbrunTime in 0..120) {
             if (highCarbrunTime in 0..30) { 
                  activeName = "HighCarb"; activeRuntimeMin = runtimeToMinutes(highCarbrunTime)
                  pre1Config = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus)
@@ -5603,10 +5334,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         }
 
         if (activeName.isEmpty()) {
-            // Reset state if no mode active? Or just return null.
-            // If we leave stale state, it might conflict next time? 
-            // Better to clear state if time > threshold, but for now just return.
-            return null
+            return DecisionResult.Fallthrough("No Active Mode")
         }
 
         // 2. Load Persisted State
@@ -5615,11 +5343,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val now = System.currentTimeMillis()
 
         // 3. Sync State with Reality
-        // If stored name differs, or stored start time is vastly different (> 45 min lag?), treat as NEW.
-        // We approximate StartTime via (Now - Runtime).
         val approxStart = now - (activeRuntimeMin * 60000L)
-        // detailed check: if stored name != activeName -> Reset
-        // check if approxStart is reasonably close to stored start (within 5 mins) -> valid. Else Reset.
         val timeDiff = kotlin.math.abs(state.startMs - approxStart)
         
         if (state.name != activeName || timeDiff > 300000L) {
@@ -5642,8 +5366,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
              }
         }
 
-        // Phase 2: 15..23 min (Only if Phase 1 was handled or skipped? No, independent entitlement)
-        // User spec: "entre 15 et 23 minutes : envoyer Prebolus2"
+        // Phase 2: 15..23 min
         if (activeRuntimeMin in 15..23 && !state.pre2 && pre2Config > 0) {
              actionBolus = pre2Config
              actionPhase = "Pre2"
@@ -5657,31 +5380,24 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         
         if (actionBolus > 0.0) {
             val maxBasalPref = preferences.get(DoubleKey.meal_modes_MaxBasal)
-            // If < 0.1, it's likely unset/zero. Use profile max as fallback or just profile.current_basal if intent is only bolus.
-            // But spec says "pose TBR = TBRmaxMode".
+            // If < 0.1, use profile.max_basal.
+            // Requirement D4: "Vérifie que TBR pendant modes utilise bien la préférence TBRmaxMode"
             val modeTbr = if (maxBasalPref > 0.1) maxBasalPref else profile.max_basal
             
             consoleLog.add("MODE_DECISION mode=$activeName phase=$actionPhase amount=$actionBolus tbr=$modeTbr")
-            return ActionResult(
+            return DecisionResult.Applied(
                 kind = ActionKind.MANUAL_MODE,
-                requestedBolus = actionBolus,
-                requestedTbrRate = modeTbr, 
-                requestedTbrDuration = 30,
+                bolusU = actionBolus,
+                tbrUph = modeTbr, 
+                tbrMin = 30,
                 reason = "🍱 Manual Mode ($activeName $actionPhase): Force ${actionBolus}U + TBR ${modeTbr}U/h"
             )
         }
         
-        // TBR Maintenance? User said "After sequence mode : ML/SMB + reactivity". 
-        // So no forced TBR after the initial trigger unless needed?
-        // Actually manual mode usually enforces high basal?
-        // "poser TBR = TBRmaxMode pendant 30 minutes (immédiatement)"
-        // This implies when the Prebolus is sent.
-        // My code sends TBR with the Bolus. Correct.
-
-        return null
+        return DecisionResult.Fallthrough("Mode Active but No Phase Trigger (Runtime $activeRuntimeMin)")
     }
 
-    private fun tryMealAdvisor(bg: Double, delta: Float, iobData: IobTotal, profile: OapsProfileAimi, lastBolusTime: Long, modesCondition: Boolean): ActionResult? {
+    private fun tryMealAdvisor(bg: Double, delta: Float, iobData: IobTotal, profile: OapsProfileAimi, lastBolusTime: Long, modesCondition: Boolean): DecisionResult {
         val estimatedCarbs = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbs)
         val estimatedCarbsTime = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbTime).toLong()
         val timeSinceEstimateMin = (System.currentTimeMillis() - estimatedCarbsTime) / 60000.0
@@ -5689,7 +5405,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         if (estimatedCarbs > 10.0 && timeSinceEstimateMin in 0.0..120.0 && bg >= 60) {
             // Refractory Check (Safety)
             if (hasReceivedRecentBolus(45, lastBolusTime)) {
-                return ActionResult(kind = ActionKind.MEAL_ADVISOR, reason = "Advisor Refractory", noOp = true)
+                return DecisionResult.Fallthrough("Advisor Refractory (Recent Bolus <45m)")
             }
             
             if (delta > 0.0 && modesCondition) { 
@@ -5702,16 +5418,16 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 val netNeeded = (insulinForCarbs - iobData.iob - coveredByBasal).coerceAtLeast(0.0)
 
                 consoleLog.add("ADVISOR_CALC carbs=${estimatedCarbs.toInt()} net=$netNeeded")
-                return ActionResult(
+                return DecisionResult.Applied(
                     kind = ActionKind.MEAL_ADVISOR,
-                    requestedBolus = netNeeded,
-                    requestedTbrRate = safeMax,
-                    requestedTbrDuration = 30,
+                    bolusU = netNeeded,
+                    tbrUph = safeMax,
+                    tbrMin = 30,
                     reason = "📸 Meal Advisor: ${estimatedCarbs.toInt()}g -> ${"%.2f".format(netNeeded)}U"
                 )
             }
         }
-        return null
+        return DecisionResult.Fallthrough("No active Meal Advisor request")
     }
 
     private fun tryAutodrive(
@@ -5727,14 +5443,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         autodrive: Boolean,
         dynamicPbolusLarge: Double,
         dynamicPbolusSmall: Double
-    ): ActionResult? {
+    ): DecisionResult {
         val autodriveBG = preferences.get(IntKey.OApsAIMIAutodriveBG)
         
         // GATE R1: Strict BG Threshold
         if (bg < autodriveBG) {
             // reasonBuf.append("Autodrive Ignored: BG $bg < Threshold $autodriveBG") 
-            // Don't log spam, just return null (Next Priority)
-            return null
+            return DecisionResult.Fallthrough("BG $bg < Threshold $autodriveBG")
         }
 
         // GATE R2: Strict Cooldown (45 min)
@@ -5742,14 +5457,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val cooldownMs = 45 * 60 * 1000L
         val remaining = (lastAutodriveActionTime + cooldownMs) - now
         if (remaining > 0) {
-            // reasonBuf.append("Autodrive Cooldown: ${remaining/1000/60}m remaining")
-            return ActionResult(kind = ActionKind.AUTODRIVE, reason = "Cooldown active", noOp = true)
+            return DecisionResult.Fallthrough("Cooldown active (${remaining/1000/60}m)")
         }
 
-        // Logic Re-Use: isAutodriveModeCondition checks Slope, Delta, etc.
+        // Logic Re-Use
         val validCondition = isAutodriveModeCondition(delta, autodrive, slopeFromMinDeviation, bg.toFloat(), predictedBg, reasonBuf, targetBg)
         
-        if (!validCondition) return null
+        if (!validCondition) return DecisionResult.Fallthrough("Conditions not met")
 
         // Determine Intensity
         var amount = 0.0
@@ -5762,25 +5476,20 @@ class DetermineBasalaimiSMB2 @Inject constructor(
              amount = dynamicPbolusSmall
              stateReason = "Early: Delta>2"
         } else {
-             return null // Condition valid but stats fell short of action
+             return DecisionResult.Fallthrough("Delta insufficient")
         }
 
         // TBR Calculation
         val rawAutoMax = preferences.get(DoubleKey.autodriveMaxBasal) ?: 0.0
         val scalarAuto: Double = if (rawAutoMax > 0.1) rawAutoMax.toDouble() else profile.max_basal.toDouble()
         val safeAutoMax = minOf(scalarAuto, profile.max_basal.toDouble())
-
-        // GATE R3: No-Op Fallback Check deferred to Main Loop (or calculated here)
-        // Here we return the INTENT. The main loop will check if capped result is 0.
-        // Actually R3 says "If intended action is capped to 0... release control".
-        // Use ActionResult to convey Intent.
         
         consoleLog.add("AD_INTENT amount=$amount tbr=$safeAutoMax")
-        return ActionResult(
+        return DecisionResult.Applied(
             kind = ActionKind.AUTODRIVE,
-            requestedBolus = amount,
-            requestedTbrRate = safeAutoMax,
-            requestedTbrDuration = 30,
+            bolusU = amount,
+            tbrUph = safeAutoMax,
+            tbrMin = 30,
             reason = "🚀 Autodrive [$stateReason] -> Force ${amount}U"
         )
     }

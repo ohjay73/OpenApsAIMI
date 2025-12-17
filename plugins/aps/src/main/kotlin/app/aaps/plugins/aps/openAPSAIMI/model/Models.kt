@@ -70,17 +70,16 @@ enum class ActionKind {
     SAFETY_HALT
 }
 
-/**
- * Unified result for Decision Pipeline.
- * Enforces priority and feedback loops (No-Op).
- */
-data class ActionResult(
-    val kind: ActionKind,
-    val requestedBolus: Double = 0.0,
-    val requestedTbrRate: Double? = null, // null means no TBR change requested
-    val requestedTbrDuration: Int = 0,
-    val reason: String = "",
-    val noOp: Boolean = false // If TRUE, the logic calculated something but resulted in no effective action (fallthrough)
-)
+sealed class DecisionResult {
+    data class Applied(
+        val kind: ActionKind,
+        val bolusU: Double = 0.0,
+        val tbrUph: Double? = null,
+        val tbrMin: Int? = null,
+        val reason: String
+    ) : DecisionResult()
 
-
+    data class Fallthrough(
+        val reason: String
+    ) : DecisionResult()
+}
