@@ -3750,7 +3750,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                  2 -> {
                      reason.append("🚀 Autodrive [Confirmed]: $stateReason -> Force ${amount}U\n")
                      // [Lyra Fix] Maintain High Basal during Autodrive
-                     setTempBasal(profile.max_basal, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+                     // Use specific Autodrive Max Basal if available, else profile max
+                     // Use specific Autodrive Max Basal if available, else profile max
+                     val rawAutoMax = preferences.get(DoubleKey.autodriveMaxBasal) ?: 0.0
+                     val scalarAuto: Double = if (rawAutoMax > 0.1) rawAutoMax.toDouble() else profile.max_basal.toDouble()
+                     val scalarProfile: Double = profile.max_basal.toDouble()
+                     val safeAutoMax = if (scalarAuto < scalarProfile) scalarAuto else scalarProfile
+                     setTempBasal(safeAutoMax, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
                      
                      finalizeAndCapSMB(rT, amount, reason.toString(), mealData, threshold)
                      return rT
@@ -3758,7 +3764,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                  1 -> {
                      reason.append("🚀 Autodrive [Early]: $stateReason -> Force ${amount}U\n")
                      // [Lyra Fix] Maintain High Basal during Autodrive
-                     setTempBasal(profile.max_basal, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+                     // [Lyra Fix] Maintain High Basal during Autodrive
+                     val rawAutoMax = preferences.get(DoubleKey.autodriveMaxBasal) ?: 0.0
+                     val scalarAuto: Double = if (rawAutoMax > 0.1) rawAutoMax.toDouble() else profile.max_basal.toDouble()
+                     val scalarProfile: Double = profile.max_basal.toDouble()
+                     val safeAutoMax = if (scalarAuto < scalarProfile) scalarAuto else scalarProfile
+                     setTempBasal(safeAutoMax, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
                      
                      finalizeAndCapSMB(rT, amount, reason.toString(), mealData, threshold)
                      return rT
