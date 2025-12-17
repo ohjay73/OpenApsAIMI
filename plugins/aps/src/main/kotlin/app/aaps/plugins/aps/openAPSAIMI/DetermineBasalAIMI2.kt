@@ -5537,53 +5537,147 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     // ⚙️ DECISION PIPELINE HELPERS (AIMI 2.0 Refactor)
     // -----------------------------------------------------------------------------------------
 
+    // -----------------------------------------------------
+    // ⚔️ DECISION PIPELINE HELPERS (AIMI 2.0 Refactor)
+    // -----------------------------------------------------
+
+    private data class ModeState(
+         val name: String = "",
+         val startMs: Long = 0L,
+         val pre1: Boolean = false,
+         val pre2: Boolean = false
+    ) {
+         fun serialize(): String = "$name|$startMs|$pre1|$pre2"
+         companion object {
+             fun deserialize(s: String): ModeState {
+                 if (s.isBlank()) return ModeState()
+                 val p = s.split("|")
+                 if (p.size < 4) return ModeState()
+                 return try {
+                     ModeState(p[0], p[1].toLong(), p[2].toBoolean(), p[3].toBoolean())
+                 } catch (e: Exception) { ModeState() }
+             }
+         }
+    }
+
     private fun tryManualModes(bg: Double, delta: Float, profile: OapsProfileAimi): ActionResult? {
         if (bg < 60) return null
 
-        var amount = 0.0
-        var modeName = ""
+        // 1. Detect Active Mode & Configs
+        var activeName = ""
+        var activeRuntimeMin = -1
+        var pre1Config = 0.0
+        var pre2Config = 0.0
+        var pre2StartMin = 15
 
-        if (isHighCarbModeCondition()) {
-            amount = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus); modeName = "HighCarb"
-        } else if (isHighCarb2ModeCondition()) {
-            amount = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus2); modeName = "HighCarb 2"
-        } else if (isDinnerModeCondition()) {
-            amount = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus); modeName = "Dinner"
-        } else if (isDinner2ModeCondition()) {
-            amount = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus2); modeName = "Dinner 2"
-        } else if (isLunchModeCondition()) {
-            amount = preferences.get(DoubleKey.OApsAIMILunchPrebolus); modeName = "Lunch"
-        } else if (isLunch2ModeCondition()) {
-            amount = preferences.get(DoubleKey.OApsAIMILunchPrebolus2); modeName = "Lunch 2"
-        } else if (isbfastModeCondition()) {
-            amount = preferences.get(DoubleKey.OApsAIMIBFPrebolus); modeName = "Breakfast"
-        } else if (isbfast2ModeCondition()) {
-            amount = preferences.get(DoubleKey.OApsAIMIBFPrebolus2); modeName = "Breakfast 2"
-        } else if (isMealModeCondition()) {
-            amount = preferences.get(DoubleKey.OApsAIMIMealPrebolus); modeName = "Meal"
-        } else if (issnackModeCondition()) {
-            amount = preferences.get(DoubleKey.OApsAIMISnackPrebolus); modeName = "Snack"
+        // Priority check (same order as original)
+        if (highCarbrunTime in 0..120) { // arbitrary wide window check, refined below
+            if (highCarbrunTime in 0..30) { 
+                 activeName = "HighCarb"; activeRuntimeMin = runtimeToMinutes(highCarbrunTime)
+                 pre1Config = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus)
+                 pre2Config = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus2)
+            }
+        } 
+        if (activeName.isEmpty() && dinnerruntime in 0..30) {
+             activeName = "Dinner"; activeRuntimeMin = runtimeToMinutes(dinnerruntime)
+             pre1Config = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus)
+             pre2Config = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus2)
+        }
+        if (activeName.isEmpty() && lunchruntime in 0..30) {
+             activeName = "Lunch"; activeRuntimeMin = runtimeToMinutes(lunchruntime)
+             pre1Config = preferences.get(DoubleKey.OApsAIMILunchPrebolus)
+             pre2Config = preferences.get(DoubleKey.OApsAIMILunchPrebolus2)
+        }
+        if (activeName.isEmpty() && bfastruntime in 0..30) {
+             activeName = "Breakfast"; activeRuntimeMin = runtimeToMinutes(bfastruntime)
+             pre1Config = preferences.get(DoubleKey.OApsAIMIBFPrebolus)
+             pre2Config = preferences.get(DoubleKey.OApsAIMIBFPrebolus2)
+        }
+        if (activeName.isEmpty() && mealruntime in 0..30) {
+             activeName = "Meal"; activeRuntimeMin = runtimeToMinutes(mealruntime)
+             pre1Config = preferences.get(DoubleKey.OApsAIMIMealPrebolus)
+        }
+        if (activeName.isEmpty() && snackrunTime in 0..30) {
+             activeName = "Snack"; activeRuntimeMin = runtimeToMinutes(snackrunTime)
+             pre1Config = preferences.get(DoubleKey.OApsAIMISnackPrebolus)
         }
 
-        if (amount > 0.0) {
-            consoleLog.add("MODE_PRE_SENT mode=$modeName amount=$amount")
-            // Note: Manual Modes usually rely on Profile Basal, not boosted.
-            // If specific MealModeMaxBasal is desired, logic can be added. 
-            // For now, consistent with legacy: maintain profile basal mostly, but we can set TBR if needed.
+        if (activeName.isEmpty()) {
+            // Reset state if no mode active? Or just return null.
+            // If we leave stale state, it might conflict next time? 
+            // Better to clear state if time > threshold, but for now just return.
+            return null
+        }
+
+        // 2. Load Persisted State
+        val rawState = preferences.get(StringKey.OApsAIMIUnstableModeState)
+        var state = ModeState.deserialize(rawState)
+        val now = System.currentTimeMillis()
+
+        // 3. Sync State with Reality
+        // If stored name differs, or stored start time is vastly different (> 45 min lag?), treat as NEW.
+        // We approximate StartTime via (Now - Runtime).
+        val approxStart = now - (activeRuntimeMin * 60000L)
+        // detailed check: if stored name != activeName -> Reset
+        // check if approxStart is reasonably close to stored start (within 5 mins) -> valid. Else Reset.
+        val timeDiff = kotlin.math.abs(state.startMs - approxStart)
+        
+        if (state.name != activeName || timeDiff > 300000L) {
+             // New Mode Activation detected
+             state = ModeState(name = activeName, startMs = approxStart, pre1 = false, pre2 = false)
+             consoleLog.add("MODE_STATE_RESET new=$activeName runtime=$activeRuntimeMin")
+        }
+
+        // 4. Decision Logic (State-Based)
+        var actionBolus = 0.0
+        var actionPhase = ""
+        var newState = state
+
+        // Phase 1: 0..7 min
+        if (activeRuntimeMin in 0..7 && !state.pre1) {
+             if (pre1Config > 0) {
+                 actionBolus = pre1Config
+                 actionPhase = "Pre1"
+                 newState = state.copy(pre1 = true)
+             }
+        }
+
+        // Phase 2: 15..23 min (Only if Phase 1 was handled or skipped? No, independent entitlement)
+        // User spec: "entre 15 et 23 minutes : envoyer Prebolus2"
+        if (activeRuntimeMin in 15..23 && !state.pre2 && pre2Config > 0) {
+             actionBolus = pre2Config
+             actionPhase = "Pre2"
+             newState = state.copy(pre2 = true)
+        }
+
+        // 5. Update Persistence & Return
+        if (newState != state) {
+             preferences.put(StringKey.OApsAIMIUnstableModeState, newState.serialize())
+        }
+        
+        if (actionBolus > 0.0) {
+            val maxBasalPref = preferences.get(DoubleKey.meal_modes_MaxBasal)
+            // If < 0.1, it's likely unset/zero. Use profile max as fallback or just profile.current_basal if intent is only bolus.
+            // But spec says "pose TBR = TBRmaxMode".
+            val modeTbr = if (maxBasalPref > 0.1) maxBasalPref else profile.max_basal
+            
+            consoleLog.add("MODE_DECISION mode=$activeName phase=$actionPhase amount=$actionBolus tbr=$modeTbr")
             return ActionResult(
                 kind = ActionKind.MANUAL_MODE,
-                requestedBolus = amount,
-                requestedTbrRate = profile.current_basal,
+                requestedBolus = actionBolus,
+                requestedTbrRate = modeTbr, 
                 requestedTbrDuration = 30,
-                reason = "🍱 Manual Mode ($modeName): Force Prebolus ${amount}U"
-            )
-        } else if (modeName.isNotEmpty()) {
-            return ActionResult(
-                kind = ActionKind.MANUAL_MODE,
-                reason = "⚠️ Manual Mode ($modeName) detected but Prebolus config is 0.0U",
-                noOp = true
+                reason = "🍱 Manual Mode ($activeName $actionPhase): Force ${actionBolus}U + TBR ${modeTbr}U/h"
             )
         }
+        
+        // TBR Maintenance? User said "After sequence mode : ML/SMB + reactivity". 
+        // So no forced TBR after the initial trigger unless needed?
+        // Actually manual mode usually enforces high basal?
+        // "poser TBR = TBRmaxMode pendant 30 minutes (immédiatement)"
+        // This implies when the Prebolus is sent.
+        // My code sends TBR with the Bolus. Correct.
+
         return null
     }
 
