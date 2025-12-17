@@ -4864,6 +4864,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     calculateRate(basal, profile_current_basal, boostedRate/profile_current_basal, "Global Hyper Kicker (Active)", currenttemp, rT, overrideSafety = true)
                 } else null
             }
+
             // Fix: Clamp delta multiplier to 0.0 to prevent negative basal (delta is Float)
             //fastingTime -> calculateRate(profile_current_basal, profile_current_basal, delta.coerceAtLeast(0.0f).toDouble(), "AI Force basal because fastingTime", currenttemp, rT)
             fastingTime -> calculateRate(profile_current_basal, profile_current_basal, delta.coerceAtLeast(0.0f).toDouble(), context.getString(R.string.ai_force_basal_reason_fasting), currenttemp, rT)
