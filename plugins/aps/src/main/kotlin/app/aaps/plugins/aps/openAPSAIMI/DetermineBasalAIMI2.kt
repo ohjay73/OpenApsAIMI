@@ -1750,7 +1750,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val pbolusA: Double = preferences.get(DoubleKey.OApsAIMIautodrivePrebolus)
         val autodriveDelta: Float = preferences.get(DoubleKey.OApsAIMIcombinedDelta).toFloat()
         val autodriveMinDeviation: Double = preferences.get(DoubleKey.OApsAIMIAutodriveDeviation)
-        // val autodriveBG: Int = preferences.get(IntKey.OApsAIMIAutodriveBG) // Old static threshold
+    val autodriveBG: Int = preferences.get(IntKey.OApsAIMIAutodriveBG) // User Decision: Static Threshold
 
         // 🛡️ Noise Filter (Anti-Jump) -> [User Request]: Disabled. information for Autodrive.
     // if (delta > 15f && shortAvgDelta < 5f) {
@@ -1764,8 +1764,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val combinedDelta = (delta + predicted) / 2f
         
         // 🎯 Dynamic Thresholds
-        val dynamicBgThreshold = targetBg + 10f
-        val dynamicPredictedThreshold = targetBg + 30f
+    // Respect User Static Threshold AND Safety Margin (Target + 10)
+    val dynamicBgThreshold = maxOf(targetBg + 10f, autodriveBG.toFloat())
+    val dynamicPredictedThreshold = targetBg + 30f
 
         // 🔍 Tendance BG
         val recentBGs = getRecentBGs()
@@ -1812,8 +1813,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         reason.appendLine(
             "Autodrive: ${if (ok) "ON" else "OFF"} [$currentState] | " +
                 "cond=$autodriveCondition, dC=${"%.2f".format(combinedDelta)}, " +
-                "predBG>${dynamicPredictedThreshold.toInt()}, slope>=${"%.2f".format(autodriveMinDeviation)}, bg>=${dynamicBgThreshold.toInt()}"
-        )
+                "predBG>${dynamicPredictedThreshold.toInt()}, slope>=${"%.2f".format(autodriveMinDeviation)}, bg>=${dynamicBgThreshold.toInt()} (UserMin=${autodriveBG})"
+    )
 
         return ok
     }
