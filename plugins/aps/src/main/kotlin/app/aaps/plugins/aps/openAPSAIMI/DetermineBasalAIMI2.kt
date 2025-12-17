@@ -42,6 +42,9 @@ import app.aaps.plugins.aps.openAPSAIMI.carbs.CarbsAdvisor
 import app.aaps.plugins.aps.openAPSAIMI.extensions.asRounded
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.plugins.aps.openAPSAIMI.model.Constants
+import app.aaps.plugins.aps.openAPSAIMI.model.SmbPlan
+import app.aaps.plugins.aps.openAPSAIMI.model.ActionResult
+import app.aaps.plugins.aps.openAPSAIMI.model.ActionKind
 import app.aaps.plugins.aps.openAPSAIMI.model.LoopContext
 import app.aaps.plugins.aps.openAPSAIMI.model.PumpCaps
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdCsvLogger
@@ -169,6 +172,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private val consoleError = mutableListOf<String>()
     private val consoleLog = mutableListOf<String>()
     private var lastResistanceHammerTime: Long = 0L // FCL 6.0 State
+    private var lastAutodriveActionTime: Long = 0L  // FCL 14.1 Cooldown State
     private var hammerFailureCount: Int = 0 // FCL 7.0 State
     private val externalDir = File(Environment.getExternalStorageDirectory().absolutePath + "/Documents/AAPS")
     //private val modelFile = File(externalDir, "ml/model.tflite")
@@ -3713,8 +3717,68 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val threshold = computeHypoThreshold(minBg, profile.lgsThreshold)
 
         // -----------------------------------------------------
-        // 1. 🍽️ Manual Meal Mode Enforcer (Priority: User Intent)
+        // ⚔️ DECISION PIPELINE EXECUTION (Refactor v2)
         // -----------------------------------------------------
+        // Priority: 1. Manual -> 2. Advisor -> 3. Autodrive -> Fallback (Global)
+
+        // 1. Manual Mode Check
+        val manualRes = tryManualModes(bg, delta, profile)
+        if (manualRes != null && !manualRes.noOp) {
+            // Apply Manual Action
+            if (manualRes.requestedTbrRate != null) {
+                setTempBasal(manualRes.requestedTbrRate, manualRes.requestedTbrDuration, profile, rT, currenttemp, overrideSafetyLimits = false)
+            }
+            finalizeAndCapSMB(rT, manualRes.requestedBolus, manualRes.reason, mealData, threshold, true)
+            return rT
+        }
+
+        // 2. Meal Advisor Check
+        val advisorRes = tryMealAdvisor(bg, delta, iob_data, profile, lastBolusTimeMs ?: 0L, modesCondition)
+        if (advisorRes != null && !advisorRes.noOp) {
+             // Apply Advisor Action
+             if (advisorRes.requestedTbrRate != null) {
+                  setTempBasal(advisorRes.requestedTbrRate, advisorRes.requestedTbrDuration, profile, rT, currenttemp, overrideSafetyLimits = true)
+             }
+             finalizeAndCapSMB(rT, advisorRes.requestedBolus, advisorRes.reason, mealData, threshold, true)
+             return rT
+        }
+
+        // 3. Autodrive Check
+        val autoRes = tryAutodrive(
+            bg, delta, shortAvgDelta, profile, lastBolusTimeMs ?: 0L, predictedBg, mealData.slopeFromMinDeviation, targetBg, reason,
+            preferences.get(BooleanKey.OApsAIMIautoDrive), // autodrive param boolean
+            dynamicPbolusLarge, dynamicPbolusSmall
+        )
+        
+        if (autoRes != null && !autoRes.noOp) {
+            // Apply Autodrive Action
+            lastAutodriveActionTime = System.currentTimeMillis() // 🟢 Update Persistence (Gate R2 Reset)
+            
+            if (autoRes.requestedTbrRate != null) {
+                 setTempBasal(autoRes.requestedTbrRate, autoRes.requestedTbrDuration, profile, rT, currenttemp, overrideSafetyLimits = false)
+            }
+            finalizeAndCapSMB(rT, autoRes.requestedBolus, autoRes.reason, mealData, threshold, false) // explicitUser=false
+            
+            // 🛡️ Gate R3: No-Op Fallback (Post-Cap Validation)
+            // Even if Autodrive "wanted" an action, safety caps (IOB, MaxSMB) might have zeroed it.
+            // If the effective result is negligible, we MUST release control to Global AIMI/Modes.
+            val effectiveBolus = rT.insulinReq ?: 0.0
+            val effectiveDuration = rT.duration ?: 0
+            
+            if (effectiveBolus > 0.05 || effectiveDuration > 0) {
+                 consoleLog.add("AD_APPLIED intent=${autoRes.requestedBolus} actual=$effectiveBolus")
+                 return rT
+            } else {
+                 consoleLog.add("AD_NOOP_FALLBACK reason=CappedToZero")
+                 reason.append(" (Fallback: Autodrive Result Capped to 0)")
+                 // FALL THROUGH to Global AIMI logic below
+            }
+        } else if (autoRes != null && autoRes.noOp) {
+             consoleLog.add("AD_NOOP_IGNORED reason=${autoRes.reason}")
+        }
+        
+        // If we get here, no high-priority action was taken.
+        // Proceed to Global AIMI Logic / Safety Nets below.
         // Ensures explicit user intent (Notes: Snack, Meal, Bfast...) ALWAYS fires the configured prebolus.
         // Relaxed BG threshold to 60 as per user intent for prebolusing.
         if (bg >= 60) {
@@ -5486,6 +5550,164 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // Cap only by absolute max config (safety)
         return if (boosted > maxBasalConfig) maxBasalConfig else boosted
     }
+// -----------------------------------------------------------------------------------------
+    // ⚙️ DECISION PIPELINE HELPERS (AIMI 2.0 Refactor)
+    // -----------------------------------------------------------------------------------------
+
+    private fun tryManualModes(bg: Double, delta: Float, profile: OapsProfileAimi): ActionResult? {
+        if (bg < 60) return null
+
+        var amount = 0.0
+        var modeName = ""
+
+        if (isHighCarbModeCondition()) {
+            amount = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus); modeName = "HighCarb"
+        } else if (isHighCarb2ModeCondition()) {
+            amount = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus2); modeName = "HighCarb 2"
+        } else if (isDinnerModeCondition()) {
+            amount = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus); modeName = "Dinner"
+        } else if (isDinner2ModeCondition()) {
+            amount = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus2); modeName = "Dinner 2"
+        } else if (isLunchModeCondition()) {
+            amount = preferences.get(DoubleKey.OApsAIMILunchPrebolus); modeName = "Lunch"
+        } else if (isLunch2ModeCondition()) {
+            amount = preferences.get(DoubleKey.OApsAIMILunchPrebolus2); modeName = "Lunch 2"
+        } else if (isbfastModeCondition()) {
+            amount = preferences.get(DoubleKey.OApsAIMIBFPrebolus); modeName = "Breakfast"
+        } else if (isbfast2ModeCondition()) {
+            amount = preferences.get(DoubleKey.OApsAIMIBFPrebolus2); modeName = "Breakfast 2"
+        } else if (isMealModeCondition()) {
+            amount = preferences.get(DoubleKey.OApsAIMIMealPrebolus); modeName = "Meal"
+        } else if (issnackModeCondition()) {
+            amount = preferences.get(DoubleKey.OApsAIMISnackPrebolus); modeName = "Snack"
+        }
+
+        if (amount > 0.0) {
+            consoleLog.add("MODE_PRE_SENT mode=$modeName amount=$amount")
+            // Note: Manual Modes usually rely on Profile Basal, not boosted.
+            // If specific MealModeMaxBasal is desired, logic can be added. 
+            // For now, consistent with legacy: maintain profile basal mostly, but we can set TBR if needed.
+            return ActionResult(
+                kind = ActionKind.MANUAL_MODE,
+                requestedBolus = amount,
+                requestedTbrRate = profile.current_basal,
+                requestedTbrDuration = 30,
+                reason = "🍱 Manual Mode ($modeName): Force Prebolus ${amount}U"
+            )
+        } else if (modeName.isNotEmpty()) {
+            return ActionResult(
+                kind = ActionKind.MANUAL_MODE,
+                reason = "⚠️ Manual Mode ($modeName) detected but Prebolus config is 0.0U",
+                noOp = true
+            )
+        }
+        return null
+    }
+
+    private fun tryMealAdvisor(bg: Double, delta: Float, iobData: IobTotal, profile: OapsProfileAimi, lastBolusTime: Long, modesCondition: Boolean): ActionResult? {
+        val estimatedCarbs = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbs)
+        val estimatedCarbsTime = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbTime).toLong()
+        val timeSinceEstimateMin = (System.currentTimeMillis() - estimatedCarbsTime) / 60000.0
+
+        if (estimatedCarbs > 10.0 && timeSinceEstimateMin in 0.0..120.0 && bg >= 60) {
+            // Refractory Check (Safety)
+            if (hasReceivedRecentBolus(45, lastBolusTime)) {
+                return ActionResult(kind = ActionKind.MEAL_ADVISOR, reason = "Advisor Refractory", noOp = true)
+            }
+            
+            if (delta > 0.0 && modesCondition) { 
+                val maxBasalPref = preferences.get(DoubleKey.meal_modes_MaxBasal)
+                val safeMax = if (maxBasalPref > 0.1) maxBasalPref else profile.max_basal
+                
+                // Prop. Logic
+                val insulinForCarbs = estimatedCarbs / profile.carb_ratio
+                val coveredByBasal = safeMax * 0.5
+                val netNeeded = (insulinForCarbs - iobData.iob - coveredByBasal).coerceAtLeast(0.0)
+
+                consoleLog.add("ADVISOR_CALC carbs=${estimatedCarbs.toInt()} net=$netNeeded")
+                return ActionResult(
+                    kind = ActionKind.MEAL_ADVISOR,
+                    requestedBolus = netNeeded,
+                    requestedTbrRate = safeMax,
+                    requestedTbrDuration = 30,
+                    reason = "📸 Meal Advisor: ${estimatedCarbs.toInt()}g -> ${"%.2f".format(netNeeded)}U"
+                )
+            }
+        }
+        return null
+    }
+
+    private fun tryAutodrive(
+        bg: Double, 
+        delta: Float, 
+        shortAvgDelta: Float, 
+        profile: OapsProfileAimi,
+        lastBolusTime: Long,
+        predictedBg: Float,
+        slopeFromMinDeviation: Double,
+        targetBg: Float,
+        reasonBuf: StringBuilder,
+        autodrive: Boolean,
+        dynamicPbolusLarge: Double,
+        dynamicPbolusSmall: Double
+    ): ActionResult? {
+        val autodriveBG = preferences.get(IntKey.OApsAIMIAutodriveBG)
+        
+        // GATE R1: Strict BG Threshold
+        if (bg < autodriveBG) {
+            // reasonBuf.append("Autodrive Ignored: BG $bg < Threshold $autodriveBG") 
+            // Don't log spam, just return null (Next Priority)
+            return null
+        }
+
+        // GATE R2: Strict Cooldown (45 min)
+        val now = System.currentTimeMillis()
+        val cooldownMs = 45 * 60 * 1000L
+        val remaining = (lastAutodriveActionTime + cooldownMs) - now
+        if (remaining > 0) {
+            // reasonBuf.append("Autodrive Cooldown: ${remaining/1000/60}m remaining")
+            return ActionResult(kind = ActionKind.AUTODRIVE, reason = "Cooldown active", noOp = true)
+        }
+
+        // Logic Re-Use: isAutodriveModeCondition checks Slope, Delta, etc.
+        val validCondition = isAutodriveModeCondition(delta, autodrive, slopeFromMinDeviation, bg.toFloat(), predictedBg, reasonBuf, targetBg)
+        
+        if (!validCondition) return null
+
+        // Determine Intensity
+        var amount = 0.0
+        var stateReason = ""
+        
+        if (bg >= 100.0 && delta >= 5.0 && shortAvgDelta >= 3.0) {
+             amount = dynamicPbolusLarge
+             stateReason = "Confirmed: Bg>100 & Delta>5 & Avg>3"
+        } else if (delta >= 2.0) {
+             amount = dynamicPbolusSmall
+             stateReason = "Early: Delta>2"
+        } else {
+             return null // Condition valid but stats fell short of action
+        }
+
+        // TBR Calculation
+        val rawAutoMax = preferences.get(DoubleKey.autodriveMaxBasal) ?: 0.0
+        val scalarAuto: Double = if (rawAutoMax > 0.1) rawAutoMax.toDouble() else profile.max_basal.toDouble()
+        val safeAutoMax = minOf(scalarAuto, profile.max_basal.toDouble())
+
+        // GATE R3: No-Op Fallback Check deferred to Main Loop (or calculated here)
+        // Here we return the INTENT. The main loop will check if capped result is 0.
+        // Actually R3 says "If intended action is capped to 0... release control".
+        // Use ActionResult to convey Intent.
+        
+        consoleLog.add("AD_INTENT amount=$amount tbr=$safeAutoMax")
+        return ActionResult(
+            kind = ActionKind.AUTODRIVE,
+            requestedBolus = amount,
+            requestedTbrRate = safeAutoMax,
+            requestedTbrDuration = 30,
+            reason = "🚀 Autodrive [$stateReason] -> Force ${amount}U"
+        )
+    }
+
 }
 
 enum class AutodriveState {
