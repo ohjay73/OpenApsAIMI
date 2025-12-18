@@ -25,7 +25,7 @@ object AdvancedPredictionEngine {
         finalSensitivity: Double,
         cobG: Double,
         profile: OapsProfileAimi,
-        delta: Double = 0.0, // Innovation: Carb impact awareness
+        delta: Double = 0.0,
         horizonMinutes: Int = 240
     ): List<Double> {
         val predictions = mutableListOf(currentBG)
@@ -36,72 +36,70 @@ object AdvancedPredictionEngine {
         val carbRatio = profile.carb_ratio.takeIf { it > 0 } ?: 10.0
         val csf = finalSensitivity / carbRatio
 
-        // Innovation: Dynamic IOB Damping during active meal rise
-        // If BG is rising while COB exists OR during unannounced meals (UAM), the "effective" insulin pulling down is dampened by the inflow of glucose.
-        // We reduce the impact of IOB in the prediction to avoid false hypo alarms.
-        val iobDampingFactor = if (cobG > 0 || delta > 2.0) {
+        // 1. Calculate Expected Drop at t=0
+        val currentEntry = iobArray.minByOrNull { kotlin.math.abs(it.time - now) }
+        val currentActivity = currentEntry?.activity ?: 0.0
+        
+        // IOB Activity is U/min (rate).
+        // Drop (mg/dL) = Rate * 5 * ISF
+        val expectedDeltaFromInsulin = - (currentActivity * finalSensitivity * 5.0)
+        
+        // Carb impact at t=0
+        val initialCarbImpact = if (cobG > 0) (cobG * csf) / (180.0/5.0) else 0.0
+        
+        val expectedDelta = expectedDeltaFromInsulin + initialCarbImpact
+        
+        // 2. Calculate Deviation
+        var deviation = delta - expectedDelta
+        
+        // Innovation: Hybrid UAM Strategy
+        var momentum = deviation
+        
+        // Damping: Reduce IOB effectiveness if rising (Long term).
+        val iobDampingFactor = if (delta > 2.0) {
             when {
-                delta > 5.0 -> 0.50 // Intense rise: IOB 50% effective in prediction
-                delta > 2.0 -> 0.70 // Moderate rise
-                delta > 0.0 -> if (cobG > 0) 0.85 else 1.0 // Slight rise: damp only if explicit COB
-                else -> 1.0
+                delta > 10.0 -> 0.40 // Massive rise
+                delta > 5.0 -> 0.60  // Strong rise
+                else -> 0.80         // Moderate rise
             }
         } else {
             1.0
         }
+        
+        // Decay factor for momentum
+        val momentumDecay = if (delta > 3.0) 0.92 else 0.85
 
         val carbAbsorptionMinutes = 180.0
-        val carbImpactPer5Min = if (cobG > 0) {
-            (cobG * csf) / (carbAbsorptionMinutes / 5.0)
-        } else {
-            0.0
-        }
-
         var lastBg = currentBG
-        val insulinPeak = profile.peakTime.toDouble().takeIf { it > 0 } ?: 60.0
-        val maxActivity = getInsulinActivity(insulinPeak, insulinPeak)
-
-        // Innovation: Momentum (Delta Decay)
-        // If BG is rising, assume it continues to rise for a while (inertia).
-        // This is crucial for UAM where no COB is entered.
-        var momentum = if (delta > 0) delta else 0.0
 
         repeat(steps) { stepIndex ->
             val minutesInFuture = (stepIndex + 1) * 5
-            var insulinEffectMgDl = 0.0
+            val targetTime = now + (minutesInFuture * 60000L)
+            
+            // LOOKUP from Curve
+            val entry = iobArray.minByOrNull { kotlin.math.abs(it.time - targetTime) }
+            val activityRate = entry?.activity ?: 0.0
+            
+            // Insulin Impact (mg/dL per 5 min)
+            val insulinImpact = (activityRate * finalSensitivity * 5.0) * iobDampingFactor
 
-            if (maxActivity > 0) {
-                for (iobEntry in iobArray) {
-                    val minutesSinceBolus = ((now - iobEntry.time) / 60000.0) + minutesInFuture
-                    val activity = getInsulinActivity(minutesSinceBolus, insulinPeak) / maxActivity
-                    insulinEffectMgDl += activity * iobEntry.iob * finalSensitivity
-                }
+            // Carb Impact
+            val carbImpact = if (cobG > 0 && minutesInFuture < carbAbsorptionMinutes) {
+                (cobG * csf) / (carbAbsorptionMinutes / 5.0) 
+            } else {
+                0.0
             }
-            
-            // Apply damping innovation
-            insulinEffectMgDl *= iobDampingFactor
 
-            val insulinImpactPer5min = insulinEffectMgDl / 12.0
+            // Apply fluxes
+            val nextBg = (lastBg - insulinImpact + carbImpact + momentum).coerceIn(39.0, 401.0)
             
-            // Apply Momentum
-            // We add the current 'inertia' to the BG change, then decay it.
-            val nextBg = (lastBg - insulinImpactPer5min + carbImpactPer5Min + momentum).coerceIn(39.0, 401.0)
-            
-            // Linear/Exp decay of momentum
-            momentum *= 0.85 // Decays to ~0 over 45-60 mins
+            // Decay momentum
+            momentum *= momentumDecay
             
             lastBg = nextBg
             predictions.add(lastBg)
         }
 
         return predictions
-    }
-
-    private fun getInsulinActivity(minutesSinceBolus: Double, peakTime: Double): Double {
-        if (minutesSinceBolus < 0 || peakTime <= 0) return 0.0
-        val shape = 3.5
-        val scale = peakTime / ((shape - 1) / shape).pow(1 / shape)
-        return (shape / scale) * (minutesSinceBolus / scale).pow(shape - 1) *
-            kotlin.math.exp(-(minutesSinceBolus / scale).pow(shape))
     }
 }

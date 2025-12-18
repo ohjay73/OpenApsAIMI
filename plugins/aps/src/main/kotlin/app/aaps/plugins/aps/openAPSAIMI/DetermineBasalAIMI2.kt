@@ -81,6 +81,7 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.collections.asSequence
+import kotlin.collections.get
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
@@ -90,7 +91,58 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
+internal data class PredictionSanityResult(
+    val predBg: Double,
+    val eventualBg: Double,
+    val label: String
+)
 
+internal fun sanitizePredictionValues(
+    bg: Double,
+    delta: Float,
+    predBgRaw: Double?,
+    eventualBgRaw: Double?,
+    series: Predictions?,
+    log: MutableList<String>? = null
+): PredictionSanityResult {
+    val baseBg = bg.coerceIn(25.0, 600.0)
+    var predBg = (predBgRaw ?: baseBg).coerceIn(25.0, 600.0)
+    var eventualBg = (eventualBgRaw ?: predBg).coerceIn(25.0, 600.0)
+    val anomalies = mutableListOf<String>()
+
+    val lengths = listOfNotNull(series?.IOB, series?.COB, series?.ZT, series?.UAM)
+    val minSize = lengths.minOfOrNull { it.size } ?: 0
+    if (minSize in 1..5) {
+        anomalies.add("series<$minSize")
+    }
+
+    if (!predBg.isFinite() || !eventualBg.isFinite()) {
+        anomalies.add("nonFinite")
+        predBg = baseBg
+        eventualBg = baseBg
+    }
+
+    val largeDrop = baseBg - predBg
+    val rising = delta >= 0f
+    if (rising && baseBg > 140 && largeDrop > 80) {
+        predBg = (baseBg + delta * 6).coerceIn(25.0, 600.0)
+        anomalies.add("jumpClamp")
+    }
+
+    if (eventualBg < 25 || eventualBg > 600) {
+        anomalies.add("eventualRange")
+        eventualBg = predBg
+    }
+
+    val label = if (anomalies.isEmpty()) "ok" else anomalies.joinToString("+")
+    if (anomalies.isNotEmpty()) {
+        log?.add(
+            "PRED_SANITY_FAIL: $label bg=${baseBg.roundToInt()} pred=${predBg.roundToInt()} ev=${eventualBg.roundToInt()} delta=${"%.1f".format(delta)}"
+        )
+    }
+
+    return PredictionSanityResult(predBg, eventualBg, label)
+}
 /**
  * Main orchestrator for the AIMI loop.
  *
@@ -267,10 +319,25 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private var peakintermediaire = 0.0
     private var latestAdjustedDia: Double = 0.0 // Captured for logging
     private var insulinPeakTime = 0.0
+    private var iobActivityNow: Double = 0.0
+    private var lastBolusAgeMinutes: Double = Double.NaN
+    private var lastDecisionSource: String = "AIMI"
+    private var lastSafetySource: String = "NONE"
+    private var lastPredictionAvailable: Boolean = false
+    private var lastPredictionSize: Int = 0
+    private var lastEventualBgSnapshot: Double = 0.0
+    private var lastSmbProposed: Double = 0.0
+    private var lastSmbCapped: Double = 0.0
+    private var lastSmbFinal: Double = 0.0
+    private var lastAutodriveState: AutodriveState = AutodriveState.IDLE
+    private var internalLastSmbMillis: Long = 0L // Local Atomic Timestamp for Safety
     private val nightGrowthResistanceMode = NightGrowthResistanceMode()
     private val ngrTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
     private var zeroBasalAccumulatedMinutes: Int = 0
     private val MAX_ZERO_BASAL_DURATION = 60  // Durée maximale autorisée en minutes à 0 basal
+    private val insulinObserver = app.aaps.plugins.aps.openAPSAIMI.pkpd.RealTimeInsulinObserver()  // 🚀 Real-Time Insulin Observer
+    private var pkpdThrottleIntervalAdd: Int = 0       // 🚀 PKPD interval boost (0 si normal/modes repas)
+    private var pkpdPreferTbrBoost: Double = 1.0       // 🚀 PKPD TBR boost factor (1.0 si normal/modes repas)
 
     private fun Double.toFixed2(): String = DecimalFormat("0.00#").format(round(this, 2))
     private fun parseNgrTime(value: String, fallback: LocalTime): LocalTime =
@@ -1079,6 +1146,14 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // 3) Tendance & ajustement
         val bgTrend = calculateBgTrend(getRecentBGs(), StringBuilder())
         var rateAdjustment = adjustRateBasedOnBgTrend(_rate, bgTrend).coerceAtLeast(0.0)
+        
+        // 🚀 PKPD TBR Boost: Augmenter TBR si preferTbr (sauf modes repas)
+        // Note: pkpdPreferTbrBoost est déjà à 1.0 pour les modes repas (via reset dans finalizeAndCapSMB)
+        if (pkpdPreferTbrBoost > 1.0 && !isMealMode) {
+            val originalRate = rateAdjustment
+            rateAdjustment = (rateAdjustment * pkpdPreferTbrBoost).coerceAtLeast(0.0)
+            consoleLog.add("PKPD_TBR_BOOST original=${"%.2f".format(originalRate)} boost=${"%.2f".format(pkpdPreferTbrBoost)} → ${"%.2f".format(rateAdjustment)}U/h")
+        }
 
         // 4) Limites de sécurité
         val maxSafe = min(
@@ -1301,8 +1376,46 @@ class DetermineBasalaimiSMB2 @Inject constructor(
      * 🛡️ Centralized Safety Enforcement for "Innovation" Modes
      * Ensures consistent application of MaxIOB and MaxSMB limits using capSmbDose.
      */
-    private fun finalizeAndCapSMB(rT: RT, proposedUnits: Double, reasonHeader: String, mealData: MealData, hypoThreshold: Double, isExplicitUserAction: Boolean = false) {
-        val proposedFloat = proposedUnits.toFloat()
+    private data class SmbGateAudit(
+        val sinceBolus: Double,
+        val refractoryWindow: Double,
+        val absorptionFactor: Double,
+        val predMissing: Boolean,
+        val maxIobLimit: Double,
+        val maxSmbLimit: Double
+    )
+
+    private fun finalizeAndCapSMB(
+        rT: RT,
+        proposedUnits: Double,
+        reasonHeader: String,
+        mealData: MealData,
+        hypoThreshold: Double,
+        isExplicitUserAction: Boolean = false,
+        decisionSource: String = "AIMI"
+    ) {
+        // 🛡️ FIX NC3: REACTIVITY CLAMP for Low BG (Safety-Critical)
+        // Prevent learner amplification at low BG
+        var effectiveProposed = proposedUnits
+        
+        if (bg < 120.0 && !isExplicitUserAction) {
+            val lowBgReactivityMax = 1.05 // Maximum 5% amplification below 120
+            val currentReactivity = try {
+                unifiedReactivityLearner.globalFactor
+            } catch (e: Exception) {
+                1.0 // Fallback if learner not initialized
+            }
+            
+            if (currentReactivity > lowBgReactivityMax) {
+                val clampedFactor = lowBgReactivityMax
+                effectiveProposed = (proposedUnits / currentReactivity * clampedFactor).coerceAtLeast(0.0)
+                consoleLog.add("REACTIVITY_CLAMP bg=${bg.roundToInt()} react=${"%.2f".format(currentReactivity)} max=${"%.2f".format(clampedFactor)} proposed=${"%.2f".format(proposedUnits)}->${"%.2f".format(effectiveProposed)}")
+            }
+        }
+        
+        val proposedFloat = effectiveProposed.toFloat()
+        lastDecisionSource = decisionSource
+        lastSmbProposed = effectiveProposed
         
         // Use maxSMB (Preferences) as the hard limit.
         // We use 'maxSMB' instead of 'maxSMBHB' to ensure strict safety unless explicitly handled otherwise.
@@ -1312,32 +1425,176 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
          // 🔒 FCL Safety: Enforce Safety Precautions (Dropping Fast, Hypo Risk, etc)
          // finalizeAndCapSMB often handles forced boluses, but they MUST yield to critical physical safety.
-         val safetyCappedUnits = applySafetyPrecautions(
+         // 🔧 RESTORED: Pass PKPD runtime for tail damping
+         // Note: pkpdRuntime is calculated later in determine_basal, so we pass null here
+         // and rely on the PKPD tail damping in applySafetyPrecautions for context-aware reduction
+         var safetyCappedUnits = applySafetyPrecautions(
             mealData = mealData,
             smbToGiveParam = proposedFloat,
             hypoThreshold = hypoThreshold,
             reason = rT.reason,
-            pkpdRuntime = null, // Optional
+            pkpdRuntime = null, // Computed later, but tail damping logic available in applySafetyPrecautions
+            exerciseFlag = sportTime, // Pass exercise state
+            suspectedLateFatMeal = lateFatRiseFlag, // Pass late fat flag
             ignoreSafetyConditions = isExplicitUserAction
          )
-         
+
          if (safetyCappedUnits < proposedFloat) {
               consoleLog.add("Safety Precautions reduced SMB: $proposedFloat -> $safetyCappedUnits")
          }
+
+         // 🛡️ FIX NC2: LOW BG SMB GUARD (Safety-Critical)
+         // Reduce maxSMB significantly under 120 mg/dL to prevent hypo
+         val lowBgThreshold = 120.0
+         val lowBgSmbFactor = 0.4 // 60% reduction (configurable via preferences later)
          
+         if (bg < lowBgThreshold && !isExplicitUserAction) {
+             val lowBgLimit = (baseLimit * lowBgSmbFactor).toFloat()
+             if (safetyCappedUnits > lowBgLimit) {
+                 consoleLog.add("LOW_BG_GUARD bg=${bg.roundToInt()} cap=${"%.2f".format(lowBgLimit)} factor=${"%.0f".format(lowBgSmbFactor*100)}%")
+                 safetyCappedUnits = lowBgLimit
+             }
+         }
+
+         // 🔧 FIX 3: Enhanced refractory if prediction absent
+         // Calculate predMissing FIRST before using it
+         val predMissing = !lastPredictionAvailable || lastPredictionSize < 3
+         
+         val baseRefractoryWindow = calculateSMBInterval().toDouble()
+         val refractoryWindow = if (predMissing) {
+             (baseRefractoryWindow * 1.5).coerceAtLeast(5.0) // +50% safety margin if blind
+         } else {
+             baseRefractoryWindow
+         }
+         
+         val sinceBolus = if (lastBolusAgeMinutes.isNaN()) 999.0 else lastBolusAgeMinutes
+         val refractoryBlocked = sinceBolus < refractoryWindow && !isExplicitUserAction
+         var gatedUnits = safetyCappedUnits
+         var absorptionFactor = 1.0
+
+         if (refractoryBlocked) {
+             gatedUnits = 0f
+             consoleLog.add("⏸️ REFRACTORY_BLOCK sinceBolus=${"%.1f".format(sinceBolus)}m window=${"%.1f".format(refractoryWindow)}m (SMB blocked)")
+         } else if (sinceBolus < refractoryWindow && isExplicitUserAction) {
+             // Modes repas bypassent explicitement le refractory
+             consoleLog.add("✅ REFRACTORY_BYPASS sinceBolus=${"%.1f".format(sinceBolus)}m window=${"%.1f".format(refractoryWindow)}m (Meal mode override)")
+         }
+
+         // 🔧 FIX 2: Adaptive AbsorptionGuard threshold (pediatric-safe)
+         val tdd24h = tddCalculator.calculateDaily(-24, 0)?.totalAmount ?: 30.0
+         val activityThreshold = (tdd24h / 24.0) * 0.15 // 15% of hourly TDD
+         
+         if (sinceBolus < 20.0 && iobActivityNow > activityThreshold && !isExplicitUserAction) {
+             absorptionFactor = if (bg > targetBg + 60 && delta > 0) 0.75 else 0.5
+             gatedUnits = (gatedUnits * absorptionFactor.toFloat()).coerceAtLeast(0f)
+         }
+
+         if (predMissing && !isExplicitUserAction) {
+             val degraded = (maxSMB * 0.5).toFloat()
+             if (gatedUnits > degraded) gatedUnits = degraded
+         }
+         
+         // 🚀 NOUVEAUTÉ: Real-Time Insulin Observer Throttle
+         if (!isExplicitUserAction) {
+             val actionState = insulinObserver.update(
+                 currentBg = this.bg,
+                 bgDelta = this.delta.toDouble(),
+                 iobTotal = this.iob.toDouble(),
+                 iobActivityNow = this.iobActivityNow,
+                 iobActivityIn30 = 0.0,  // Not critical for throttle
+                 peakMinutesAbs = 0,     // Not critical for throttle
+                 diaHours = 4.0,         // Approximation
+                 carbsActiveG = this.cob.toDouble(),
+                 now = dateUtil.now()
+             )
+             
+             val throttle = app.aaps.plugins.aps.openAPSAIMI.pkpd.SmbTbrThrottleLogic.computeThrottle(
+                 actionState = actionState,
+                 bgDelta = this.delta.toDouble(),
+                 bgRising = this.bg > this.targetBg,
+                 targetBg = this.targetBg.toDouble(),
+                 currentBg = this.bg
+             )
+             
+             // Apply throttle
+             val originalGated = gatedUnits
+             gatedUnits = (gatedUnits * throttle.smbFactor.toFloat()).coerceAtLeast(0f)
+             
+             // Log
+             if (throttle.smbFactor < 1.0 || throttle.preferTbr) {
+                 consoleLog.add("PKPD_THROTTLE smbFactor=${"%.2f".format(throttle.smbFactor)} intervalAdd=${throttle.intervalAddMin} preferTbr=${throttle.preferTbr} reason=${throttle.reason}")
+                 if (originalGated > 0f && gatedUnits < originalGated * 0.6f) {
+                     consoleLog.add("  ⚠️ SMB reduced ${"%2f".format(originalGated)} → ${"%.2f".format(gatedUnits)}U (PKPD throttle)")
+                 }
+             }
+             
+             // Si preferTbr, suggérer TBR dans reason (pas bloquer SMB)
+             if (throttle.preferTbr && gatedUnits < proposedFloat * 0.5) {
+                 rT.reason.append(" | 💡 TBR recommended (${throttle.reason})")
+             }
+             
+             // 🚀 Stocker les valeurs pour interval SMB et TBR boost
+             pkpdThrottleIntervalAdd = throttle.intervalAddMin
+             pkpdPreferTbrBoost = if (throttle.preferTbr) 1.15 else 1.0  // +15% TBR si preferTbr
+         } else {
+             // Reset si explicit user action (modes repas)
+             pkpdThrottleIntervalAdd = 0
+             pkpdPreferTbrBoost = 1.0
+         }
+
          val safeCap = capSmbDose(
-             proposedSmb = safetyCappedUnits, // Use the safety-reduced amount as base
+             proposedSmb = gatedUnits, // Use the safety-reduced amount as base
             bg = this.bg,
             // 2. Allow manual/forced boluses to exceed this baseline, up to MaxIOB.
             // We pass the larger of (Dynamic Limit, Proposed Amount) as the config cap.
-            maxSmbConfig = kotlin.math.max(baseLimit, proposedUnits), 
+            maxSmbConfig = kotlin.math.max(baseLimit, proposedUnits),
             iob = this.iob.toDouble(),
             maxIob = this.maxIob
         )
         
-        rT.units = safeCap.toDouble().coerceAtLeast(0.0)
-        rT.reason.append(reasonHeader)
+        // 🚀 MEAL MODES FORCE SEND: Garantir l'envoi P1/P2 (Bypass maxIOB si nécessaire)
+        var finalUnits = safeCap.toDouble()
         
+        if (isExplicitUserAction && gatedUnits > 0f) {
+            // Pour les modes repas, on utilise directement gatedUnits (déjà réduit par dégradation si nécessaire)
+            // On bypass capSmbDose qui plafonne à maxIOB
+            // Seule limite : 30U hard cap (sécurité absolue contre config erronée)
+            val mealModeCap = gatedUnits.toDouble().coerceAtMost(30.0)
+            
+            if (mealModeCap > safeCap.toDouble()) {
+                consoleLog.add("🍱 MEAL_MODE_FORCE_SEND bypassing maxIOB: proposed=${"%.2f".format(proposedUnits)} gated=${"%.2f".format(gatedUnits)} safeCap=${"%.2f".format(safeCap)} → FORCED=${"%.2f".format(mealModeCap)}")
+                consoleLog.add("  ⚠️ IOB will be: current=${"%.2f".format(this.iob)} + bolus=${"%.2f".format(mealModeCap)} = ${"%.2f".format(this.iob + mealModeCap)} (maxIOB=${"%.2f".format(this.maxIob)})")
+                finalUnits = mealModeCap
+            } else {
+                // safeCap déjà OK, pas besoin de forcer
+                finalUnits = safeCap.toDouble()
+            }
+        } else {
+            finalUnits = safeCap.toDouble()
+        }
+        
+        lastSmbCapped = finalUnits
+        lastSmbFinal = finalUnits
+
+        if (finalUnits > 0) {
+            internalLastSmbMillis = dateUtil.now()
+        }
+
+        rT.units = finalUnits.coerceAtLeast(0.0)
+        rT.reason.append(reasonHeader)
+
+         val audit = SmbGateAudit(
+             sinceBolus = sinceBolus,
+             refractoryWindow = refractoryWindow,
+             absorptionFactor = absorptionFactor,
+             predMissing = predMissing,
+             maxIobLimit = this.maxIob,
+             maxSmbLimit = baseLimit
+         )
+         if (proposedUnits > 0 || safeCap > 0f) {
+             logSmbGateExplain(audit, proposedFloat, gatedUnits, safeCap, activityThreshold)
+         }
+
         if (safeCap < proposedFloat) {
              rT.reason.appendLine(context.getString(R.string.limits_smb, proposedFloat, safeCap))
              consoleLog.add("SMB_CAP: Proposed=$proposedFloat Allowed=$safeCap Reason=$reasonHeader")
@@ -1404,6 +1661,23 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         }
 
         return capped
+    }
+
+    private fun logSmbGateExplain(audit: SmbGateAudit, proposed: Float, gated: Float, final: Float, activityThreshold: Double) {
+        val refractoryLine =
+            "GATE_REFRACTORY sinceLastBolus=${"%.1f".format(audit.sinceBolus)}m window=${"%.1f".format(audit.refractoryWindow)}"
+        val maxIobLine = "GATE_MAXIOB allowed=${"%.2f".format(audit.maxIobLimit)} current=${"%.2f".format(iob)}"
+        val maxSmbLine = "GATE_MAXSMB cap=${"%.2f".format(audit.maxSmbLimit)} proposed=${"%.2f".format(proposed)}"
+        val absorptionLine = "GATE_ABSORPTION activity=${"%.3f".format(iobActivityNow)} threshold=${"%.3f".format(activityThreshold)} factor=${"%.2f".format(audit.absorptionFactor)}"
+        val predLine = "GATE_PRED_MISSING fallback=${if (audit.predMissing) "ON" else "OFF"}"
+
+        if (final > 0f || gated == 0f || final == 0f) {
+            consoleLog.add(refractoryLine)
+            consoleLog.add(maxIobLine)
+            consoleLog.add(maxSmbLine)
+            consoleLog.add(absorptionLine)
+            consoleLog.add(predLine)
+        }
     }
 
     // Fonction utilitaire pour éviter l'import min
@@ -1492,7 +1766,31 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 )
             )
         }
-        // pkpdRuntime damping removed to avoid double application (handled in SmbInstructionExecutor)
+        // 🔧 RESTORED: PKPD Tail Damping for Exercise & Late Fat Meals
+    // Apply PKPD-aware insulin tail considerations
+    if (pkpdRuntime != null && smbToGive > 0f) {
+        val tailDampingFactor = when {
+            // Exercise: reduce SMB if insulin tail is still active
+            exerciseFlag && pkpdRuntime.pkpdScale < 0.9 -> {
+                val factor = 0.7 // Conservative 30% reduction
+                reason?.appendLine("⚡ Exercise + PKPD Tail: SMB×${"%.2f".format(factor)}")
+                factor
+            }
+            // Suspected late fat meal: reduce SMB to avoid stacking before fat absorption
+            suspectedLateFatMeal && iob > maxSMB -> {
+                val factor = 0.6 // More conservative for fat meals
+                reason?.appendLine("🧈 Late Fat + High IOB: SMB×${"%.2f".format(factor)}")
+                factor
+            }
+            else -> 1.0
+        }
+        
+        if (tailDampingFactor < 1.0) {
+            val beforeTail = smbToGive
+            smbToGive = (smbToGive * tailDampingFactor.toFloat()).coerceAtLeast(0f)
+            consoleLog.add("PKPD_TAIL_DAMP: ${"%.2f".format(beforeTail)}→${"%.2f".format(smbToGive)} ex=$exerciseFlag fat=$suspectedLateFatMeal scale=${pkpdRuntime.pkpdScale}")
+        }
+    }
 
         // Finalisation
         val beforeFinalize = smbToGive
@@ -1793,6 +2091,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         if (ok) currentState = AutodriveState.ENGAGED
 
+        lastAutodriveState = currentState
+
         reason.appendLine(
             "Autodrive: ${if (ok) "ON" else "OFF"} [$currentState] | " +
                 "cond=$autodriveCondition, dC=${"%.2f".format(combinedDelta)}, " +
@@ -1843,59 +2143,47 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         return false
     }
 
-
-    // [FIX] Smart Latch: Check if a bolus happened *within* the current meal window
-    // Uses `lastsmbtime` (minutes since last SMB) vs `minutesSinceStart`.
-    
-    private fun isFreshBolusWithin(modeRuntime: Long): Boolean {
-        // lastsmbtime is Int (minutes). modeRuntime is Long (likely minutes, handled by helper).
-        val runtimeMin = runtimeToMinutes(modeRuntime)
-        // If last SMB was e.g. 2 mins ago, and meal started 5 mins ago. 2 < 5 -> True (Fresh).
-        // If last SMB was 50 mins ago, and meal started 5 mins ago. 50 < 5 -> False (Not Fresh).
-        return this.lastsmbtime < runtimeMin
+    private fun isMealModeCondition(): Boolean {
+        val pbolusM: Double = preferences.get(DoubleKey.OApsAIMIMealPrebolus)
+        return mealruntime in 0..7 && lastBolusSMBUnit != pbolusM.toFloat() && mealTime
     }
-
-    private fun isMealModeCondition(): Boolean = mealruntime in 0..7 && !isFreshBolusWithin(mealruntime)
-    
-    private fun isbfastModeCondition(): Boolean = bfastruntime in 0..7 && !isFreshBolusWithin(bfastruntime)
+    private fun isbfastModeCondition(): Boolean {
+        val pbolusbfast: Double = preferences.get(DoubleKey.OApsAIMIBFPrebolus)
+        return bfastruntime in 0..7 && lastBolusSMBUnit != pbolusbfast.toFloat() && bfastTime
+    }
     private fun isbfast2ModeCondition(): Boolean {
-        // Phase 2: Runtime 15..23.
-        // We want to know if a bolus happened AFTER min 15.
-        // i.e. "Time since last SMB" < "Time since Phase 2 started".
-        // Time since Phase 2 started = (runtime - 15).
-        // e.g. runtime=20 (5 min into Phase 2). lastSMB=2 (2 min ago).
-        // 2 < 5 -> True. (Bolus happened inside Phase 2).
-        if (bfastruntime !in 15..23) return false
-        val runtimeMin = runtimeToMinutes(bfastruntime)
-        // Fix: Return TRUE if last bolus is OLDER than the start of Phase 2 logic (i.e. NO bolus yet in this phase)
-        // lastsmbtime (minutes ago) > (runtimeMin - 15)
-        // e.g. T=16 (Diff=1). LastSMB=20 (Prebolus 1). 20 > 1 -> True. Fire.
-        // e.g. T=20 (Diff=5). LastSMB=4 (Prebolus 2 given at T=16). 4 > 5 -> False. Don't Fire.
-        return this.lastsmbtime > (runtimeMin - 15)
+        val pbolusbfast2: Double = preferences.get(DoubleKey.OApsAIMIBFPrebolus2)
+        return bfastruntime in 15..30 && lastBolusSMBUnit != pbolusbfast2.toFloat() && bfastTime
     }
-    
-    private fun isLunchModeCondition(): Boolean = lunchruntime in 0..7 && !isFreshBolusWithin(lunchruntime)
+    private fun isLunchModeCondition(): Boolean {
+        val pbolusLunch: Double = preferences.get(DoubleKey.OApsAIMILunchPrebolus)
+        return lunchruntime in 0..7 && lastBolusSMBUnit != pbolusLunch.toFloat() && lunchTime
+    }
     private fun isLunch2ModeCondition(): Boolean {
-        if (lunchruntime !in 15..23) return false
-        val runtimeMin = runtimeToMinutes(lunchruntime)
-        return this.lastsmbtime > (runtimeMin - 15)
+        val pbolusLunch2: Double = preferences.get(DoubleKey.OApsAIMILunchPrebolus2)
+        return lunchruntime in 15..24 && lastBolusSMBUnit != pbolusLunch2.toFloat() && lunchTime
     }
-    
-    private fun isDinnerModeCondition(): Boolean = dinnerruntime in 0..7 && !isFreshBolusWithin(dinnerruntime)
+    private fun isDinnerModeCondition(): Boolean {
+        val pbolusDinner: Double = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus)
+        return dinnerruntime in 0..7 && lastBolusSMBUnit != pbolusDinner.toFloat() && dinnerTime
+    }
     private fun isDinner2ModeCondition(): Boolean {
-        if (dinnerruntime !in 15..23) return false
-        val runtimeMin = runtimeToMinutes(dinnerruntime)
-        return this.lastsmbtime > (runtimeMin - 15)
+        val pbolusDinner2: Double = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus2)
+        return dinnerruntime in 15..24 && lastBolusSMBUnit != pbolusDinner2.toFloat() && dinnerTime
     }
-    
-    private fun isHighCarbModeCondition(): Boolean = highCarbrunTime in 0..7 && !isFreshBolusWithin(highCarbrunTime)
+    private fun isHighCarbModeCondition(): Boolean {
+        val pbolusHC: Double = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus)
+        return highCarbrunTime in 0..7 && lastBolusSMBUnit != pbolusHC.toFloat() && highCarbTime
+    }
     private fun isHighCarb2ModeCondition(): Boolean {
-        if (highCarbrunTime !in 15..23) return false
-        val runtimeMin = runtimeToMinutes(highCarbrunTime)
-        return this.lastsmbtime > (runtimeMin - 15)
+        val pbolusHC: Double = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus2)
+        return highCarbrunTime in 15..23 && lastBolusSMBUnit != pbolusHC.toFloat() && highCarbTime
     }
 
-    private fun issnackModeCondition(): Boolean = snackrunTime in 0..20 && !isFreshBolusWithin(snackrunTime)
+    private fun issnackModeCondition(): Boolean {
+        val pbolussnack: Double = preferences.get(DoubleKey.OApsAIMISnackPrebolus)
+        return snackrunTime in 0..7 && lastBolusSMBUnit != pbolussnack.toFloat() && snackTime
+    }
     // --- Helpers "fenêtre repas 30 min" ---
     private fun runtimeToMinutes(rt: Long): Int {
         return if (rt > 180) { // heuristique : si >180, on suppose secondes
@@ -2071,10 +2359,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         if (isFasting(context)) conditions.add(ctx.getString(R.string.condition_fasting))
         //if (isBelowMinThreshold(context)) conditions.add("belowMinThreshold")
         if (isBelowMinThreshold(context)) conditions.add(ctx.getString(R.string.condition_belowminthreshold))
-        //if (isNewCalibration(context)) conditions.add("isNewCalibration")
-        // Calibration shouldn't block SMB if we are high and rising? Maybe risky if calibration is wrong by 100pts?
-        // Let's keep calibration block safe.
-        if (isNewCalibration(context)) conditions.add(ctx.getString(R.string.condition_newcalibration))
+        if (isNewCalibration(context)) conditions.add("isNewCalibration")
+        //if (isNewCalibration(context)) conditions.add(ctx.getString(R.string.condition_newcalibration))
         //if (isBelowTargetAndDropping(context)) conditions.add("belowTargetAndDropping")
         if (isBelowTargetAndDropping(context)) conditions.add(ctx.getString(R.string.condition_belowtarget_dropping))
         //if (isBelowTargetAndStableButNoCob(context)) conditions.add("belowTargetAndStableButNoCob")
@@ -2270,7 +2556,26 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         }
 
         // 9) Clamp final : mécanique SMB entre 1 et 10 min
-        return interval.coerceIn(1, 10)
+        // Clamp final + Low BG boost
+        var finalInterval = interval.coerceIn(1, 10)
+        
+        // 🛡️ FIX NC4: LOW BG INTERVAL BOOST (Safety-Critical)
+        val lowBgIntervalMin = 5
+        if (bg < 120f && finalInterval < lowBgIntervalMin) {
+            finalInterval = lowBgIntervalMin
+            consoleLog.add("LOW_BG_INTERVAL_BOOST bg=${bg.roundToInt()} interval=${finalInterval}m")
+        }
+        
+        // 🚀 PKPD Throttle: Add interval boost if near peak/onset unconfirmed
+        // Note: pkpdThrottleIntervalAdd est déjà à 0 pour les modes repas (via reset dans finalizeAndCapSMB)
+        val pkpdBoost = pkpdThrottleIntervalAdd
+        if (pkpdBoost > 0) {
+            val baseInterval = finalInterval
+            finalInterval = (finalInterval + pkpdBoost).coerceAtMost(10)
+            consoleLog.add("PKPD_INTERVAL_BOOST base=${baseInterval}m +${pkpdBoost}m → ${finalInterval}m")
+        }
+        
+        return finalInterval
     }
 
     // Structure simple, inchangée
@@ -2974,6 +3279,22 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         return PredictionResult(eventual, intsPredictions)
     }
 
+    private fun ensurePredictionFallback(rt: RT, bgNow: Double) {
+        if (rt.predBGs == null) {
+            val safeBg = bgNow.roundToInt()
+            rt.predBGs = Predictions().apply {
+                IOB = listOf(safeBg)
+                COB = listOf(safeBg)
+                ZT = listOf(safeBg)
+                UAM = listOf(safeBg)
+            }
+            consoleLog.add("GATE_PKPD_MISSING: injected fallback prediction @${safeBg}mg/dL")
+        }
+        if (rt.eventualBG == null) {
+            rt.eventualBG = bgNow
+        }
+    }
+
 
     private fun determineNoteBasedOnBg(bg: Double): String {
         return when {
@@ -2989,6 +3310,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             else -> context.getString(R.string.bg_note_normal)
         }
     }
+
     private fun processNotesAndCleanUp(notes: String): String {
         return notes.lowercase()
             .replace(",", " ")
@@ -3248,7 +3570,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 // Stocker les résultats dans des variables locales pour plus de clarté
         val iobTotal = iobActionProfile.iobTotal
         val iobPeakMinutes = iobActionProfile.peakMinutes
-        val iobActivityNow = iobActionProfile.activityNow
+        iobActivityNow = iobActionProfile.activityNow
         val iobActivityIn30Min = iobActionProfile.activityIn30Min
 
 // On met à jour la variable `iob` globale de la classe avec la valeur de notre profiler pour la cohérence
@@ -3260,6 +3582,23 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 "Activity Now=${"%.0f".format(iobActivityNow * 100)}%, " +
                 "in 30m=${"%.0f".format(iobActivityIn30Min * 100)}%"
         )
+        
+        // 🚀 NOUAUTÉ: Update Real-Time Insulin Observer
+        val insulinActionState = insulinObserver.update(
+            currentBg = bg,
+            bgDelta = delta.toDouble(),
+            iobTotal = iobTotal,
+            iobActivityNow = iobActivityNow,
+            iobActivityIn30 = iobActivityIn30Min,
+            peakMinutesAbs = iobPeakMinutes.toInt(),
+            diaHours = profile.dia,
+            carbsActiveG = cob.toDouble(),
+            now = dateUtil.now()
+        )
+        
+        // Log état observateur
+        consoleLog.add("PKPD_OBS ${insulinActionState.reason}")
+        
         // 👇 Force la création du CSV (premier snapshot WCycle “pré-décision”)
         ensureWCycleInfo()
         // --- GS + features AIMI -----------------------------------------------------
@@ -3272,7 +3611,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         if (pack == null || pack.gs == null) {
             consoleError.add("❌ No glucose data (AIMI pack empty)")
-            return rT.also { it.reason.append("no GS") } // ou ton handling habituel
+            return rT.also {
+                it.reason.append("no GS")
+                ensurePredictionFallback(it, bg)
+            } // ou ton handling habituel
         }
 
         val gs = pack.gs!!
@@ -3299,6 +3641,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             a2 = f?.a2 ?: 0.0,
             corrSqu = f?.corrR2 ?: 0.0
         )
+        ensurePredictionFallback(rT, glucoseStatus.glucose)
         val reasonAimi = StringBuilder()
         var pkpdRuntime: PkPdRuntime? = null
         var windowSinceDoseInt = 0
@@ -3533,12 +3876,15 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         if (minAgo > 12.0) {
             reason.append("⚠️ Data Stale (${minAgo.toInt()}m) -> Logic Paused\n")
             consoleError.add("Data Stale (${minAgo}m) -> Logic Paused")
-            return rT
+            logDecisionFinal("STALE_DATA", rT, bg, delta)
+            return rT.also { ensurePredictionFallback(it, bg) }
         }
-        val windowSinceDoseMin = if (iob_data.lastBolusTime > 0) {
-            ((systemTime - iob_data.lastBolusTime) / 60000.0).coerceAtLeast(0.0)
+        val windowSinceDoseMin = if (iob_data.lastBolusTime > 0 || internalLastSmbMillis > 0) {
+            val effectiveLastBolusTime = kotlin.math.max(iob_data.lastBolusTime, internalLastSmbMillis)
+            ((systemTime - effectiveLastBolusTime) / 60000.0).coerceAtLeast(0.0)
         } else 0.0
         windowSinceDoseInt = windowSinceDoseMin.toInt()
+        lastBolusAgeMinutes = windowSinceDoseMin
         val carbsActiveG = mealData.mealCOB.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
         carbsActiveForPkpd = carbsActiveG
         val mealModeActiveNow = isMealContextActive(mealData)
@@ -3598,7 +3944,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             }
         }
         
-        val profileISF_raw = if (profile != null && profile.sens > 10) profile.sens else 50.0
+        val profileISF_raw = if (profile.sens > 10) profile.sens else 50.0
         // 🔮 FCL 11.0 Fix: Use Dynamic 'sens' for Effective ISF to capture Resistance/Sensitivity
         val effectiveISF = sens / autosens_data.ratio 
         // ⚡ FCL 12.0: Unified Learner Integration for Prebolus
@@ -3617,20 +3963,30 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             // Using consoleError to ensure visibility in UI Debug Panel
             consoleError.add("🔮 PREDICT INIT: BG=$bg Delta=$delta Sens=${"%.1f".format(sens)} IOB=${iob_data_array.firstOrNull()?.iob}")
             
+            // [FIX] User Request: Inject Advisor COB into Predictions details
+            // MealAdvisor (Snap&Go) saves carbs in Prefs but doesn't create Carb Treatment entry immediately.
+            val advisorTime = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbTime).toLong()
+            val advisorCarbs = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbs)
+            val isFreshAdvisor = (dateUtil.now() - advisorTime) < 60 * 60000 // 60 min validity
+            
+            val effectiveCOB = if (mealData.mealCOB > 0) mealData.mealCOB else if (isFreshAdvisor) advisorCarbs else 0.0
+
             val advancedPredictions = AdvancedPredictionEngine.predict(
                 currentBG = bg,
                 iobArray = iob_data_array,
                 finalSensitivity = sens,
-                cobG = mealData.mealCOB,
+                cobG = effectiveCOB,
                 profile = profile,
                 delta = delta.toDouble()
             )
             
-            val sanitizedPredictions = advancedPredictions.mapNotNull { 
-                 if (it.isNaN()) null else round(min(401.0, max(39.0, it)), 0) 
+            val sanitizedPredictions = advancedPredictions.mapNotNull {
+                 if (it.isNaN()) null else round(min(401.0, max(39.0, it)), 0)
             }
             val intsPredictions = sanitizedPredictions.map { it.toInt() }
-            
+            lastPredictionSize = intsPredictions.size
+            lastPredictionAvailable = intsPredictions.isNotEmpty()
+
             if (intsPredictions.isNotEmpty()) {
                 // 🔮 FCL 11.0: Populate Oref0 standard variables for safety & compatibility
                 var IOBpredBGs = mutableListOf<Double>()
@@ -3646,6 +4002,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 
                 // Populate all arrays with AIMI predictions (Unified Model)
                 // We use the same prediction for all because AIMI is an end-to-end model
+                // Populate all arrays with AIMI predictions (Unified Model)
+                // We use the same prediction for all because AIMI is an end-to-end model
                 intsPredictions.forEach { pred -> 
                     val valDouble = pred.toDouble()
                     IOBpredBGs.add(valDouble)
@@ -3657,9 +4015,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 // Calculate Min/Max/Eventual for Guard/Safety Logic
                 val lastPred = intsPredictions.last().toDouble()
                 val minPred = intsPredictions.minOrNull()?.toDouble() ?: bg
-                
+                lastEventualBgSnapshot = lastPred
+
                 // Set Eventual BG
                 rT.eventualBG = lastPred
+                
+                // FIX CRITICAL LGS HALT: Update member variable 'predictedBg' from this prediction
+                this.predictedBg = lastPred.toFloat()
                 
                 // Populate rT.predBGs for UI Graph (Modern)
                 rT.predBGs = Predictions().apply {
@@ -3676,8 +4038,23 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 consoleError.add("minGuardBG ${minPred.toInt()} IOBpredBG ${lastPred.toInt()}")
                 if (UAMpredBGs.size < 6) consoleError.add("⚠ WARNING: UAM Series too short (<6) for Graph!")
                 
+                consoleLog.add("PRED_SET size=${intsPredictions.size} eventual=${lastPred.toInt()} min=${minPred.toInt()} source=Advanced")
+                
             } else {
-                 consoleError.add("🔮 PREDICT WARNING: Empty prediction list returned (Input Size: ${advancedPredictions.size})")
+                 consoleError.add("🔮 PREDICT WARNING: Empty prediction list returned. Using Fallback.")
+                 
+                 // FAILSAFE: Always populate rT with current BG to avoid "Unavailable" graph
+                 val fallbackList = listOf(bg.toInt(), bg.toInt(), bg.toInt()) // Small series
+                 rT.predBGs = Predictions().apply {
+                     IOB = fallbackList
+                     COB = fallbackList
+                     ZT  = fallbackList
+                     UAM = fallbackList
+                 }
+                 rT.eventualBG = bg
+                 this.predictedBg = bg.toFloat()
+                 
+                 consoleLog.add("PRED_SET size=3 eventual=${bg.toInt()} min=${bg.toInt()} source=FallbackBG")
             }
         } catch (e: Exception) {
             consoleError.add("🔮 PREDICT ERROR: ${e.message}")
@@ -3693,22 +4070,185 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // See Lines 3489+.
             // MOVED to after Main Autodrive.
 
+        // -----------------------------------------------------
+        // ACTIVE MODE NAME CALCULATION (Visual)
+        // -----------------------------------------------------
+        
+        // 🍱 LEGACY MEAL MODES: Calculate TBR limit for all modes
+        val maxBasalmodePref = preferences.get(DoubleKey.meal_modes_MaxBasal)
+        val modeTbrLimit = if (maxBasalmodePref > 0.1) maxBasalmodePref else profile.max_basal
+        
+        val activeModeName = when {
+            lunchTime -> "Lunch"
+            dinnerTime -> "Dinner"
+            bfastTime -> "Breakfast"
+            snackTime -> "Snack"
+            highCarbTime -> "HighCarb"
+            mealTime -> "Meal"
+            else -> "N/A"
+        }
+        if (isMealModeCondition()) {
+            val pbolusM = preferences.get(DoubleKey.OApsAIMIMealPrebolus)
+            
+            // 🚀 TBR: Apply if runtime < 30 min
+            if (mealruntime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+                consoleLog.add("🍱 LEGACY_TBR_MEAL rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            
+            rT.units = pbolusM
+            rT.reason.append(context.getString(R.string.manual_meal_prebolus, pbolusM))
+            consoleLog.add("🍱 LEGACY_MODE_MEAL P1=${"%.2f".format(pbolusM)}U (DIRECT SEND)")
+            return rT
+        }
+
+        if (isbfastModeCondition()) {
+            val pbolusbfast = preferences.get(DoubleKey.OApsAIMIBFPrebolus)
+            
+            // 🚀 TBR: Apply if runtime < 30 min
+            if (bfastruntime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+ consoleLog.add("🍱 LEGACY_TBR_BFAST rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            
+            rT.units = pbolusbfast
+            rT.reason.append(context.getString(R.string.reason_prebolus_bfast1, pbolusbfast))
+            consoleLog.add("🍱 LEGACY_MODE_BFAST P1=${"%.2f".format(pbolusbfast)}U (DIRECT SEND)")
+            return rT
+        }
+
+        if (isbfast2ModeCondition()) {
+            val pbolusbfast2 = preferences.get(DoubleKey.OApsAIMIBFPrebolus2)
+            
+            // 🚀 TBR: Apply if runtime < 30 min
+            if (bfastruntime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+                consoleLog.add("🍱 LEGACY_TBR_BFAST rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            
+            rT.units = pbolusbfast2
+            rT.reason.append(context.getString(R.string.reason_prebolus_bfast2, pbolusbfast2))
+            consoleLog.add("🍱 LEGACY_MODE_BFAST P2=${"%.2f".format(pbolusbfast2)}U (DIRECT SEND)")
+            return rT
+        }
+
+        if (isLunchModeCondition()) {
+            val pbolusLunch = preferences.get(DoubleKey.OApsAIMILunchPrebolus)
+            
+            // 🚀 TBR: Apply if runtime < 30 min
+            if (lunchruntime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+                consoleLog.add("🍱 LEGACY_TBR_LUNCH rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            
+            rT.units = pbolusLunch
+            rT.reason.append(context.getString(R.string.reason_prebolus_lunch1, pbolusLunch))
+            consoleLog.add("🍱 LEGACY_MODE_LUNCH P1=${"%.2f".format(pbolusLunch)}U (DIRECT SEND)")
+            return rT
+        }
+
+        if (isLunch2ModeCondition()) {
+            val pbolusLunch2 = preferences.get(DoubleKey.OApsAIMILunchPrebolus2)
+            
+            // 🚀 TBR: Apply if runtime < 30 min
+            if (lunchruntime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+                consoleLog.add("🍱 LEGACY_TBR_LUNCH rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            
+            rT.units = pbolusLunch2
+            rT.reason.append(context.getString(R.string.reason_prebolus_lunch2, pbolusLunch2))
+            consoleLog.add("🍱 LEGACY_MODE_LUNCH P2=${"%.2f".format(pbolusLunch2)}U (DIRECT SEND)")
+            return rT
+        }
+
+        if (isDinnerModeCondition()) {
+            val pbolusDinner = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus)
+            
+            // 🚀 TBR: Apply if runtime < 30 min
+            if (dinnerruntime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+                consoleLog.add("🍱 LEGACY_TBR_DINNER rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            
+            rT.units = pbolusDinner
+            rT.reason.append(context.getString(R.string.reason_prebolus_dinner1, pbolusDinner))
+            consoleLog.add("🍱 LEGACY_MODE_DINNER P1=${"%.2f".format(pbolusDinner)}U (DIRECT SEND)")
+            return rT
+        }
+
+        if (isDinner2ModeCondition()) {
+            val pbolusDinner2 = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus2)
+            
+            // 🚀 TBR: Apply if runtime < 30 min
+            if (dinnerruntime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+                consoleLog.add("🍱 LEGACY_TBR_DINNER rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            
+            rT.units = pbolusDinner2
+            rT.reason.append(context.getString(R.string.reason_prebolus_dinner2, pbolusDinner2))
+            consoleLog.add("🍱 LEGACY_MODE_DINNER P2=${"%.2f".format(pbolusDinner2)}U (DIRECT SEND)")
+            return rT
+        }
+
+        if (isHighCarbModeCondition()) {
+            val pbolusHC = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus)
+            
+            // 🚀 TBR: Apply if runtime < 30 min
+            if (highCarbrunTime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+                consoleLog.add("🍱 LEGACY_TBR_HIGHCARB rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            
+            rT.units = pbolusHC
+            rT.reason.append(context.getString(R.string.reason_prebolus_highcarb, pbolusHC))
+            consoleLog.add("🍱 LEGACY_MODE_HIGHCARB P1=${"%.2f".format(pbolusHC)}U (DIRECT SEND)")
+            return rT
+        }
+        if (isHighCarb2ModeCondition()) {
+            val pbolusHC = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus2)
+            rT.units = pbolusHC
+            rT.reason.append(context.getString(R.string.reason_prebolus_highcarb, pbolusHC))
+            consoleLog.add("🍱 LEGACY_MODE_HIGHCARB P1=${"%.2f".format(pbolusHC)}U (DIRECT SEND)")
+            return rT
+        }
+
+        if (issnackModeCondition()) {
+            val pbolussnack = preferences.get(DoubleKey.OApsAIMISnackPrebolus)
+            
+            // 🚀 TBR: Apply if runtime < 30 min
+            if (snackrunTime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+                consoleLog.add("🍱 LEGACY_TBR_SNACK rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            
+            rT.units = pbolussnack
+            rT.reason.append(context.getString(R.string.reason_prebolus_snack, pbolussnack))
+            consoleLog.add("🍱 LEGACY_MODE_SNACK P1=${"%.2f".format(pbolussnack)}U (DIRECT SEND)")
+            return rT
+        }
+
         // 🛡️ Hoisted Safety Variables for Autodrive & Early Terminators
         fun safe(v: Double) = if (v.isFinite()) v else Double.POSITIVE_INFINITY
-        val minBg = minOf(safe(bg), safe(predictedBg.toDouble()), safe(rT.eventualBG?: bg))
+        val sanity = sanitizePredictionValues(bg, delta, predictedBg.toDouble(), rT.eventualBG, rT.predBGs, consoleLog)
+        val minBg = minOf(safe(bg), safe(sanity.predBg), safe(sanity.eventualBg))
         val threshold = computeHypoThreshold(minBg, profile.lgsThreshold)
+        val pumpReachable = try {
+            activePlugin.activePump.isInitialized() && activePlugin.activePump.isConnected()
+        } catch (e: Exception) { false }
+        consoleLog.add(
+            "PRED_PIPE: bg=${bg.roundToInt()} delta=${"%.1f".format(delta)} predBg=${sanity.predBg.roundToInt()} " +
+                "eventualBg=${sanity.eventualBg.roundToInt()} min=${minBg.roundToInt()} th=${threshold.toInt()} " +
+                "noise=${glucoseStatus.noise} dataAge=${minAgo}m pumpReachable=$pumpReachable sanity=${sanity.label}"
+        )
 
         // -----------------------------------------------------
-        // ⚔️ DECISION PIPELINE EXECUTION (Refactor v2.2 Strict)
+        // ⚔️ DECISION PIPELINE EXECUTION (Refactor v2.3 Strict)
         // -----------------------------------------------------
-        // Priority: 1. Manual -> 2. Advisor -> 3. Autodrive -> Fallback (Global)
-
-        // 1. Manual Mode Check
-        // PRIORITY 1: SAFETY (LGS / HYPO / STALE)
-        // Evaluated FIRST. Can apply TBR=0.0. Terminate if Applied.
-        // PRIORITY 1: SAFETY (LGS / HYPO / STALE)
-        // Evaluated FIRST. Can apply TBR=0.0. Terminate if Applied.
-        val safetyRes = trySafetyStart(bg, delta, profile, iob_data, glucoseStatus.noise.toInt(), predictedBg.toDouble(), (rT.eventualBG ?: bg).toDouble())
+        // PRIORITY 2: SAFETY FALLBACK (LGS / HYPO / STALE)
+        // Evaluated only if no manual mode is active.
+        val safetyRes = trySafetyStart(bg, delta, profile, iob_data, glucoseStatus.noise.toInt(), sanity.predBg, sanity.eventualBg)
         if (safetyRes is DecisionResult.Applied) {
             consoleLog.add("SAFETY_APPLIED_TBR_ZERO intent=${safetyRes.tbrUph}")
             if (safetyRes.tbrUph != null) {
@@ -3717,19 +4257,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             // Block all boluses
             rT.insulinReq = 0.0
             rT.reason.append(" | ⚠ Safety Halt: ${safetyRes.reason}")
-            return rT
-        }
-
-        // PRIORITY 2: MANUAL MODES (Stateful)
-        val manualRes = tryManualModes(bg, delta, profile)
-        if (manualRes is DecisionResult.Applied) {
-            consoleLog.add("MODE_ACTIVE source=${manualRes.source} bolus=${manualRes.bolusU}")
-            if (manualRes.tbrUph != null) {
-                setTempBasal(manualRes.tbrUph, manualRes.tbrMin ?: 30, profile, rT, currenttemp, overrideSafetyLimits = false)
-            }
-            if (manualRes.bolusU != null && manualRes.bolusU > 0) {
-                 finalizeAndCapSMB(rT, manualRes.bolusU, manualRes.reason, mealData, threshold, true)
-            }
+            lastDecisionSource = safetyRes.source
+            logDecisionFinal("SAFETY", rT, bg, delta)
             return rT
         }
 
@@ -3741,8 +4270,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                   setTempBasal(advisorRes.tbrUph, advisorRes.tbrMin ?: 30, profile, rT, currenttemp, overrideSafetyLimits = true)
              }
              if (advisorRes.bolusU != null && advisorRes.bolusU > 0) {
-                  finalizeAndCapSMB(rT, advisorRes.bolusU, advisorRes.reason, mealData, threshold, true)
+                  finalizeAndCapSMB(rT, advisorRes.bolusU, advisorRes.reason, mealData, threshold, true, advisorRes.source)
              }
+             // Add Status Log (User Request)
+             rT.reason.appendLine(context.getString(R.string.autodrive_status, if (autodrive) "✔" else "✘", "Meal Advisor"))
+             logDecisionFinal("MEAL_ADVISOR", rT, bg, delta)
              return rT
         }
 
@@ -3762,7 +4294,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
              // 2. Apply Bolus Intent (if present)
              val intentBolus = autoRes.bolusU ?: 0.0
              if (intentBolus > 0) {
-                  finalizeAndCapSMB(rT, intentBolus, autoRes.reason, mealData, threshold, false)
+                  finalizeAndCapSMB(rT, intentBolus, autoRes.reason, mealData, threshold, false, autoRes.source)
              }
              
              // 3. Verify EFFECTIVE Action (R3 / User Spec)
@@ -3775,10 +4307,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
              if (effectiveBolus > 0.05 || effectiveDuration > 0) {
                  lastAutodriveActionTime = System.currentTimeMillis() // 🟢 Update Strict Cooldown
                  consoleLog.add("AUTODRIVE_APPLIED intent=${intentBolus} actual=$effectiveBolus")
+                 logDecisionFinal("AUTODRIVE", rT, bg, delta)
                  return rT
              } else {
                  consoleLog.add("AUTODRIVE_NOOP_FALLBACK reason=CappedToZero")
-                 // Reset rT to clean state for Global Fallback? 
+                 // Reset rT to clean state for Global Fallback?
                  // Actually rT might have some partial strings. 
                  // We should proceed to Global AIMI.
                  rT.insulinReq = 0.0 // Ensure 0
@@ -3794,6 +4327,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         
         if (isCompression) {
              // Hard Stop on Sensor Error
+             logDecisionFinal("COMPRESSION", rT, bg, delta)
              return rT
         }
         
@@ -3813,7 +4347,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             reason.append("→ Drift Terminator (Trigger +${terminatorThresholdAdd}): Micro-Tap ${terminatortap}U\n")
             consoleLog.add("AD_EARLY_TBR_TRIGGER rate=0.0 duration=0 reason=DriftTerminator_Tap") // Actually a bolus tap, not TBR, but fits "Early Action" category
             consoleLog.add("AD_SMALL_PREBOLUS_TRIGGER amount=$terminatortap reason=DriftTerminator")
-            finalizeAndCapSMB(rT, terminatortap, reason.toString(), mealData, threshold)
+            finalizeAndCapSMB(rT, terminatortap, reason.toString(), mealData, threshold, decisionSource = "DriftTerminator")
+            logDecisionFinal("DRIFT_TERMINATOR", rT, bg, delta)
             return rT
         }
         
@@ -4535,6 +5070,17 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         
         // 🔒 SAFETY CHECK FINAL : On applique le cap strict après le potentiel boost de Reactivité
         val currentMaxSmb = if (bg > 120 && !honeymoon && mealData.slopeFromMinDeviation >= 1.0) maxSMBHB else maxSMB
+        val absGuard = if (windowSinceDoseInt in 0..20 && iobActivityNow > 0.25) {
+            val highBgEscape = bg > target_bg + 60 && delta > 0
+            if (highBgEscape) 1.0 else 0.6 + (eventualBG.coerceAtLeast(bg) / max(bg, 1.0)) * 0.2
+        } else 1.0
+        if (absGuard < 0.99) {
+            val before = smbToGive
+            smbToGive = (smbToGive * absGuard.toFloat()).coerceAtLeast(0f)
+            val guardMsg = "ABS_GUARD factor=${"%.2f".format(absGuard)} since=${windowSinceDoseInt}m iobAct=${"%.2f".format(iobActivityNow)} ev=${"%.0f".format(eventualBG)}"
+            consoleError.add(guardMsg)
+            rT.reason.append(" | $guardMsg")
+        }
         val beforeCap = smbToGive
         smbToGive = capSmbDose(
             proposedSmb = smbToGive,
@@ -4549,7 +5095,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val savedReason = rT.reason.toString()
         // 🔮 FCL 11.0: Preserve Predictions across reset
         val savedPredBGs = rT.predBGs
-        
+
         rT = RT(
             algorithm = APSResult.Algorithm.AIMI,
             runningDynamicIsf = dynIsfMode,
@@ -4569,7 +5115,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             variable_sens = "%.0f".format(variableSensitivity.toDouble()).toDouble()
         )
         // 🔮 FCL 11.0: Restore preserved Predictions
-        
+        rT.predBGs = savedPredBGs ?: rT.predBGs
+        ensurePredictionFallback(rT, bg)
         rT.reason.append(savedReason)
         // Re-define for Global Logic
         val estimatedCarbs = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbs)
@@ -4643,11 +5190,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             rT.rate = it.coerceAtLeast(0.0)
             rT.deliverAt = deliverAt
             rT.duration = 30
+            logDecisionFinal("BASAL_RATE", rT, bg, delta)
             return rT
         }
 
         rT.reason.appendLine(
-             context.getString(R.string.autodrive_status, if (autodrive) "✔" else "✘", "N/A")
+             context.getString(R.string.autodrive_status, if (autodrive) "✔" else "✘", activeModeName)
         )
         // Cleaned up Logging
 
@@ -4959,6 +5507,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 flatBGsDetected = flatBGsDetected,
                 dynIsfMode = dynIsfMode
             )
+            logDecisionFinal("MAX_IOB", finalResult, bg, delta)
             return finalResult
         } else {
             var insulinReq = smbToGive.toDouble()
@@ -5030,8 +5579,15 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 val nextBolusSeconds = round((smbInterval - lastBolusAge) * 60, 0) % 60
                 if (lastBolusAge > smbInterval) {
                     if (microBolus > 0) {
-                        rT.units = microBolus
-                        rT.reason.append(context.getString(R.string.reason_microbolus, microBolus))
+                        finalizeAndCapSMB(
+                            rT = rT,
+                            proposedUnits = microBolus,
+                            reasonHeader = context.getString(R.string.reason_microbolus, microBolus),
+                            mealData = mealData,
+                            hypoThreshold = threshold,
+                            isExplicitUserAction = false,
+                            decisionSource = "GlobalAIMI"
+                        )
                     }
                 } else {
                     rT.reason.append(
@@ -5305,37 +5861,109 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     // ⚔️ DECISION PIPELINE HELPERS (AIMI 2.0 Refactor)
     // -----------------------------------------------------
 
+    private enum class ModeDegradeLevel(val value: Int, val label: String) {
+        NORMAL(0, "Normal"),
+        CAUTION(1, "Caution"),
+        HIGH_RISK(2, "High Risk"),
+        CRITICAL(3, "Critical")
+    }
+
+    private data class DegradePlan(
+        val level: ModeDegradeLevel,
+        val reason: String,
+        val bolusFactor: Double,
+        val tbrFactor: Double,
+        val banner: String?
+    )
+
     private data class ModeState(
          var name: String = "",
          var startMs: Long = 0L,
          var pre1: Boolean = false,
-         var pre2: Boolean = false
+         var pre2: Boolean = false,
+         var pre1SentMs: Long = 0L,
+         var pre2SentMs: Long = 0L,
+         var tbrStartedMs: Long = 0L,      // 🆕 Track TBR activation
+         var degradeLevel: Int = 0          // 🆕 Track safety state
     ) {
-         fun serialize(): String = "$name|$startMs|$pre1|$pre2"
+         fun serialize(): String = "$name|$startMs|$pre1|$pre2|$pre1SentMs|$pre2SentMs|$tbrStartedMs|$degradeLevel"
          companion object {
              fun deserialize(s: String): ModeState {
                  if (s.isBlank()) return ModeState()
                  val p = s.split("|")
                  if (p.size < 4) return ModeState()
                  return try {
-                     ModeState(p[0], p[1].toLong(), p[2].toBoolean(), p[3].toBoolean())
+                     ModeState(
+                         p[0], 
+                         p[1].toLong(), 
+                         p[2].toBoolean(), 
+                         p[3].toBoolean(),
+                         p.getOrNull(4)?.toLongOrNull() ?: 0L,
+                         p.getOrNull(5)?.toLongOrNull() ?: 0L,
+                         p.getOrNull(6)?.toLongOrNull() ?: 0L,
+                         p.getOrNull(7)?.toIntOrNull() ?: 0
+                     )
                  } catch (e: Exception) { ModeState() }
              }
          }
+    }
+
+    private fun logDecisionFinal(tag: String, rT: RT, bg: Double? = null, delta: Float? = null) {
+        val smb = rT.insulinReq ?: 0.0
+        val smbUnits = rT.units ?: 0.0
+        val tbr = (rT.rate ?: 0.0).coerceAtLeast(0.0)
+        val dur = rT.duration ?: 0
+        val builder = StringBuilder("DECISION_FINAL[$tag]: smb=${"%.2f".format(smb)}U tbr=${"%.2f".format(tbr)}U/h dur=${dur}m")
+        if (bg != null) builder.append(" bg=${bg.roundToInt()}")
+        if (delta != null) builder.append(" Δ=${"%.1f".format(delta)}")
+        val reasonText = rT.reason.toString().replace("\n", " | ")
+        builder.append(" reason=${reasonText.take(180)}")
+        consoleLog.add(builder.toString())
+
+        val modeLabel = when {
+            mealTime -> "Meal"
+            lunchTime -> "Lunch"
+            dinnerTime -> "Dinner"
+            highCarbTime -> "HighCarb"
+            snackTime -> "Snack"
+            else -> "None"
+        }
+        val predSize = rT.predBGs?.IOB?.size ?: lastPredictionSize
+        val predAvailable = predSize > 0 || lastPredictionAvailable
+        val eventual = (rT.eventualBG ?: lastEventualBgSnapshot)
+        val bgValue = bg ?: this.bg
+        val deltaValue = delta?.toDouble() ?: this.delta.toDouble()
+        val refractoryStatus = if (!lastBolusAgeMinutes.isNaN() && lastBolusAgeMinutes < intervalsmb) "YES" else "NO"
+        val smbFinalValue = if (smbUnits > 0.0) smbUnits else smb
+        lastSmbFinal = smbFinalValue
+        val predChunk = "${if (predAvailable) "Y" else "N"}(sz=${predSize} ev=${eventual.roundToInt()})"
+
+        // 🔧 FIX 4: Enhanced diagnostic logging with activity threshold
+        val tdd24h = tddCalculator.calculateDaily(-24, 0)?.totalAmount ?: 30.0
+        val activityThreshold = (tdd24h / 24.0) * 0.15
+        
+        val tickLine =
+            "TICK ts=${System.currentTimeMillis()} bg=${bgValue.roundToInt()} d=${"%.1f".format(deltaValue)} iob=${"%.2f".format(iob)} act=${"%.3f".format(iobActivityNow)} th=${"%.3f".format(activityThreshold)} " +
+                "cob=${"%.1f".format(cob)} mode=$modeLabel autodriveState=$lastAutodriveState pred=$predChunk " +
+                "safety=$lastSafetySource ref=$refractoryStatus maxIOB=${"%.2f".format(maxIob)} maxSMB=${"%.2f".format(maxSMB)} " +
+                "smb=${"%.2f".format(lastSmbProposed)}->${"%.2f".format(lastSmbCapped)}->${"%.2f".format(smbFinalValue)} " +
+                "tbr=${"%.2f".format(tbr)} src=$lastDecisionSource"
+        consoleLog.add(tickLine)
     }
 
     // ==========================================
     // 🛡️ PRIORITY 1: SAFETY (LGS/HYPO)
     // ==========================================
     private fun trySafetyStart(
-        bg: Double, 
-        delta: Float, 
-        profile: OapsProfileAimi, 
+        bg: Double,
+        delta: Float,
+        profile: OapsProfileAimi,
         iob: IobTotal,
         noise: Int,
         predBg: Double,
         eventualBg: Double
     ): DecisionResult {
+        lastSafetySource = "CALLED"
         // 0. Sanity Check (Units/Calibration)
         if (bg < 25 || bg > 600) {
              consoleLog.add("⚠ Unit Mismatch Suspected? BG=$bg")
@@ -5351,8 +5979,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val lgsTh = computeHypoThreshold(lgsMin, profile.lgsThreshold) // Uses member function
 
         if (lgsMin < lgsTh || (bg < 70 && delta < 0)) {
-            val reasonStr = "Hypo guard+hystérèse: minBG=${lgsMin.toInt()} <= Th=${lgsTh.toInt()} (BG=$bgNow, pred=${predNow.toInt()}, ev=${eventualNow.toInt()})"
+            val reasonStr = "LGS_TRIGGER: min=${lgsMin.toInt()} <= Th=${lgsTh.toInt()} (BG=${bgNow.toInt()} pred=${predNow.toInt()} ev=${eventualNow.toInt()})"
             consoleLog.add("SAFETY_APPLIED_TBR_ZERO reason=$reasonStr")
+            lastSafetySource = "SafetyLGS"
             return DecisionResult.Applied(
                 source = "SafetyLGS",
                 bolusU = 0.0,
@@ -5361,125 +5990,21 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 reason = reasonStr
             )
         }
-        
+
         // 2. High Noise / Stale Data
         if (noise >= 3) {
+            lastSafetySource = "SafetyNoise"
              return DecisionResult.Applied(
                 source = "SafetyNoise",
                 bolusU = 0.0,
-                tbrUph = 0.0, 
+                tbrUph = 0.0,
                 tbrMin = 30,
                 reason = "High Noise ($noise) - Force TBR 0.0"
             )
         }
         
+        lastSafetySource = "SafetyPass"
         return DecisionResult.Fallthrough("Safety OK")
-    }
-
-    private fun tryManualModes(bg: Double, delta: Float, profile: OapsProfileAimi): DecisionResult {
-        if (bg < 60) return DecisionResult.Fallthrough("BG too low (<60)")
-
-        // 1. Detect Active Mode & Configs
-        var activeName = ""
-        var activeRuntimeMin = -1
-        var pre1Config = 0.0
-        var pre2Config = 0.0
-        
-        // Priority check (same order as original)
-        if (highCarbrunTime in 0..120) {
-            if (highCarbrunTime in 0..30) { 
-                 activeName = "HighCarb"; activeRuntimeMin = runtimeToMinutes(highCarbrunTime)
-                 pre1Config = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus)
-                 pre2Config = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus2)
-            }
-        } 
-        if (activeName.isEmpty() && dinnerruntime in 0..30) {
-             activeName = "Dinner"; activeRuntimeMin = runtimeToMinutes(dinnerruntime)
-             pre1Config = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus)
-             pre2Config = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus2)
-        }
-        if (activeName.isEmpty() && lunchruntime in 0..30) {
-             activeName = "Lunch"; activeRuntimeMin = runtimeToMinutes(lunchruntime)
-             pre1Config = preferences.get(DoubleKey.OApsAIMILunchPrebolus)
-             pre2Config = preferences.get(DoubleKey.OApsAIMILunchPrebolus2)
-        }
-        if (activeName.isEmpty() && bfastruntime in 0..30) {
-             activeName = "Breakfast"; activeRuntimeMin = runtimeToMinutes(bfastruntime)
-             pre1Config = preferences.get(DoubleKey.OApsAIMIBFPrebolus)
-             pre2Config = preferences.get(DoubleKey.OApsAIMIBFPrebolus2)
-        }
-        if (activeName.isEmpty() && mealruntime in 0..30) {
-             activeName = "Meal"; activeRuntimeMin = runtimeToMinutes(mealruntime)
-             pre1Config = preferences.get(DoubleKey.OApsAIMIMealPrebolus)
-        }
-        if (activeName.isEmpty() && snackrunTime in 0..30) {
-             activeName = "Snack"; activeRuntimeMin = runtimeToMinutes(snackrunTime)
-             pre1Config = preferences.get(DoubleKey.OApsAIMISnackPrebolus)
-        }
-
-        if (activeName.isEmpty()) {
-            return DecisionResult.Fallthrough("No Active Mode")
-        }
-
-        // 2. Load State (Persisted)
-        val stateKey = StringKey.OApsAIMIUnstableModeState
-        val rawState = preferences.get(stateKey)
-        val now = System.currentTimeMillis()
-        var state = ModeState.deserialize(rawState)
-
-        // 3. Sync State with Reality
-        val approxStart = now - (activeRuntimeMin * 60000L)
-        val timeDiff = kotlin.math.abs(state.startMs - approxStart)
-        
-        if (state.name != activeName || timeDiff > 300000L) {
-             // New Mode Activation detected
-             state = ModeState(name = activeName, startMs = approxStart, pre1 = false, pre2 = false)
-             consoleLog.add("MODE_STATE_RESET new=$activeName runtime=$activeRuntimeMin")
-        }
-
-        // 4. Decision Logic (State-Based)
-        var actionBolus = 0.0
-        var actionPhase = ""
-        var newState = state
-
-        // Phase 1: 0..7 min
-        if (activeRuntimeMin in 0..7 && !state.pre1) {
-             if (pre1Config > 0) {
-                 actionBolus = pre1Config
-                 actionPhase = "Pre1"
-                 newState = state.copy(pre1 = true)
-             }
-        }
-
-        // Phase 2: 15..23 min
-        if (activeRuntimeMin in 15..23 && !state.pre2 && pre2Config > 0) {
-             actionBolus = pre2Config
-             actionPhase = "Pre2"
-             newState = state.copy(pre2 = true)
-        }
-
-        // 5. Update Persistence & Return
-        if (newState != state) {
-             preferences.put(StringKey.OApsAIMIUnstableModeState, newState.serialize())
-        }
-        
-        if (actionBolus > 0.0) {
-            val maxBasalPref = preferences.get(DoubleKey.meal_modes_MaxBasal)
-            // If < 0.1, use profile.max_basal.
-            // Requirement D4: "Vérifie que TBR pendant modes utilise bien la préférence TBRmaxMode"
-            val modeTbr = if (maxBasalPref > 0.1) maxBasalPref else profile.max_basal
-            
-            consoleLog.add("MODE_DECISION mode=$activeName phase=$actionPhase amount=$actionBolus tbr=$modeTbr")
-            return DecisionResult.Applied(
-                source = "ManualMode_$activeName",
-                bolusU = actionBolus,
-                tbrUph = modeTbr, 
-                tbrMin = 30, // 30 min fixed
-                reason = "🍱 Manual Mode ($activeName $actionPhase): Force ${actionBolus}U + TBR ${modeTbr}U/h"
-            )
-        }
-        
-        return DecisionResult.Fallthrough("Mode Active but No Phase Trigger (Runtime $activeRuntimeMin)")
     }
 
     private fun tryMealAdvisor(bg: Double, delta: Float, iobData: IobTotal, profile: OapsProfileAimi, lastBolusTime: Long, modesCondition: Boolean): DecisionResult {
