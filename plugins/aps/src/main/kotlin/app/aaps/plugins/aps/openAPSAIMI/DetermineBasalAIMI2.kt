@@ -4092,7 +4092,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             
             // 🚀 TBR: Apply if runtime < 30 min
             if (mealruntime < 30 * 60) {
-                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = true    )
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = true)
                 consoleLog.add("🍱 LEGACY_TBR_MEAL rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
             }
             
