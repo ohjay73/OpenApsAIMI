@@ -1182,7 +1182,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         if (pkpdPreferTbrBoost > 1.0 && !isMealMode) {
             val originalRate = rateAdjustment
             rateAdjustment = (rateAdjustment * pkpdPreferTbrBoost).coerceAtLeast(0.0)
-            consoleLog.add("PKPD_TBR_BOOST original=${"%.2f".format(originalRate)} boost=${"%.2f".format(pkpdPreferTbrBoost)} → ${"%.2f".format(rateAdjustment)}U/h")
+            consoleLog.add("PKPD_TBR_BOOST original=${"%.2f".format(originalRate)} boost=${"%.2f".format(pkpdPreferTbrBoost)} -> ${"%.2f".format(rateAdjustment)}U/h")
         }
 
         // 4) Limites de sécurité
@@ -1554,7 +1554,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
              if (throttle.smbFactor < 1.0 || throttle.preferTbr) {
                  consoleLog.add("PKPD_THROTTLE smbFactor=${"%.2f".format(throttle.smbFactor)} intervalAdd=${throttle.intervalAddMin} preferTbr=${throttle.preferTbr} reason=${throttle.reason}")
                  if (originalGated > 0f && gatedUnits < originalGated * 0.6f) {
-                     consoleLog.add("  ⚠️ SMB reduced ${"%2f".format(originalGated)} → ${"%.2f".format(gatedUnits)}U (PKPD throttle)")
+                     consoleLog.add("  ⚠️ SMB reduced ${"%2f".format(originalGated)} -> ${"%.2f".format(gatedUnits)}U (PKPD throttle)")
                  }
              }
              
@@ -1592,7 +1592,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             val mealModeCap = gatedUnits.toDouble().coerceAtMost(30.0)
             
             if (mealModeCap > safeCap.toDouble()) {
-                consoleLog.add("🍱 MEAL_MODE_FORCE_SEND bypassing maxIOB: proposed=${"%.2f".format(proposedUnits)} gated=${"%.2f".format(gatedUnits)} safeCap=${"%.2f".format(safeCap)} → FORCED=${"%.2f".format(mealModeCap)}")
+                consoleLog.add("🍱 MEAL_MODE_FORCE_SEND bypassing maxIOB: proposed=${"%.2f".format(proposedUnits)} gated=${"%.2f".format(gatedUnits)} safeCap=${"%.2f".format(safeCap)} -> FORCED=${"%.2f".format(mealModeCap)}")
                 consoleLog.add("  ⚠️ IOB will be: current=${"%.2f".format(this.iob)} + bolus=${"%.2f".format(mealModeCap)} = ${"%.2f".format(this.iob + mealModeCap)} (maxIOB=${"%.2f".format(this.maxIob)})")
                 finalUnits = mealModeCap
             } else {
@@ -1818,7 +1818,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         if (tailDampingFactor < 1.0) {
             val beforeTail = smbToGive
             smbToGive = (smbToGive * tailDampingFactor.toFloat()).coerceAtLeast(0f)
-            consoleLog.add("PKPD_TAIL_DAMP: ${"%.2f".format(beforeTail)}→${"%.2f".format(smbToGive)} ex=$exerciseFlag fat=$suspectedLateFatMeal scale=${pkpdRuntime.pkpdScale}")
+            consoleLog.add("PKPD_TAIL_DAMP: ${"%.2f".format(beforeTail)}->${"%.2f".format(smbToGive)} ex=$exerciseFlag fat=$suspectedLateFatMeal scale=${pkpdRuntime.pkpdScale}")
         }
     }
 
@@ -1938,7 +1938,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val adjustedDIA = profile.dia * diaMultiplier
         val adjustedPeak = profile.peakTime * peakMultiplier
         
-        consoleLog.add("DIA_DYNAMIC rapidIOB=${String.format("%.1f", rapidIOBAmount)}U → DIA=${String.format("%.1f", profile.dia)}→${String.format("%.1f", adjustedDIA)} Peak=${String.format("%.0f", profile.peakTime)}→${String.format("%.0f", adjustedPeak)}min")
+        consoleLog.add("DIA_DYNAMIC rapidIOB=${String.format("%.1f", rapidIOBAmount)}U -> DIA=${String.format("%.1f", profile.dia)}->${String.format("%.1f", adjustedDIA)} Peak=${String.format("%.0f", profile.peakTime)}->${String.format("%.0f", adjustedPeak)}min")
         
         return Pair(adjustedDIA, adjustedPeak)
     }
@@ -2148,7 +2148,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // Weighted: 40% current, 30% predicted, 30% recent average
         val combinedDelta = (delta * 0.4f + predicted * 0.3f + avgRecentDelta * 0.3f)
         
-        consoleLog.add("DELTA_CALC current=${String.format("%.1f", delta)} predicted=${String.format("%.1f", predicted)} avgRecent=${String.format("%.1f", avgRecentDelta)} → combined=${String.format("%.1f", combinedDelta)}")
+        consoleLog.add("DELTA_CALC current=${String.format("%.1f", delta)} predicted=${String.format("%.1f", predicted)} avgRecent=${String.format("%.1f", avgRecentDelta)} -> combined=${String.format("%.1f", combinedDelta)}")
         
         // 🎯 Dynamic Thresholds
     // Respect User Static Threshold AND Safety Margin (Target + 10)
@@ -2678,7 +2678,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         if (pkpdBoost > 0) {
             val baseInterval = finalInterval
             finalInterval = (finalInterval + pkpdBoost).coerceAtMost(10)
-            consoleLog.add("PKPD_INTERVAL_BOOST base=${baseInterval}m +${pkpdBoost}m → ${finalInterval}m")
+            consoleLog.add("PKPD_INTERVAL_BOOST base=${baseInterval}m +${pkpdBoost}m -> ${finalInterval}m")
         }
         
         return finalInterval
@@ -4959,7 +4959,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         // 2. Log Decision
         if (activityContext.state != app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.REST || activityContext.isRecovery) {
-            consoleLog.add("Activity: ${activityContext.description} → ISF x${"%.2f".format(activityContext.isfMultiplier)}")
+            consoleLog.add("Activity: ${activityContext.description} -> ISF x${"%.2f".format(activityContext.isfMultiplier)}")
         }
 
         // 3. Apply Multiplier to Sensitivity (ISF)
@@ -6231,10 +6231,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 val tbrCoverage = safeMax * 0.5  // 30min = 0.5h
 
                 // DEBUG: Log all calculation steps with detailed breakdown
-                consoleLog.add("ADVISOR_CALC carbs=${estimatedCarbs.toInt()}g IC=${profile.carb_ratio} → ${String.format("%.2f", insulinForCarbs)}U")
-                consoleLog.add("ADVISOR_CALC IOB_raw=${String.format("%.2f", iobData.iob)}U × discount=$MEAL_ADVISOR_IOB_DISCOUNT_FACTOR → IOB_effective=${String.format("%.2f", effectiveIOB)}U")
+                consoleLog.add("ADVISOR_CALC carbs=${estimatedCarbs.toInt()}g IC=${profile.carb_ratio} -> ${String.format("%.2f", insulinForCarbs)}U")
+                consoleLog.add("ADVISOR_CALC IOB_raw=${String.format("%.2f", iobData.iob)}U x discount=$MEAL_ADVISOR_IOB_DISCOUNT_FACTOR -> IOB_effective=${String.format("%.2f", effectiveIOB)}U")
                 consoleLog.add("ADVISOR_CALC minimumGuaranteed=${String.format("%.2f", minimumRequired)}U (${(MEAL_ADVISOR_MIN_CARB_COVERAGE * 100).toInt()}% of carb need)")
-                consoleLog.add("ADVISOR_CALC calculated=${String.format("%.2f", calculatedNeed)}U → netSMB=${String.format("%.2f", netNeeded)}U (max of calculated and minimum)")
+                consoleLog.add("ADVISOR_CALC calculated=${String.format("%.2f", calculatedNeed)}U -> netSMB=${String.format("%.2f", netNeeded)}U (max of calculated and minimum)")
                 consoleLog.add("ADVISOR_CALC TBR=${String.format("%.1f", safeMax)}U/h (will deliver ${String.format("%.2f", tbrCoverage)}U over 30min as complement)")
                 consoleLog.add("ADVISOR_CALC TOTAL delivery: SMB ${String.format("%.2f", netNeeded)}U + TBR ${String.format("%.2f", tbrCoverage)}U = ${String.format("%.2f", netNeeded + tbrCoverage)}U delta=$delta modesOK=true")
                 
