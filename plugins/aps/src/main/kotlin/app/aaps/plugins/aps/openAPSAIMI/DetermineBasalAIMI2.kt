@@ -3858,12 +3858,21 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 maxSMBHB
             }
             
-            // 🔴 ACTIVE RISE: Original slope-based logic
-            // Detects meal/resistance with rapid rise
-            bg > 120 && !honeymoon && mealData.slopeFromMinDeviation >= 1.0 ||
-            bg > 180 && honeymoon && mealData.slopeFromMinDeviation >= 1.4 -> {
-                consoleLog.add("MAXSMB_SLOPE BG=${bg.roundToInt()} slope=${String.format("%.2f", mealData.slopeFromMinDeviation)} → maxSMBHB=${String.format("%.2f", maxSMBHB)}U (rise)")
+            // 🔴 ACTIVE RISE HIGH: BG >= 140 (meal interception zone)
+            // Full maxSMBHB for confirmed meal/resistance in elevated range
+            bg >= 140 && !honeymoon && mealData.slopeFromMinDeviation >= 1.0 ||
+            bg >= 180 && honeymoon && mealData.slopeFromMinDeviation >= 1.4 -> {
+                consoleLog.add("MAXSMB_SLOPE_HIGH BG=${bg.roundToInt()} slope=${String.format("%.2f", mealData.slopeFromMinDeviation)} → maxSMBHB=${String.format("%.2f", maxSMBHB)}U (rise)")
                 maxSMBHB
+            }
+            
+            // 🟡 ACTIVE RISE SENSITIVE: BG 120-140 (near target zone)
+            // 85% maxSMBHB for extra caution close to target
+            // Prevents over-correction on natural fluctuations while still allowing meal interception
+            bg >= 120 && bg < 140 && !honeymoon && mealData.slopeFromMinDeviation >= 1.0 -> {
+                val partial = max(maxSMB, maxSMBHB * 0.85)
+                consoleLog.add("MAXSMB_SLOPE_SENSITIVE BG=${bg.roundToInt()} slope=${String.format("%.2f", mealData.slopeFromMinDeviation)} → ${String.format("%.2f", partial)}U (85% maxSMBHB)")
+                partial
             }
             
             // 🟠 MODERATE PLATEAU: BG 200-250, stable delta
