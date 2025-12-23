@@ -268,7 +268,7 @@ class LoopPlugin @Inject constructor(
             RM.Mode.DISCONNECTED_PUMP -> mutableListOf(RM.Mode.RESUME)
             RM.Mode.SUSPENDED_BY_DST  -> mutableListOf(RM.Mode.DISCONNECTED_PUMP)
             RM.Mode.SUSPENDED_BY_PUMP -> mutableListOf() // handled independently
-            RM.Mode.SUSPENDED_BY_USER -> mutableListOf(RM.Mode.DISCONNECTED_PUMP, RM.Mode.RESUME, RM.Mode.SUSPENDED_BY_USER)
+            RM.Mode.SUSPENDED_BY_USER -> mutableListOf(RM.Mode.DISCONNECTED_PUMP, RM.Mode.RESUME)
             RM.Mode.RESUME            -> error("Invalid mode")
         }
         if (constraintChecker.isLoopInvocationAllowed().value().not()) {
@@ -303,8 +303,7 @@ class LoopPlugin @Inject constructor(
             }
 
             RM.Mode.SUSPENDED_BY_PUMP                           -> {} // handled in runningModePreCheck()
-            RM.Mode.DISABLED_LOOP, RM.Mode.CLOSED_LOOP, RM.Mode.OPEN_LOOP,
-            RM.Mode.CLOSED_LOOP_LGS                             -> {
+            RM.Mode.DISABLED_LOOP, RM.Mode.CLOSED_LOOP, RM.Mode.OPEN_LOOP, RM.Mode.CLOSED_LOOP_LGS -> {
                 val inserted = persistenceLayer.insertOrUpdateRunningMode(
                     runningMode = RM(
                         timestamp = now,
@@ -316,7 +315,7 @@ class LoopPlugin @Inject constructor(
                     source = source,
                     listValues = listValues
                 ).blockingGet()
-                if (newRM == RM.Mode.DISABLED_LOOP) {
+                if (newRM == RM.Mode.DISABLED_LOOP && config.APS) {
                     commandQueue.cancelTempBasal(enforceNew = true, callback = object : Callback() {
                         override fun run() {
                             if (!result.success) {
@@ -350,13 +349,16 @@ class LoopPlugin @Inject constructor(
                     source = source
                 ).blockingGet()
                 rxBus.send(EventRefreshOverview("handleRunningModeChange"))
-                commandQueue.cancelTempBasal(enforceNew = true, callback = object : Callback() {
-                    override fun run() {
-                        if (!result.success) {
-                            uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.temp_basal_delivery_error), app.aaps.core.ui.R.raw.boluserror)
+                // Cancel temp basal only on main phone
+                // On AAPSClient change RunningMode only and let Loop on main phone do the rest
+                if (config.APS)
+                    commandQueue.cancelTempBasal(enforceNew = true, callback = object : Callback() {
+                        override fun run() {
+                            if (!result.success) {
+                                uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.temp_basal_delivery_error), app.aaps.core.ui.R.raw.boluserror)
+                            }
                         }
-                    }
-                })
+                    })
 
                 return updated.updated.isNotEmpty()
             }
@@ -952,7 +954,7 @@ class LoopPlugin @Inject constructor(
     /**
      * Simulate pump disconnection
      */
-    fun goToZeroTemp(durationInMinutes: Int, profile: Profile, mode: RM.Mode, action: Action, source: Sources, listValues: List<ValueWithUnit>) {
+    private fun goToZeroTemp(durationInMinutes: Int, profile: Profile, mode: RM.Mode, action: Action, source: Sources, listValues: List<ValueWithUnit>) {
         val pump = activePlugin.activePump
         @SuppressLint("CheckResult")
         persistenceLayer.insertOrUpdateRunningMode(
@@ -966,31 +968,33 @@ class LoopPlugin @Inject constructor(
             note = null,
             listValues = listValues
         ).blockingGet()
-        if (pump.pumpDescription.tempBasalStyle == PumpDescription.ABSOLUTE) {
-            commandQueue.tempBasalAbsolute(0.0, durationInMinutes, true, profile, PumpSync.TemporaryBasalType.EMULATED_PUMP_SUSPEND, object : Callback() {
-                override fun run() {
-                    if (!result.success) {
-                        uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.temp_basal_delivery_error), app.aaps.core.ui.R.raw.boluserror)
+        if (config.APS) {
+            if (pump.pumpDescription.tempBasalStyle == PumpDescription.ABSOLUTE) {
+                commandQueue.tempBasalAbsolute(0.0, durationInMinutes, true, profile, PumpSync.TemporaryBasalType.EMULATED_PUMP_SUSPEND, object : Callback() {
+                    override fun run() {
+                        if (!result.success) {
+                            uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.temp_basal_delivery_error), app.aaps.core.ui.R.raw.boluserror)
+                        }
                     }
-                }
-            })
-        } else {
-            commandQueue.tempBasalPercent(0, durationInMinutes, true, profile, PumpSync.TemporaryBasalType.EMULATED_PUMP_SUSPEND, object : Callback() {
-                override fun run() {
-                    if (!result.success) {
-                        uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.temp_basal_delivery_error), app.aaps.core.ui.R.raw.boluserror)
+                })
+            } else {
+                commandQueue.tempBasalPercent(0, durationInMinutes, true, profile, PumpSync.TemporaryBasalType.EMULATED_PUMP_SUSPEND, object : Callback() {
+                    override fun run() {
+                        if (!result.success) {
+                            uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.temp_basal_delivery_error), app.aaps.core.ui.R.raw.boluserror)
+                        }
                     }
-                }
-            })
-        }
-        if (pump.pumpDescription.isExtendedBolusCapable && persistenceLayer.getExtendedBolusActiveAt(dateUtil.now()) != null) {
-            commandQueue.cancelExtended(object : Callback() {
-                override fun run() {
-                    if (!result.success) {
-                        uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.extendedbolusdeliveryerror), app.aaps.core.ui.R.raw.boluserror)
+                })
+            }
+            if (pump.pumpDescription.isExtendedBolusCapable && persistenceLayer.getExtendedBolusActiveAt(dateUtil.now()) != null) {
+                commandQueue.cancelExtended(object : Callback() {
+                    override fun run() {
+                        if (!result.success) {
+                            uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.extendedbolusdeliveryerror), app.aaps.core.ui.R.raw.boluserror)
+                        }
                     }
-                }
-            })
+                })
+            }
         }
     }
 
@@ -1007,13 +1011,14 @@ class LoopPlugin @Inject constructor(
             note = note,
             listValues = listValues
         ).blockingGet()
-        commandQueue.cancelTempBasal(enforceNew = false, autoForced = autoForced, callback = object : Callback() {
-            override fun run() {
-                if (!result.success) {
-                    uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.temp_basal_delivery_error), app.aaps.core.ui.R.raw.boluserror)
+        if (config.APS)
+            commandQueue.cancelTempBasal(enforceNew = false, autoForced = autoForced, callback = object : Callback() {
+                override fun run() {
+                    if (!result.success) {
+                        uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.temp_basal_delivery_error), app.aaps.core.ui.R.raw.boluserror)
+                    }
                 }
-            }
-        })
+            })
     }
 
     var task: Runnable? = null
