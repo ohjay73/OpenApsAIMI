@@ -526,34 +526,19 @@ class DataHandlerMobile @Inject constructor(
             return
         }
 
-        // Format temp target string if present
-        val tempTargetString = if (useTTPref && tempTarget != null) {
-            profileUtil.toTargetRangeString(tempTarget.lowTarget, tempTarget.highTarget, GlucoseUnit.MGDL)
-        } else null
+        // Build formatted wizard message 
+        val message = bolusWizard.explainShort()
 
-        // Build structured wizard result
-        // Use the public properties that ARE available
-        val wizardResult = EventData.ActionWizardResult(
-            timestamp = bolusWizard.timeStamp,
-            totalInsulin = bolusWizard.calculatedTotalInsulin,
-            carbs = bolusWizard.carbs,
-            ic = bolusWizard.ic,
-            sens = bolusWizard.sens,
-            insulinFromCarbs = bolusWizard.insulinFromCarbs,
-            insulinFromBG = if (useBgPref) bolusWizard.insulinFromBG else null,
-            insulinFromCOB = if (useCobPref) bolusWizard.insulinFromCOB else null,
-            insulinFromBolusIOB = if (useIobPref) -bolusWizard.insulinFromBolusIOB else null,
-            insulinFromBasalIOB = if (useIobPref) -bolusWizard.insulinFromBasalIOB else null,
-            insulinFromTrend = if (useTrendPref) bolusWizard.insulinFromTrend else null,
-            insulinFromSuperBolus = null,
-            tempTarget = tempTargetString,
-            percentageCorrection = if (percentage != 100) percentage else null,
-            totalBeforePercentage = if (percentage != 100) bolusWizard.totalBeforePercentageAdjustment else null,
-            cob = bolusWizard.cob
-        )
         lastBolusWizard = bolusWizard
         lastQuickWizardEntry = null
-        rxBus.send(EventMobileToWear(wizardResult))
+        rxBus.send(
+            EventMobileToWear(
+                EventData.ConfirmAction(
+                    rh.gs(app.aaps.core.ui.R.string.confirm).uppercase(), message,
+                    returnCommand = EventData.ActionWizardConfirmed(bolusWizard.timeStamp)
+                )
+            )
+        )
     }
 
     private fun handleUserActionPreCheck(command: EventData.ActionUserActionPreCheck) {
