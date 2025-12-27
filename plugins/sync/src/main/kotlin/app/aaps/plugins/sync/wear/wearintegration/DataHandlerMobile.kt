@@ -562,11 +562,8 @@ class DataHandlerMobile @Inject constructor(
                 Triple(finalRate, constrainedDuration, percentValue)
             }
 
-            val isCancelTemp = displayRate == 0.0 && displayDuration == 0
-
             OapsResultInfo(
                 changeRequested = result.isChangeRequested && !isLetTempRun,
-                isCancelTemp = isCancelTemp,
                 isLetTempRun = isLetTempRun,
                 rate = displayRate,
                 ratePercent = displayPercent,
