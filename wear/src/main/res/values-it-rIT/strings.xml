@@ -271,4 +271,16 @@
     <string name="loop_status_superbolus">Superbolo</string>
     <string name="loop_status_unknown">Sconosciuto</string>
     <string name="loop_status_result">Risultato Loop</string>
+    <string name="loop_status_last_run_enact">Ultima Esecuzione &amp; Attivazione</string>
+    <string name="loop_status_last_run">Ultima esecuzione</string>
+    <string name="loop_status_last_enact">Ultima attivazione</string>
+    <string name="loop_status_smb_text">SMB</string>
+    <string name="loop_status_basal_rate">Tasso</string>
+    <string name="loop_status_duration">Durata</string>
+    <string name="loop_status_oaps_reason">Ragionamento OpenAPS</string>
+    <string name="loop_status_targets">Obiettivi</string>
+    <string name="loop_status_temp_target">Target Temporaneo</string>
+    <string name="loop_status_target_range">Intervallo</string>
+    <string name="loop_status_target">Target</string>
+    <string name="loop_status">Stato loop</string>
 </resources>
