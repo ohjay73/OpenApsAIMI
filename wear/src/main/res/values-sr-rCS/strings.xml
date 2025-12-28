@@ -28,6 +28,18 @@
     <string name="pref_show_detailed_delta">Prikaži detaljni Delta</string>
     <string name="pref_show_phone_battery">Prikaži bateriju telefona</string>
     <string name="pref_show_rig_battery">Prikaži bateriju rig-a</string>
+    <string name="pref_show_basal_rate">Prikaži bazalnu stopu</string>
+    <string name="pref_show_temp_target">Prikaži privremeni cilj</string>
+    <string name="pref_show_reservoir_level">Prikaži nivo rezervoara</string>
+    <string name="pref_show_loop_status">Prikaži status petlje</string>
+    <string name="pref_show_bg">Prikaži glukozu u krvi</string>
+    <string name="pref_show_bgi">Prikaži BGI</string>
+    <string name="pref_show_direction_arrow">Prikaži strelicu trenda</string>
+    <string name="pref_show_temp_basal">Prikaži TBR</string>
+    <string name="pref_show_grid">Prikaži mrežu</string>
+    <string name="pref_dark" comment="Enables dark visual theme">Tamna tema</string>
+    <string name="pref_highlight_basals">Istakni bazale</string>
+    <string name="pref_prediction_lines">Prikaži linije predviđanja</string>
     <string name="menu_wizard">Kalkulator</string>
     <string name="menu_treatment">Tretman</string>
     <string name="menu_bolus">Bolus</string>
