@@ -258,7 +258,7 @@
     <string name="loop_status_tbr_duration">%1$d min</string>
     <string name="loop_status_tbr_rate">%1$.2f U/h (%2$d%%)</string>
     <string name="loop_status_tbr_duration_remaining">%1$d min restantes</string>
-    <string name="loop_status_tbr_continues">Basal temporal continúa</string>
+    <string name="loop_status_tbr_continues">Basal temporal activa</string>
     <string name="loop_status_tbr_cancel">Establecer basal regular</string>
     <string name="loop_status_smb">%1$.2f U</string>
     <string name="loop_status_no_last_run">N/A</string>
@@ -271,7 +271,7 @@
     <string name="loop_status_superbolus">Superbolo</string>
     <string name="loop_status_unknown">Desconocido</string>
     <string name="loop_status_result">Resultado del lazo</string>
-    <string name="loop_status_last_run_enact">Última ejecución hace: &amp;</string>
+    <string name="loop_status_last_run_enact">Última ejecución y ajuste</string>
     <string name="loop_status_last_run">Última ejecución</string>
     <string name="loop_status_last_enact">Última acción</string>
     <string name="loop_status_smb_text">SMB</string>
