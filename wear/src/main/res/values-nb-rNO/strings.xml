@@ -271,7 +271,7 @@
     <string name="loop_status_superbolus">Superbolus</string>
     <string name="loop_status_unknown">Ukjent</string>
     <string name="loop_status_result">Loop-resultat</string>
-    <string name="loop_status_last_run_enact">Sist forespurt &amp; utført</string>
+    <string name="loop_status_last_run_enact">Siste loop</string>
     <string name="loop_status_last_run">Sist forespurt</string>
     <string name="loop_status_last_enact">Sist utført</string>
     <string name="loop_status_smb_text">SMB</string>

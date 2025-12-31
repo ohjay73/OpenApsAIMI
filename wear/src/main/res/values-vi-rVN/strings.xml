@@ -271,6 +271,7 @@
     <string name="loop_status_superbolus">Superbolus</string>
     <string name="loop_status_unknown">Không xác định</string>
     <string name="loop_status_result">Kết quả vòng lặp</string>
+    <string name="loop_status_last_run_enact">Lần chạy gần nhất &amp; Thực hiện</string>
     <string name="loop_status_last_run">Lần chạy cuối</string>
     <string name="loop_status_last_enact">Lần thực hiện cuối</string>
     <string name="loop_status_smb_text">SMB</string>
