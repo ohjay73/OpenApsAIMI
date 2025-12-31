@@ -246,10 +246,7 @@ abstract class BaseWatchFace : WatchFace() {
                 if (eventTime - sgvTapTime < 800 && sgvTapTime != 0L) {
                     if (eventTime - lastMenuOpenTime > 2000) {
                         lastMenuOpenTime = eventTime
-                        val intent = Intent(this, MainMenuActivity::class.java).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                        }
-                        startActivity(intent)
+                        startActivity(Intent(this, MainMenuActivity::class.java).also { it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
                     }
                     sgvTapTime = 0
                 } else {
@@ -274,10 +271,7 @@ abstract class BaseWatchFace : WatchFace() {
                 if (eventTime - mainMenuTapTime < 800 && mainMenuTapTime != 0L) {
                     if (eventTime - lastMenuOpenTime > 2000) {
                         lastMenuOpenTime = eventTime
-                        val intent = Intent(this, MainMenuActivity::class.java).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                        }
-                        startActivity(intent)
+                        startActivity(Intent(this, MainMenuActivity::class.java).also { it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
                     }
                     mainMenuTapTime = 0
                 } else {

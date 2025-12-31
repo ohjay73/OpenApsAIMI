@@ -160,7 +160,7 @@ class ComplicationTapActivity : DaggerAppCompatActivity() {
         }
 
         if (intentOpen != null) {
-            intentOpen.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            intentOpen.flags = Intent.FLAG_ACTIVITY_NEW_TASK
             startActivity(intentOpen)
         }
     }
