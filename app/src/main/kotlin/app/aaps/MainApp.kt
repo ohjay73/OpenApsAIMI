@@ -38,8 +38,6 @@ import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.ui.UiInteraction
-import app.aaps.core.interfaces.ui.compose.ComposeUi
-import app.aaps.core.interfaces.ui.compose.ComposeUiProvider
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.SafeParse
 import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
@@ -99,7 +97,7 @@ import kotlin.reflect.KMutableProperty
 import kotlin.reflect.full.declaredMemberProperties
 import android.provider.Settings
 
-class MainApp : DaggerApplication(), ComposeUiProvider {
+class MainApp : DaggerApplication() {
 
     private val disposable = CompositeDisposable()
 
@@ -475,13 +473,6 @@ class MainApp : DaggerApplication(), ComposeUiProvider {
             .application(this)
             .build()
         return appComponent
-    }
-
-    override fun getComposeUiModule(moduleName: String): ComposeUi {
-        val factory = appComponent.composeUiFactories()[moduleName]
-            ?: throw IllegalArgumentException("No ComposeUiFactory for moduleName=$moduleName")
-
-        return factory.create()
     }
 
     private val timeDateReceiver = TimeDateOrTZChangeReceiver()
