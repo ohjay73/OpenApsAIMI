@@ -1,4 +1,6 @@
+import org.gradle.kotlin.dsl.android
 import java.io.ByteArrayOutputStream
+import org.gradle.kotlin.dsl.debugImplementation
 import java.text.SimpleDateFormat
 import java.util.Date
 
@@ -16,6 +18,7 @@ plugins {
 repositories {
     mavenCentral()
     google()
+    maven("https://jitpack.io")
 }
 
 // -----------------------------------------------------------------------------
@@ -92,7 +95,6 @@ android {
     compileSdk = Versions.compileSdk
 
     namespace = "app.aaps"
-    ndkVersion = Versions.ndkVersion
 
     defaultConfig {
         // Remplace par des valeurs fixes si besoin (ex. 21, 34, etc.)
@@ -240,10 +242,10 @@ dependencies {
     implementation(project(":pump:equil"))
     implementation(project(":pump:insight"))
     implementation(project(":pump:medtronic"))
-    implementation(project(":pump:pump-common"))
-    implementation(project(":pump:omnipod-common"))
-    implementation(project(":pump:omnipod-eros"))
-    implementation(project(":pump:omnipod-dash"))
+    implementation(project(":pump:common"))
+    implementation(project(":pump:omnipod:common"))
+    implementation(project(":pump:omnipod:eros"))
+    implementation(project(":pump:omnipod:dash"))
     implementation(project(":pump:rileylink"))
     implementation(project(":pump:virtual"))
     implementation(project(":workflow"))
@@ -252,6 +254,9 @@ dependencies {
     androidTestImplementation(project(":shared:tests"))
     androidTestImplementation(libs.androidx.test.rules)
     androidTestImplementation(libs.org.skyscreamer.jsonassert)
+
+    debugImplementation(libs.com.squareup.leakcanary.android)
+
 
     kspAndroidTest(libs.com.google.dagger.android.processor)
 
@@ -263,6 +268,8 @@ dependencies {
 
     // MainApp
     api(libs.com.uber.rxdogtag2.rxdogtag)
+    // MPAndroidChart for comparator
+    implementation("com.github.PhilJay:MPAndroidChart:v3.1.0")
     // Remote config
     api(libs.com.google.firebase.config)
 }

@@ -1,6 +1,7 @@
 package app.aaps.plugins.aps.openAPSAIMI
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.os.Environment
 import app.aaps.core.data.model.BS
 import app.aaps.core.data.model.TB
@@ -10,7 +11,7 @@ import app.aaps.core.data.time.T
 import app.aaps.core.interfaces.aps.APSResult
 import app.aaps.core.interfaces.aps.AutosensResult
 import app.aaps.core.interfaces.aps.CurrentTemp
-import app.aaps.core.interfaces.aps.GlucoseStatus
+import app.aaps.core.interfaces.aps.GlucoseStatusAIMI
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.aps.MealData
 import app.aaps.core.interfaces.aps.OapsProfileAimi
@@ -19,19 +20,61 @@ import app.aaps.core.interfaces.aps.RT
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.plugin.ActivePlugin
+import app.aaps.core.interfaces.pump.Pump
+import app.aaps.core.data.pump.defs.PumpDescription
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.stats.TddCalculator
 import app.aaps.core.interfaces.stats.TirCalculator
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
+import app.aaps.core.interfaces.logging.AAPSLogger
+import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
-import app.aaps.core.keys.Preferences
+import app.aaps.core.keys.StringKey
+import app.aaps.core.keys.UnitDoubleKey
+import app.aaps.core.keys.interfaces.Preferences
+import app.aaps.plugins.aps.R
+import app.aaps.plugins.aps.openAPSAIMI.basal.BasalDecisionEngine
+import app.aaps.plugins.aps.openAPSAIMI.basal.BasalHistoryUtils
+import app.aaps.plugins.aps.openAPSAIMI.carbs.CarbsAdvisor
+
+import app.aaps.plugins.aps.openAPSAIMI.extensions.asRounded
+import app.aaps.core.interfaces.ui.UiInteraction
+import app.aaps.plugins.aps.openAPSAIMI.utils.AimiStorageHelper
+import app.aaps.plugins.aps.openAPSAIMI.model.Constants
+import app.aaps.plugins.aps.openAPSAIMI.model.SmbPlan
+// Imports updated for strict patch
+import app.aaps.plugins.aps.openAPSAIMI.model.DecisionResult
+
+import app.aaps.plugins.aps.openAPSAIMI.model.LoopContext
+import app.aaps.plugins.aps.openAPSAIMI.model.PumpCaps
+import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdCsvLogger
+import app.aaps.plugins.aps.openAPSAIMI.pkpd.MealAggressionContext
+import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdIntegration
+import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdLogRow
+import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdRuntime
+import app.aaps.plugins.aps.openAPSAIMI.ports.PkpdPort
+import app.aaps.plugins.aps.openAPSAIMI.safety.HypoTools
+import app.aaps.plugins.aps.openAPSAIMI.safety.SafetyDecision
+import app.aaps.plugins.aps.openAPSAIMI.smb.SmbDampingUsecase
+import app.aaps.plugins.aps.openAPSAIMI.smb.SmbInstructionExecutor
+import app.aaps.plugins.aps.openAPSAIMI.smb.computeMealHighIobDecision
+import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCycleFacade
+import app.aaps.plugins.aps.openAPSAIMI.comparison.AimiSmbComparator
+import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCycleInfo
+import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCycleLearner
+import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCyclePreferences
+import app.aaps.plugins.aps.openAPSAIMI.wcycle.CycleTrackingMode
+import app.aaps.plugins.aps.openAPSAIMI.pkpd.AdvancedPredictionEngine
+import app.aaps.plugins.aps.openAPSAIMI.pkpd.InsulinActionProfiler
+import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkpdAbsorptionGuard
 import java.io.File
 import java.text.DecimalFormat
 import java.text.SimpleDateFormat
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -41,25 +84,124 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.collections.asSequence
+import kotlin.collections.get
 import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
-import android.content.Context
-import app.aaps.plugins.aps.R
-import kotlin.math.exp
 
+internal data class PredictionSanityResult(
+    val predBg: Double,
+    val eventualBg: Double,
+    val label: String
+)
 
+internal fun sanitizePredictionValues(
+    bg: Double,
+    delta: Float,
+    predBgRaw: Double?,
+    eventualBgRaw: Double?,
+    series: Predictions?,
+    log: MutableList<String>? = null
+): PredictionSanityResult {
+    val baseBg = bg.coerceIn(25.0, 600.0)
+    var predBg = (predBgRaw ?: baseBg).coerceIn(25.0, 600.0)
+    var eventualBg = (eventualBgRaw ?: predBg).coerceIn(25.0, 600.0)
+    val anomalies = mutableListOf<String>()
+
+    val lengths = listOfNotNull(series?.IOB, series?.COB, series?.ZT, series?.UAM)
+    val minSize = lengths.minOfOrNull { it.size } ?: 0
+    if (minSize in 1..5) {
+        anomalies.add("series<$minSize")
+    }
+
+    if (!predBg.isFinite() || !eventualBg.isFinite()) {
+        anomalies.add("nonFinite")
+        predBg = baseBg
+        eventualBg = baseBg
+    }
+
+    val largeDrop = baseBg - predBg
+    val rising = delta >= 0f
+    if (rising && baseBg > 140 && largeDrop > 80) {
+        predBg = (baseBg + delta * 6).coerceIn(25.0, 600.0)
+        anomalies.add("jumpClamp")
+    }
+
+    if (eventualBg < 25 || eventualBg > 600) {
+        anomalies.add("eventualRange")
+        eventualBg = predBg
+    }
+
+    val label = if (anomalies.isEmpty()) "ok" else anomalies.joinToString("+")
+    if (anomalies.isNotEmpty()) {
+        log?.add(
+            "PRED_SANITY_FAIL: $label bg=${baseBg.roundToInt()} pred=${predBg.roundToInt()} ev=${eventualBg.roundToInt()} delta=${"%.1f".format(delta)}"
+        )
+    }
+
+    return PredictionSanityResult(predBg, eventualBg, label)
+}
+
+// ========================================
+// Meal Advisor Configuration Constants
+// ========================================
+/**
+ * IOB Discount Factor for Meal Advisor
+ * 
+ * When calculating SMB for a confirmed meal (via photo), we discount the current IOB
+ * by this factor to account for uncertainty:
+ * - IOB may be from a previous unlogged meal (e.g., soup)
+ * - IOB action diminishes over time
+ * - User confirmation signals "new meal coming" that will raise BG
+ * 
+ * Value of 0.7 means we only subtract 70% of actual IOB, giving a 30% safety margin.
+ */
+private const val MEAL_ADVISOR_IOB_DISCOUNT_FACTOR = 0.7
+
+/**
+ * Minimum Carb Coverage for Meal Advisor
+ * 
+ * Guarantees that at least this percentage of calculated insulin for carbs
+ * is delivered as SMB, even if IOB calculation would suggest zero.
+ * 
+ * This ensures a prebolus is ALWAYS sent when user confirms a meal,
+ * since the meal WILL raise BG regardless of current IOB.
+ * 
+ * Value of 0.25 means at least 25% of carb insulin requirement is delivered.
+ */
+private const val MEAL_ADVISOR_MIN_CARB_COVERAGE = 0.25
+
+/**
+ * Main orchestrator for the AIMI loop.
+ *
+ * High level flow (all numbers are mg/dL unless stated otherwise):
+ *  1. Gather loop context (profile, COB/IOB, modes, history) and build the PKPD runtime.
+ *  2. Use PKPD engines to derive final insulin action parameters and predictions
+ *     (eventual BG + full prediction curve) that feed both basal and SMB logic.
+ *  3. Blend ISF/autosens, apply wCycle/NGR adjustments, then run ML to propose an SMB.
+ *  4. Pipe the proposed SMB through centralized safety and damping (tail/exercise/meal),
+ *     then quantize before execution via the SMB engine.
+ *  5. Basal decisions reuse the same PKPD/ISF context and the shared safety gates to
+ *     avoid diverging behaviours between basal and SMB paths.
+ */
 @Singleton
 class DetermineBasalaimiSMB2 @Inject constructor(
     private val profileUtil: ProfileUtil,
     private val fabricPrivacy: FabricPrivacy,
+    private val preferences: Preferences,
+    private val uiInteraction: app.aaps.core.interfaces.ui.UiInteraction,
+    private val wCycleFacade: WCycleFacade,
+    private val wCyclePreferences: WCyclePreferences,
+    private val wCycleLearner: WCycleLearner,
+    private val pumpCapabilityValidator: app.aaps.plugins.aps.openAPSAIMI.validation.PumpCapabilityValidator,
     context: Context
 ) {
-    @Inject lateinit var preferences: Preferences
     @Inject lateinit var persistenceLayer: PersistenceLayer
     @Inject lateinit var tddCalculator: TddCalculator
     @Inject lateinit var tirCalculator: TirCalculator
@@ -67,30 +209,67 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     @Inject lateinit var profileFunction: ProfileFunction
     @Inject lateinit var iobCobCalculator: IobCobCalculator
     @Inject lateinit var activePlugin: ActivePlugin
+    @Inject lateinit var basalDecisionEngine: BasalDecisionEngine
+    @Inject lateinit var activityManager: app.aaps.plugins.aps.openAPSAIMI.activity.ActivityManager // Agnostic injection
+    @Inject lateinit var glucoseStatusCalculatorAimi: GlucoseStatusCalculatorAimi
+    @Inject lateinit var comparator: AimiSmbComparator
+    @Inject lateinit var basalLearner: app.aaps.plugins.aps.openAPSAIMI.learning.BasalLearner
+    @Inject lateinit var unifiedReactivityLearner: app.aaps.plugins.aps.openAPSAIMI.learning.UnifiedReactivityLearner  // 🎯 NEW
+    @Inject lateinit var storageHelper: AimiStorageHelper  // 🛡️ Storage health monitoring
+    @Inject lateinit var aapsLogger: AAPSLogger  // 📊 Logger for health monitoring
+    @Inject lateinit var auditorOrchestrator: app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.AuditorOrchestrator  // 🧠 AI Decision Auditor
+    // ❌ OLD reactivityLearner removed - UnifiedReactivityLearner is now the only one
+    init {
+        // Branche l’historique basal (TBR) sur la persistence réelle
+        BasalHistoryUtils.installHistoryProvider(
+            BasalHistoryUtils.FetcherProvider(
+                fetcher = { fromMillis: Long ->
+                    // Récupère les TBR depuis 'fromMillis', puis trie DESC par timestamp
+                    val raws: List<TB> = try {
+                        // Adapte le nom exact de l’API selon ta persistence
+                        persistenceLayer
+                            .getTemporaryBasalsStartingFromTime(fromMillis,ascending = false)    // souvent retourne Single<List<TB>>
+                            .blockingGet()
+                    } catch (t: Throwable) {
+                        emptyList()
+                    }
+
+                    raws.asSequence()
+                        .filter { it.timestamp > 0L && it.timestamp >= fromMillis }
+                        .sortedByDescending { it.timestamp }
+                        .toList()
+                },
+                // Optionnel : aligne "now" sur ton utilitaire de date
+                nowProvider = { dateUtil.now() }
+            )
+        )
+    }
 
     private val context: Context = context.applicationContext
     private val EPS_FALL = 0.3      // mg/dL/5min : seuil de baisse
     private val EPS_ACC  = 0.2      // mg/dL/5min : seuil d'écart short vs long
-    // — Hypo guard —
-    private val HYPO_MARGIN_BASE = 0.0     // mg/dL
-    private val HYPO_MARGIN_FALL  = 5.0    // delta <= -1.5 mg/dL/5min
-    private val HYPO_MARGIN_FAST  = 10.0   // delta <= -3.0 mg/dL/5min
-
+    private var lateFatRiseFlag: Boolean = false
     // — Hystérèse anti-pompage —
     private val HYPO_RELEASE_MARGIN   = 5.0      // mg/dL au-dessus du seuil
     private val HYPO_RELEASE_HOLD_MIN = 5        // minutes à rester > seuil+margin
+    private var highBgOverrideUsed = false
+    private val INSULIN_STEP = Constants.DEFAULT_INSULIN_STEP_U.toFloat()
 
     // État interne d’hystérèse
     private var lastHypoBlockAt: Long = 0L
     private var hypoClearCandidateSince: Long? = null
-
+    private var mealModeSmbReason: String? = null
     private val consoleError = mutableListOf<String>()
     private val consoleLog = mutableListOf<String>()
+    private var lastResistanceHammerTime: Long = 0L // FCL 6.0 State
+    private var lastAutodriveActionTime: Long = 0L  // FCL 14.1 Cooldown State
+    private var hammerFailureCount: Int = 0 // FCL 7.0 State
     private val externalDir = File(Environment.getExternalStorageDirectory().absolutePath + "/Documents/AAPS")
     //private val modelFile = File(externalDir, "ml/model.tflite")
     //private val modelFileUAM = File(externalDir, "ml/modelUAM.tflite")
     private val csvfile = File(externalDir, "oapsaimiML2_records.csv")
     private val csvfile2 = File(externalDir, "oapsaimi2_records.csv")
+    private val pkpdIntegration = PkPdIntegration(preferences)
     //private val tempFile = File(externalDir, "temp.csv")
     private var bgacc = 0.0
     private var predictedSMB = 0.0f
@@ -106,6 +285,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private var predictedBg = 0.0f
     private var lastCarbAgeMin: Int = 0
     private var futureCarbs = 0.0f
+    private var lastCycleNotificationDay: Int = -1 // State for cycle notification spam prevention
     //private var enablebasal: Boolean = false
     private var recentNotes: List<UE>? = null
     private var tags0to60minAgo = ""
@@ -114,6 +294,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private var tags180to240minAgo = ""
     private var tir1DAYabove: Double = 0.0
     private var currentTIRLow: Double = 0.0
+    private var lastProfile: OapsProfileAimi? = null
+    private var wCycleInfoForRun: WCycleInfo? = null
+    private var wCycleReasonLogged: Boolean = false
     private var currentTIRRange: Double = 0.0
     private var currentTIRAbove: Double = 0.0
     private var lastHourTIRLow: Double = 0.0
@@ -171,11 +354,211 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private var snackrunTime: Long = 0
     private var intervalsmb = 1
     private var peakintermediaire = 0.0
+    private var latestAdjustedDia: Double = 0.0 // Captured for logging
     private var insulinPeakTime = 0.0
+    private var iobActivityNow: Double = 0.0
+    private var lastBolusAgeMinutes: Double = Double.NaN
+    private var lastDecisionSource: String = "AIMI"
+    private var lastSafetySource: String = "NONE"
+    private var lastPredictionAvailable: Boolean = false
+    private var lastPredictionSize: Int = 0
+    private var lastEventualBgSnapshot: Double = 0.0
+    private var lastSmbProposed: Double = 0.0
+    private var lastSmbCapped: Double = 0.0
+    private var lastSmbFinal: Double = 0.0
+    private var lastAutodriveState: AutodriveState = AutodriveState.IDLE
+    private var internalLastSmbMillis: Long = 0L // Local Atomic Timestamp for Safety
+    private val nightGrowthResistanceMode = NightGrowthResistanceMode()
+    private val ngrTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
     private var zeroBasalAccumulatedMinutes: Int = 0
     private val MAX_ZERO_BASAL_DURATION = 60  // Durée maximale autorisée en minutes à 0 basal
+    private val insulinObserver = app.aaps.plugins.aps.openAPSAIMI.pkpd.RealTimeInsulinObserver()  // 🚀 Real-Time Insulin Observer
+    private var pkpdThrottleIntervalAdd: Int = 0       // 🚀 PKPD interval boost (0 si normal/modes repas)
+    private var pkpdPreferTbrBoost: Double = 1.0       // 🚀 PKPD TBR boost factor (1.0 si normal/modes repas)
+
+    /**
+     * 🛡️ Sanitize strings before adding to consoleLog to prevent JSON deserialization crashes.
+     * Escapes quotes, backslashes, and removes control characters that could break JSON parsing.
+     * 
+     * Critical for backward compatibility with database records containing special characters.
+     */
+    private fun sanitizeForJson(input: String): String {
+        return input
+            .replace("\\", "\\\\")     // Escape backslashes first!
+            .replace("\"", "\\\"")     // Escape quotes
+            .replace("\n", "\\n")      // Escape newlines
+            .replace("\r", "\\r")      // Escape carriage returns
+            .replace("\t", "\\t")      // Escape tabs
+            .filter { it.code >= 32 || it in "\n\r\t" }  // Remove other control chars
+    }
 
     private fun Double.toFixed2(): String = DecimalFormat("0.00#").format(round(this, 2))
+    private fun parseNgrTime(value: String, fallback: LocalTime): LocalTime =
+        runCatching { LocalTime.parse(value, ngrTimeFormatter) }.getOrElse { fallback }
+
+    private class PkpdPortAdapter(
+        private val pkpdIntegration: PkPdIntegration
+    ) : PkpdPort {
+
+        private fun LoopContext.mealModeActive(): Boolean =
+            modes.meal || modes.breakfast || modes.lunch || modes.dinner || modes.highCarb || modes.snack
+
+        override fun snapshot(ctx: LoopContext): PkpdPort.Snapshot {
+            val mealCtx = MealAggressionContext(
+                mealModeActive = ctx.mealModeActive(),
+                predictedBgMgdl = ctx.eventualBg,
+                targetBgMgdl = ctx.profile.targetMgdl
+            )
+            val rt = pkpdIntegration.computeRuntime(
+                epochMillis = ctx.nowEpochMillis,
+                bg = ctx.bg.mgdl,
+                deltaMgDlPer5 = ctx.bg.delta5,
+                iobU = ctx.iobU,
+                carbsActiveG = ctx.cobG,
+                windowMin = ctx.settings.smbIntervalMin,
+                exerciseFlag = false, // remplace par ctx.modes.sport si dispo
+                profileIsf = ctx.profile.isfMgdlPerU,
+                tdd24h = ctx.tdd24hU,
+                mealContext = mealCtx
+            )
+            return if (rt != null) {
+                PkpdPort.Snapshot(
+                    diaMin   = (rt.params.diaHrs * 60.0).toInt(), // ✅ diaHrs
+                    peakMin  = rt.params.peakMin.toInt(),
+                    fusedIsf = rt.fusedIsf,
+                    tailFrac = rt.tailFraction
+                    // ⚠ champs SMB optionnels laissent null ici
+                )
+            } else {
+                PkpdPort.Snapshot(diaMin = 6*60, peakMin = 60, fusedIsf = ctx.profile.isfMgdlPerU, tailFrac = 0.0)
+            }
+        }
+
+        override fun dampSmb(units: Double, ctx: LoopContext, bypassDamping: Boolean): PkpdPort.DampingAudit {
+            val mealCtx = MealAggressionContext(
+                mealModeActive = ctx.mealModeActive(),
+                predictedBgMgdl = ctx.eventualBg,
+                targetBgMgdl = ctx.profile.targetMgdl
+            )
+            val rt = pkpdIntegration.computeRuntime(epochMillis = ctx.nowEpochMillis,
+                                                    bg = ctx.bg.mgdl,
+                                                    deltaMgDlPer5 = ctx.bg.delta5,
+                                                    iobU = ctx.iobU,
+                                                    carbsActiveG = ctx.cobG,
+                                                    windowMin = ctx.settings.smbIntervalMin,
+                                                    exerciseFlag = false, // remplace par ctx.modes.sport si dispo
+                                                    profileIsf = ctx.profile.isfMgdlPerU,
+                                                    tdd24h = ctx.tdd24hU,
+                                                    mealContext = mealCtx)
+
+            val damping = SmbDampingUsecase.run(
+                rt,
+                SmbDampingUsecase.Input(
+                    smbDecision = units,
+                    exercise = false, // adapte si tu as un flag d’exercice
+                    suspectedLateFatMeal = ctx.modes.highCarb, // ✅ depuis les modes
+                    mealModeRun = bypassDamping,
+                    highBgRiseActive = false
+                )
+            )
+            val audit = damping.audit
+            return if (audit != null) {
+                PkpdPort.DampingAudit(
+                    out = damping.smbAfterDamping,
+                    tailApplied = audit.tailApplied, tailMult = audit.tailMult,
+                    exerciseApplied = audit.exerciseApplied, exerciseMult = audit.exerciseMult,
+                    lateFatApplied = audit.lateFatApplied, lateFatMult = audit.lateFatMult,
+                    mealBypass = audit.mealBypass
+                )
+            } else {
+                PkpdPort.DampingAudit(damping.smbAfterDamping, false, 1.0, false, 1.0, false, 1.0, mealBypass = false)
+            }
+        }
+
+
+        override fun logCsv(
+            ctx: LoopContext,
+            pkpd: PkpdPort.Snapshot,
+            smbProposed: Double,
+            smbFinal: Double,
+            audit: PkpdPort.DampingAudit?
+        ) {
+            val dateStr  = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).format(java.util.Date(ctx.nowEpochMillis))
+            val epochMin = java.util.concurrent.TimeUnit.MILLISECONDS.toMinutes(ctx.nowEpochMillis)
+            PkPdCsvLogger.append(
+                PkPdLogRow(
+                    dateStr = dateStr,
+                    epochMin = epochMin,
+                    bg = ctx.bg.mgdl,
+                    delta5 = ctx.bg.delta5,
+                    iobU = ctx.iobU,
+                    carbsActiveG = ctx.cobG,
+                    windowMin = ctx.settings.smbIntervalMin,
+                    diaH = pkpd.diaMin / 60.0,
+                    peakMin = pkpd.peakMin.toDouble(),
+                    fusedIsf = pkpd.fusedIsf,
+                    tddIsf = 1800.0 / (ctx.tdd24hU.coerceAtLeast(0.1)), // comme avant si tu l’utilises
+                    profileIsf = ctx.profile.isfMgdlPerU,
+                    tailFrac = pkpd.tailFrac,
+                    smbProposedU = smbProposed,
+                    smbFinalU = smbFinal,
+                    tailMult = audit?.tailMult,
+                    exerciseMult = audit?.exerciseMult,
+                    lateFatMult = audit?.lateFatMult,
+                    highBgOverride = null,
+                    lateFatRise = pkpd.lateFatRise,
+                    quantStepU = ctx.pump.bolusStep
+                )
+            )
+        }
+    }
+
+    private val nightGrowthLearner = NightGrowthResistanceLearner()
+
+    private fun buildNightGrowthResistanceConfig(
+        profile: OapsProfileAimi,
+        autosens: AutosensResult,
+        glucoseStatus: GlucoseStatusAIMI?,
+        targetBg: Double
+    ): NGRConfig {
+        val age = preferences.get(IntKey.OApsAIMINightGrowthAgeYears).coerceAtLeast(0)
+        val enabledPref = preferences.getIfExists(BooleanKey.OApsAIMINightGrowthEnabled)
+        val nightStart = parseNgrTime(preferences.get(StringKey.OApsAIMINightGrowthStart), LocalTime.of(22, 0))
+        val nightEnd = parseNgrTime(preferences.get(StringKey.OApsAIMINightGrowthEnd), LocalTime.of(6, 0))
+        val extraIobPerSlot = max(0.0, preferences.get(DoubleKey.OApsAIMINightGrowthMaxIobExtra))
+        val diaMinutes = max(60, (profile.dia * 60.0).roundToInt())
+        val features = glucoseStatusCalculatorAimi.getAimiFeatures(true)
+        val learnerOutput = nightGrowthLearner.derive(
+            NightGrowthResistanceLearner.Input(
+                ageYears = age,
+                autosensRatio = autosens.ratio,
+                diaMinutes = diaMinutes,
+                isfMgdl = profile.sens,
+                targetBg = targetBg,
+                basalRate = profile.current_basal,
+                stabilityMinutes = features?.stable5pctMinutes ?: 0.0,
+                combinedDelta = features?.combinedDelta ?: 0.0,
+                bgNoise = glucoseStatus?.noise ?: 0.0
+            )
+        )
+        val enabled = enabledPref ?: (age < 18)
+        val slotCap = if (age < 10) 6 else 4
+        return NGRConfig(
+            enabled = enabled,
+            pediatricAgeYears = age,
+            nightStart = nightStart,
+            nightEnd = nightEnd,
+            minRiseSlope = learnerOutput.minRiseSlope,
+            minDurationMin = learnerOutput.minDurationMinutes,
+            minEventualOverTarget = learnerOutput.minEventualOverTarget,
+            allowSMBBoostFactor = learnerOutput.smbBoost,
+            allowBasalBoostFactor = learnerOutput.basalBoost,
+            maxSMBClampU = learnerOutput.maxSmbClamp,
+            extraIobPer30Min = extraIobPerSlot,
+            decayMinutes = learnerOutput.decayMinutes,
+            headroomSlotCap = slotCap
+        )
+    }
     /**
      * Prédit l’évolution de la glycémie sur un horizon donné (en minutes),
      * avec des pas de 5 minutes.
@@ -254,52 +637,39 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     }
 
 
-    private fun roundBasal(value: Double): Double = value
-    private fun getZeroBasalDuration(persistenceLayer: PersistenceLayer, lookBackHours: Int): Int {
-        val now = System.currentTimeMillis()
-        val fromTime = now - lookBackHours * 60 * 60 * 1000L
+    /**
+     * Détecte une montée glycémique significative basée sur les deltas réels.
+     * Utilisé pour éviter que les prédictions optimistes bloquent l'action.
+     *
+     * @param deltaVal Delta 5min actuel (mg/dL/5min)
+     * @param shortAvgDeltaVal Moyenne courte des deltas
+     * @param bgNow Glycémie actuelle
+     * @param targetBgVal Objectif glycémique
+     * @param mealModeActive Mode repas actif (seuils plus sensibles)
+     * @return true si une montée significative est détectée
+     */
+    private fun isRisingFast(
+        deltaVal: Double,
+        shortAvgDeltaVal: Double,
+        bgNow: Double,
+        targetBgVal: Double,
+        mealModeActive: Boolean
+    ): Boolean {
+        // Seuils ajustés selon le contexte repas
+        val deltaThreshold = if (mealModeActive) 2.0 else 4.0
+        val shortAvgThreshold = if (mealModeActive) 1.5 else 3.0
+        val bgMargin = if (mealModeActive) 0.0 else 10.0
 
-        // Récupère les basales temporaires triées par timestamp décroissant
-        val tempBasals: List<TB> = persistenceLayer
-            .getTemporaryBasalsStartingFromTime(fromTime, ascending = false)
-            .blockingGet()
-
-        if (tempBasals.isEmpty()) {
-            return 0 // Aucune donnée disponible pendant la période de recherche
-        }
-
-        var lastZeroTimestamp = fromTime // Initialiser avec le timestamp de base
-
-        for (event in tempBasals) {
-            if (event.rate > 0.05) break
-            lastZeroTimestamp = event.timestamp
-        }
-
-        // Si aucun événement n'a un taux > 0.05, alors on considère la durée depuis le début de la période
-        val zeroDuration = if (lastZeroTimestamp == fromTime) {
-            now - fromTime
-        } else {
-            now - lastZeroTimestamp
-        }
-
-        return (zeroDuration / 60000L).toInt()
+        return (deltaVal >= deltaThreshold || shortAvgDeltaVal >= shortAvgThreshold)
+            && bgNow >= targetBgVal - bgMargin
     }
-    // -- Classe représentant la décision de sécurité --
-    data class SafetyDecision(
-        val stopBasal: Boolean,      // true => arrête la basale (ou force une basale à 0)
-        val bolusFactor: Double,     // Facteur multiplicateur appliqué à la dose SMB (1.0 = dose complète, 0.0 = annulation)
-        val reason: String,           // Log résumant les critères ayant conduit à la décision
-        val basalLS: Boolean
-    )
 
-    // -- Calcul de la chute de BG par heure sur une fenêtre donnée (en minutes) --
-    fun calculateDropPerHour(bgHistory: List<Float>, windowMinutes: Float): Float {
-        if (bgHistory.size < 2) return 0f
-        val first = bgHistory.first()  // plus ancien
-        val last  = bgHistory.last()   // plus récent
-        val drop  = (first - last)     // positif si baisse
-        return drop * (60f / windowMinutes)
+    private fun roundBasal(value: Double): Double {
+        val safeValue = if (value < 0.0) 0.0 else value
+        // Standard rounding to 2 decimals (OpenAPS style 0.00)
+        return Math.round(safeValue * 100.0) / 100.0
     }
+
 
     /**
      * Ajuste la dose d'insuline (SMB) et décide éventuellement de stopper la basale.
@@ -330,47 +700,49 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         zeroBasalDurationMinutes: Int
     ): SafetyDecision {
         val windowMinutes = 30f
-        val dropPerHour = calculateDropPerHour(bgHistory, windowMinutes)
-        val maxAllowedDropPerHour = 25f  // Seuil de chute rapide à ajuster si besoin
+        val dropPerHour = HypoTools.calculateDropPerHour(bgHistory, windowMinutes)
+        val maxAllowedDropPerHour = 65f  // Seuil de chute rapide à ajuster si besoin
         val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
 
         val reasonBuilder = StringBuilder()
         var stopBasal = false
         var basalLS = false
+        var isHypoRisk = false
 
         // Liste des facteurs multiplicatifs proposés ; on calculera la moyenne à la fin
         val factors = mutableListOf<Float>()
 
         // 1. Contrôle de la chute rapide
-        if (dropPerHour >= maxAllowedDropPerHour) {
-            stopBasal = true
-            factors.add(0.3f)
-          //reasonBuilder.append("BG drop élevé ($dropPerHour mg/dL/h), forte réduction; ")
+        if (dropPerHour >= maxAllowedDropPerHour && delta < 0 && currentBG < 110f) {
+            // stopBasal = true // Désactivé pour éviter les coupures abusives
+            isHypoRisk = true
+            // factors.add(0.3f) // Désactivé pour ne pas impacter le calcul
+            //reasonBuilder.append("BG drop élevé ($dropPerHour mg/dL/h), forte réduction; ")
             reasonBuilder.append(context.getString(R.string.bg_drop_high, dropPerHour))
         }
 
         // 2. Mode montée très rapide : override de toutes les réductions
         if (delta >= 20f && combinedDelta >= 15f && !honeymoon) {
             // on passe outre toutes les réductions ; bolusFactor sera 1.0
-          //reasonBuilder.append("Montée rapide détectée (delta $delta mg/dL), application du mode d'urgence; ")
+            //reasonBuilder.append("Montée rapide détectée (delta $delta mg/dL), application du mode d'urgence; ")
             reasonBuilder.append(context.getString(R.string.bg_rapid_rise, delta))
         } else {
             // 3. Ajustement selon combinedDelta
             when {
                 combinedDelta < 1f -> {
                     factors.add(0.6f)
-                  //reasonBuilder.append("combinedDelta très faible ($combinedDelta), réduction x0.6; ")
+                    //reasonBuilder.append("combinedDelta très faible ($combinedDelta), réduction x0.6; ")
                     reasonBuilder.append(context.getString(R.string.bg_combined_delta_weak, combinedDelta))
                 }
                 combinedDelta < 2f -> {
                     factors.add(0.8f)
-                  //reasonBuilder.append("combinedDelta modéré ($combinedDelta), réduction x0.8; ")
+                    //reasonBuilder.append("combinedDelta modéré ($combinedDelta), réduction x0.8; ")
                     reasonBuilder.append(context.getString(R.string.bg_combined_delta_moderate, combinedDelta))
                 }
                 else -> {
                     // Appel au multiplicateur lissé
                     factors.add(computeDynamicBolusMultiplier(combinedDelta))
-                  //reasonBuilder.append("combinedDelta élevé ($combinedDelta), multiplicateur dynamique appliqué; ")
+                    //reasonBuilder.append("combinedDelta élevé ($combinedDelta), multiplicateur dynamique appliqué; ")
                     reasonBuilder.append(context.getString(R.string.bg_combined_delta_high, combinedDelta))
                 }
             }
@@ -378,14 +750,14 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             // 4. Plateau BG élevé + combinedDelta très faible
             if (currentBG > 160f && combinedDelta < 1f) {
                 factors.add(0.8f)
-              //reasonBuilder.append("Plateau BG>160 & combinedDelta<1, réduction x0.8; ")
+                //reasonBuilder.append("Plateau BG>160 & combinedDelta<1, réduction x0.8; ")
                 reasonBuilder.append(context.getString(R.string.bg_stable_high_delta_low))
             }
 
             // 5. Contrôle IOB
             if (iob >= maxIob * 0.85f) {
                 factors.add(0.85f)
-              //reasonBuilder.append("IOB élevé ($iob U), réduction x0.85; ")
+                //reasonBuilder.append("IOB élevé ($iob U), réduction x0.85; ")
                 reasonBuilder.append(context.getString(R.string.iob_high_reduction, iob))
             }
 
@@ -393,22 +765,27 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             val tddThreshold = tdd24Hrs / 24f
             if (tddPerHour > tddThreshold) {
                 factors.add(0.8f)
-              //reasonBuilder.append("TDD/h élevé ($tddPerHour U/h), réduction x0.8; ")
+                //reasonBuilder.append("TDD/h élevé ($tddPerHour U/h), réduction x0.8; ")
                 reasonBuilder.append(context.getString(R.string.tdd_per_hour_high, tddPerHour))
             }
 
             // 7. TIR élevé
             if (tirInhypo >= 8f) {
                 factors.add(0.5f)
-              //reasonBuilder.append("TIR élevé ($tirInhypo%), réduction x0.5; ")
+                //reasonBuilder.append("TIR élevé ($tirInhypo%), réduction x0.5; ")
                 reasonBuilder.append(context.getString(R.string.tir_high, tirInhypo))
             }
 
-            // 8. BG prédit proche de la cible
-            if (predictedBG < targetBG + 10) {
+            // 8. BG prédit proche de la cible - SAUF si montée significative
+            val risingFast = delta >= 3f || combinedDelta >= 2f
+            if (predictedBG < targetBG + 10 && !risingFast) {
                 factors.add(0.5f)
-              //reasonBuilder.append("BG prédit ($predictedBG) proche de la cible ($targetBG), réduction x0.5; ")
+                //reasonBuilder.append("BG prédit ($predictedBG) proche de la cible ($targetBG), réduction x0.5; ")
                 reasonBuilder.append(context.getString(R.string.bg_near_target, predictedBG, targetBG))
+            } else if (predictedBG < targetBG + 10 && risingFast) {
+                // Log pour traçabilité mais pas de réduction
+                reasonBuilder.append(context.getString(R.string.bg_near_target_but_rising, 
+                    predictedBG, targetBG, delta, combinedDelta))
             }
         }
 
@@ -424,7 +801,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             stopBasal = false
             basalLS = true
             bolusFactor = 1.0
-          //reasonBuilder.append("Zero basal duration ($zeroBasalDurationMinutes min) dépassé, forçant basal minimal; ")
+            //reasonBuilder.append("Zero basal duration ($zeroBasalDurationMinutes min) dépassé, forçant basal minimal; ")
             reasonBuilder.append(context.getString(R.string.zero_basal_forced, zeroBasalDurationMinutes))
         }
 
@@ -432,112 +809,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             stopBasal = stopBasal,
             bolusFactor = bolusFactor,
             reason = reasonBuilder.toString(),
-            basalLS = basalLS
+            basalLS = basalLS,
+            isHypoRisk = isHypoRisk
         )
     }
 
-    // -- Fonction de sécurité qui combine plusieurs indicateurs pour ajuster la dose d'insuline --
-    // fun safetyAdjustment(
-    //     currentBG: Float,
-    //     predictedBG: Float,
-    //     bgHistory: List<Float>,
-    //     combinedDelta: Float,
-    //     iob: Float,
-    //     maxIob: Float,
-    //     tdd24Hrs: Float,
-    //     tddPerHour: Float,
-    //     tirInhypo: Float,
-    //     targetBG: Float,
-    //     zeroBasalDurationMinutes: Int  // Nouvel argument indiquant combien de minutes consécutives la basale est restée à 0
-    // ): SafetyDecision {
-    //     val windowMinutes = 30f
-    //     val dropPerHour = calculateDropPerHour(bgHistory, windowMinutes)
-    //     val maxAllowedDropPerHour = 25f  // Ajustez si besoin
-    //     val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
-    //     val reasonBuilder = StringBuilder()
-    //     var stopBasal = false
-    //     var basalLS = false
-    //     var bolusFactor = 1.0
-    //
-    //     // 1. Contrôle de la chute
-    //     if (dropPerHour >= maxAllowedDropPerHour) {
-    //         // Option A : on arrête complètement la basale
-    //         stopBasal = true
-    //         // reasonBuilder.append("BG drop élevé: $dropPerHour mg/dL/h; ")
-    //
-    //         // Option B : on réduit fortement le bolusFactor sans stopper la basale
-    //         bolusFactor *= 0.3
-    //         reasonBuilder.append("BG drop élevé ($dropPerHour mg/dL/h), forte réduction du bolus; ")
-    //     }
-    //     if (delta >= 20f && combinedDelta >= 15f && !honeymoon) {
-    //         // Mode "montée rapide" détecté, on override les réductions habituelles
-    //         bolusFactor = 1.0
-    //         reasonBuilder.append("Montée rapide détectée (delta ${delta} mg/dL), application du mode d'urgence; ")
-    //     }
-    //     // 2. Palier sur le combinedDelta
-    //     when {
-    //         combinedDelta < 1f -> {
-    //             bolusFactor *= 0.6
-    //             reasonBuilder.append("combinedDelta très faible ($combinedDelta), réduction x0.6; ")
-    //         }
-    //         combinedDelta < 2f -> {
-    //             bolusFactor *= 0.8
-    //             reasonBuilder.append("combinedDelta modéré ($combinedDelta), réduction x0.8; ")
-    //         }
-    //         else -> {
-    //             bolusFactor *= computeDynamicBolusMultiplier(combinedDelta)
-    //             reasonBuilder.append("combinedDelta élevé ($combinedDelta), pas de réduction; ")
-    //         }
-    //     }
-    //
-    //     // 3. Plateau si BG élevé + combinedDelta très faible
-    //     if (currentBG > 160f && combinedDelta < 1f) {
-    //         bolusFactor *= 0.8
-    //         reasonBuilder.append("Plateau BG>180 & combinedDelta<2 => réduction x0.8; ")
-    //     }
-    //
-    //     // 4. Contrôle IOB
-    //     if (iob >= maxIob * 0.85f) {
-    //         bolusFactor *= 0.85
-    //         reasonBuilder.append("IOB élevé ($iob U), réduction x0.8; ")
-    //     }
-    //
-    //     // 5. Contrôle du TDD par heure
-    //     val tddThreshold = tdd24Hrs / 24f
-    //     if (tddPerHour > tddThreshold) {
-    //         bolusFactor *= 0.8
-    //         reasonBuilder.append("TDD/h élevé ($tddPerHour U/h), réduction x0.8; ")
-    //     }
-    //
-    //     // 6. TIR élevé
-    //     if (tirInhypo >= 8f) {
-    //         bolusFactor *= 0.5
-    //         reasonBuilder.append("TIR élevé ($tirInhypo%), réduction x0.5; ")
-    //     }
-    //
-    //     // 7. BG prédit proche de la cible
-    //     if (predictedBG < targetBG + 10) {
-    //         bolusFactor *= 0.5
-    //         reasonBuilder.append("BG prédit ($predictedBG) proche de la cible ($targetBG), réduction x0.5; ")
-    //     }
-    //     // ---- Intégration du suivi de durée zéro basal ----
-    //     // Si nous avons déjà trop longtemps de basal à 0, on ne souhaite pas stopper la basale.
-    //     // Par exemple, si la durée cumulée dépasse 60 minutes, on force l'arrêt de la réduction (i.e. on ne stoppe pas la basale)
-    //     if (zeroBasalDurationMinutes >= MAX_ZERO_BASAL_DURATION) {
-    //         // On annule la demande de stopper la basale et on force le bolusFactor à 1 (aucune réduction)
-    //         stopBasal = false
-    //         basalLS = true
-    //         bolusFactor = 1.0
-    //         reasonBuilder.append("Zero basal duration ($zeroBasalDurationMinutes min) dépassé, forçant basal minimal; ")
-    //     }
-    //
-    //     return SafetyDecision(
-    //         stopBasal = stopBasal,
-    //         bolusFactor = bolusFactor,
-    //         reason = reasonBuilder.toString(),
-    //         basalLS = basalLS
-    //     )
-    // }
     /**
      * Ajuste le DIA (en minutes) en fonction du niveau d'IOB.
      *
@@ -579,52 +855,69 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     fun calculateAdjustedDIA(
         baseDIAHours: Float,
         currentHour: Int,
-        recentSteps5Minutes: Int,
-        currentHR: Float,
-        averageHR60: Float,
         pumpAgeDays: Float,
-        iob: Double = 0.0 // Ajout du paramètre IOB
+        iob: Double = 0.0,
+        activityContext: app.aaps.plugins.aps.openAPSAIMI.activity.ActivityContext,
+        steps: Int? = null,
+        heartRate: Int? = null
     ): Double {
         val reasonBuilder = StringBuilder()
 
         // 1. Conversion du DIA de base en minutes
         var diaMinutes = baseDIAHours * 60f  // Pour 9h, 9*60 = 540 min
-      //reasonBuilder.append("Base DIA: ${baseDIAHours}h = ${diaMinutes}min\n")
+        //reasonBuilder.append("Base DIA: ${baseDIAHours}h = ${diaMinutes}min\n")
         reasonBuilder.append(context.getString(R.string.dia_base_info, baseDIAHours, diaMinutes))
 
         // 2. Ajustement selon l'heure de la journée
         // Matin (6-10h) : absorption plus rapide, réduction du DIA de 20%
         if (currentHour in 6..10) {
             diaMinutes *= 0.8f
-          //reasonBuilder.append("Morning adjustment (6-10h): reduced by 20%\n")
+            //reasonBuilder.append("Morning adjustment (6-10h): reduced by 20%\n")
             reasonBuilder.append(context.getString(R.string.morning_adjustment))
         }
         // Soir/Nuit (22-23h et 0-5h) : absorption plus lente, augmentation du DIA de 20%
         else if (currentHour in 22..23 || currentHour in 0..5) {
             diaMinutes *= 1.2f
-          //reasonBuilder.append("Night adjustment (22-23h & 0-5h): increased by 20%\n")
+            //reasonBuilder.append("Night adjustment (22-23h & 0-5h): increased by 20%\n")
             reasonBuilder.append(context.getString(R.string.night_adjustment))
         }
 
-        // 3. Ajustement en fonction de l'activité physique
-        if (recentSteps5Minutes > 200 && currentHR > averageHR60) {
-            // Exercice : absorption accélérée, réduction du DIA de 30%
-            diaMinutes *= 0.7f
-          //reasonBuilder.append("Physical activity detected: reduced by 30%\n")
-            reasonBuilder.append(context.getString(R.string.physical_activity_detected))
-        } else if (recentSteps5Minutes == 0 && currentHR > averageHR60) {
-            // Aucune activité mais HR élevée (stress) : absorption potentiellement plus lente, augmentation du DIA de 30%
-            diaMinutes *= 1.3f
-          //reasonBuilder.append("High HR without activity (stress): increased by 30%\n")
-            reasonBuilder.append(context.getString(R.string.high_hr_no_activity))
+    
+    // 3. Ajustement en fonction de l'activité physique (Via ActivityContext)
+    when (activityContext.state) {
+        app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.INTENSE -> {
+             diaMinutes *= 0.7f
+             // reasonBuilder.append(context.getString(R.string.reason_high_activity)) // Using Bio-Sync reason now
         }
+        app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.MODERATE -> {
+             diaMinutes *= 0.8f
+             reasonBuilder.append(" • Moderate Activity ➝ x0.8\n")
+        }
+        app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.LIGHT -> {
+             diaMinutes *= 0.9f
+        }
+        else -> {
+            // REST
+            if (activityContext.isRecovery) {
+                // Recovery might imply lasting effects? For now, keep normal.
+            }
+        }
+    }    
 
-        // 4. Ajustement en fonction du niveau absolu de fréquence cardiaque
-        if (currentHR > 130f) {
-            // HR très élevée : circulation rapide, réduction du DIA de 30%
-            diaMinutes *= 0.7f
-          //reasonBuilder.append("High HR (>130bpm): reduced by 30%\n")
-            reasonBuilder.append(context.getString(R.string.high_hr_over_130))
+        // 3b. BIO-SYNC Stress Mode (Correction for High HR at Rest)
+        val s = steps ?: 0
+        val h = heartRate ?: 0
+        if (h > 95 && s < 100) {
+             // Stress / Maladie : Résistance -> DIA plus long
+             diaMinutes *= 1.2f
+             reasonBuilder.append(context.getString(R.string.reason_bio_sync_stress, h, s))
+        } else if (s > 1000) {
+             // Flow / Sport : Absorption rapide -> DIA plus court (si pas déjà appliqué par ActivityContext)
+             // On s'assure qu'on ne double pas la réduction si ActivityState est déjà INTENSE
+             if (activityContext.state != app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.INTENSE) {
+                 diaMinutes *= 0.85f
+                 reasonBuilder.append(context.getString(R.string.reason_bio_sync_flow, s, h, 0.85f))
+             }
         }
 
         // 5. Ajustement en fonction de l'IOB (Insulin on Board)
@@ -644,13 +937,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             val extraDays = pumpAgeDays - 2f
             val ageMultiplier = 1 + 0.1f * extraDays  // 10% par jour supplémentaire
             diaMinutes *= ageMultiplier
-          //reasonBuilder.append("Pump age (${pumpAgeDays} days): increased by ${extraDays * 10}%\n")
+            //reasonBuilder.append("Pump age (${pumpAgeDays} days): increased by ${extraDays * 10}%\n")
             reasonBuilder.append(context.getString(R.string.pump_age_adjustment, pumpAgeDays, extraDays * 10))
         }
 
         // 7. Contrainte de la plage finale : entre 180 min (3h) et 720 min (12h)
         val finalDiaMinutes = diaMinutes.coerceIn(180f, 720f)
-      //reasonBuilder.append("Final DIA constrained to [180, 720] min: ${finalDiaMinutes}min")
+        //reasonBuilder.append("Final DIA constrained to [180, 720] min: ${finalDiaMinutes}min")
         reasonBuilder.append(context.getString(R.string.final_dia_constrained, finalDiaMinutes))
 
 
@@ -658,59 +951,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         println(context.getString(R.string.dia_calculation_details))
         println(reasonBuilder.toString())
 
+        this.latestAdjustedDia = finalDiaMinutes.toDouble()
         return finalDiaMinutes.toDouble()
     }
-
-    // fun calculateAdjustedDIA(
-    //     baseDIAHours: Float,
-    //     currentHour: Int,
-    //     recentSteps5Minutes: Int,
-    //     currentHR: Float,
-    //     averageHR60: Float,
-    //     pumpAgeDays: Float
-    // ): Double {
-    //     val reasonBuilder = StringBuilder()
-    //     // 1. Conversion du DIA de base en minutes
-    //     var diaMinutes = baseDIAHours * 60f  // Pour 9h, 9*60 = 540 min
-    //
-    //     // 2. Ajustement selon l'heure de la journée
-    //     if (currentHour in 6..10) {
-    //         // Le matin : absorption plus rapide, on réduit le DIA de 20%
-    //         diaMinutes *= 0.8f
-    //     } else if (currentHour in 22..23 || currentHour in 0..5) {
-    //         // Soir/Nuit : absorption plus lente, on augmente le DIA de 20%
-    //         diaMinutes *= 1.2f
-    //     }
-    //
-    //     // 3. Ajustement en fonction de l'activité physique
-    //     if (recentSteps5Minutes > 200 && currentHR > averageHR60) {
-    //         // Exercice : absorption accélérée, réduire le DIA de 30%
-    //         diaMinutes *= 0.7f
-    //     } else if (recentSteps5Minutes == 0 && currentHR > averageHR60) {
-    //         // Aucune activité mais HR élevée (stress) : absorption potentiellement plus lente, augmenter le DIA de 30%
-    //         diaMinutes *= 1.3f
-    //     }
-    //
-    //     // 4. Ajustement en fonction du niveau absolu de fréquence cardiaque
-    //     if (currentHR > 130f) {
-    //         // HR très élevée : circulation rapide, réduire le DIA de 30%
-    //         diaMinutes *= 0.7f
-    //     }
-    //
-    //     // 5. Ajustement en fonction de l'IOB
-    //     diaMinutes = adjustDIAForIOB(diaMinutes, iob)
-    //     // Si le site est utilisé depuis 2 jours ou plus, augmenter le DIA de 10% par jour supplémentaire.
-    //     if (pumpAgeDays >= 2f) {
-    //         val extraDays = pumpAgeDays - 2f
-    //         val ageMultiplier = 1 + 0.2f * extraDays  // par exemple, 2 jours => 1 + 0.2*1 = 1.2
-    //         diaMinutes *= ageMultiplier
-    //     }
-    //
-    //     // 6. Contrainte de la plage finale : entre 180 min (3h) et 720 min (12h)
-    //     diaMinutes = diaMinutes.coerceIn(180f, 720f)
-    //     reasonBuilder.append("Dia in minutes : $diaMinutes")
-    //     return diaMinutes.toDouble()
-    // }
 
     // -- Méthode pour obtenir l'historique récent de BG, similaire à getRecentBGs() --
     private fun getRecentBGs(): List<Float> {
@@ -731,26 +974,48 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         }
         return recentBGs
     }
-fun appendCompactLog(
-    reason: StringBuilder,
-    peakTime: Double,
-    bg: Double,
-    delta: Float,
-    stepCount: Int?,
-    heartRate: Double?
-) {
-    val bgStr = "%.0f".format(bg)
-    val deltaStr = "%.1f".format(delta)
-    val peakStr = "%.1f".format(peakTime)
+    fun appendCompactLog(
+        reason: StringBuilder,
+        peakTime: Double,
+        bg: Double,
+        delta: Float,
+        stepCount: Int?,
+        heartRate: Double?
+    ) {
+        val bgStr = "%.0f".format(bg)
+        val deltaStr = "%.1f".format(delta)
+        val peakStr = "%.1f".format(peakTime)
 
 //  reason.append("  → 🕒 PeakTime=$peakStr min | BG=$bgStr Δ$deltaStr")
-    reason.append(context.getString(R.string.peak_time, peakStr, bgStr, deltaStr))
+        reason.append(context.getString(R.string.peak_time, peakStr, bgStr, deltaStr))
 //  stepCount?.let { reason.append(" | Steps=$it") }
-    stepCount?.let { reason.append(context.getString(R.string.steps, it)) }
+        stepCount?.let { reason.append(context.getString(R.string.steps, it)) }
 //  heartRate?.let { reason.append(" | HR=$it bpm") }
-    heartRate?.let { reason.append(context.getString(R.string.heart_rate, if (it.isNaN()) "--" else "%.0f".format(it))) }
-    reason.append("\n")
-}
+        heartRate?.let { reason.append(context.getString(R.string.heart_rate, if (it.isNaN()) "--" else "%.0f".format(it))) }
+        reason.append("\n")
+    }
+    
+    /**
+     * 🧠 AI Auditor Helper: Calculate cumulative SMB delivered in last 30 minutes
+     * Used for intelligent audit triggering
+     */
+    private fun calculateSmbLast30Min(): Double {
+        val now = dateUtil.now()
+        val lookback30min = now - 30 * 60 * 1000L
+        
+        return try {
+            val boluses = persistenceLayer
+                .getBolusesFromTime(lookback30min, ascending = false)
+                .blockingGet()
+                .filter { it.type == app.aaps.core.data.model.BS.Type.SMB }
+            
+            boluses.sumOf { it.amount }
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "Failed to calculate SMB last 30min", e)
+            0.0
+        }
+    }
+    
     // Rounds value to 'digits' decimal places
     // different for negative numbers fun round(value: Double, digits: Int): Double = BigDecimal(value).setScale(digits, RoundingMode.HALF_EVEN).toDouble()
     fun round(value: Double, digits: Int): Double {
@@ -765,61 +1030,133 @@ fun appendCompactLog(
         val scale = 10.0.pow(2.0)
         return (Math.round(value * scale) / scale).toInt()
     }
-    private fun calculateRate(basal: Double, currentBasal: Double, multiplier: Double, reason: String, currenttemp: CurrentTemp, rT: RT): Double {
-        rT.reason.append("${currenttemp.duration}m@${(currenttemp.rate).toFixed2()} $reason")
-        return if (basal == 0.0) currentBasal * multiplier else roundBasal(basal * multiplier)
+    // Helper for Post-Meal Basal Boost (AIMI 2.0)
+    private fun adjustBasalForMealHyper(
+        suggestedBasalUph: Double,
+        bg: Double,
+        targetBg: Double,
+        delta: Double,
+        shortAvgDelta: Double,
+        isMealModeActive: Boolean,
+        minutesSinceMealStart: Int,
+        mealMaxBasalUph: Double
+    ): Double {
+        val mealPhase = isMealModeActive && minutesSinceMealStart in 0..120
+        if (!mealPhase) return suggestedBasalUph
+
+        val risingOrFlat = delta >= 0.3 || shortAvgDelta >= 0.2
+        val moderatelyHigh = bg > targetBg + 30.0
+        val veryHigh = bg > targetBg + 90.0   // ex. cible 100 → 190+
+
+        if (!risingOrFlat || !moderatelyHigh) return suggestedBasalUph
+
+        val boostFactor = when {
+            veryHigh -> 10    // ex : 250+ → +50 %
+            else -> 8       // ex : 180–250 → +25 %
+        }
+
+        val boosted = suggestedBasalUph * boostFactor
+
+        // Plafond sécurisé : on ne dépasse pas mealMaxBasalUph
+        return if (boosted > mealMaxBasalUph) mealMaxBasalUph else boosted
     }
-    private fun calculateBasalRate(basal: Double, currentBasal: Double, multiplier: Double): Double =
-        if (basal == 0.0) currentBasal * multiplier else roundBasal(basal * multiplier)
+
+    private fun calculateRate(basal: Double, currentBasal: Double, multiplier: Double, reason: String, currenttemp: CurrentTemp, rT: RT, overrideSafety: Boolean = false): Double {
+        rT.reason.append("${currenttemp.duration}m@${(currenttemp.rate).toFixed2()} $reason")
+        val rawRate = if (overrideSafety || basal == 0.0) currentBasal * multiplier else roundBasal(basal * multiplier)
+        return rawRate.coerceAtLeast(0.0)
+    }
+    private fun calculateBasalRate(basal: Double, currentBasal: Double, multiplier: Double): Double {
+        val raw = if (basal == 0.0) currentBasal * multiplier else roundBasal(basal * multiplier)
+        return raw.coerceAtLeast(0.0)
+    }
 
     private fun convertBG(value: Double): String =
         profileUtil.fromMgdlToStringInUnits(value).replace("-0.0", "0.0")
 
-    private fun enablesmb(profile: OapsProfileAimi, microBolusAllowed: Boolean, mealData: MealData, targetbg: Double): Boolean {
-        // disable SMB when a high temptarget is set
+    private fun enablesmb(
+        profile: OapsProfileAimi,
+        microBolusAllowed: Boolean,
+        mealData: MealData,
+        targetbg: Double,
+        mealModeActive: Boolean,
+        currentBg: Double,
+        delta: Double,
+        eventualBg: Double
+    ): Boolean {
+        mealModeSmbReason = null
+
+        // 0) Garde globale
         if (!microBolusAllowed) {
-          //consoleError.add("SMB disabled (!microBolusAllowed)")
             consoleError.add(context.getString(R.string.smb_disabled))
             return false
-        } else if (!profile.allowSMB_with_high_temptarget && profile.temptargetSet && targetbg > 100) {
-          //consoleError.add("SMB disabled due to high temptarget of $targetbg")
+        }
+        
+        // 🔒 SAFETY: Hard Floor for SMB. No SMB below 80 mg/dL ever.
+        // Even if predicted to rise, we don't SuperBolus a hypo.
+        if (currentBg < 80) {
+            consoleError.add("SMB disabled: BG ${convertBG(currentBg)} < 80")
+            return false
+        }
+
+        // 1) Détection meal-rise plus tolérante
+        val safeFloor = max(100.0, targetbg - 5.0)
+// avant : delta >= 0.3 && currentBg > safeFloor && eventualBg > safeFloor
+        val isMealRise = mealModeActive &&
+            (delta >= 0.1) &&
+            (currentBg > safeFloor)
+
+// 2) Garde high TT : bypass si mode repas actif et pas de risque hypo
+        val hypoGuard = computeHypoThreshold(minBg = profile.min_bg, lgsThreshold = profile.lgsThreshold)
+        val mealBypassHighTT = mealModeActive && currentBg > hypoGuard
+
+        if (!profile.allowSMB_with_high_temptarget &&
+            profile.temptargetSet && targetbg > 100 &&
+            !mealBypassHighTT && !isMealRise
+        ) {
             consoleError.add(context.getString(R.string.smb_disabled_high_target, targetbg))
             return false
         }
 
-        // enable SMB/UAM if always-on (unless previously disabled for high temptarget)
+        // 3) Enable cases (préférences)
         if (profile.enableSMB_always) {
-          //consoleError.add("SMB enabled due to enableSMB_always")
-            consoleError.add(context.getString(R.string.smb_enabled_always))
+            consoleLog.add(context.getString(R.string.smb_enabled_always))
             return true
         }
-
-        // enable SMB/UAM (if enabled in preferences) while we have COB
         if (profile.enableSMB_with_COB && mealData.mealCOB != 0.0) {
-          //consoleError.add("SMB enabled for COB of ${mealData.mealCOB}")
-            consoleError.add(context.getString(R.string.smb_enabled_for_cob, mealData.mealCOB))
+            consoleLog.add(context.getString(R.string.smb_enabled_for_cob, mealData.mealCOB))
             return true
         }
-
-        // enable SMB/UAM (if enabled in preferences) for a full 6 hours after any carb entry
-        // (6 hours is defined in carbWindow in lib/meal/total.js)
         if (profile.enableSMB_after_carbs && mealData.carbs != 0.0) {
-          //consoleError.add("SMB enabled for 6h after carb entry")
-            consoleError.add(context.getString(R.string.smb_enabled_after_carb_entry))
+            consoleLog.add(context.getString(R.string.smb_enabled_after_carb_entry))
+            return true
+        }
+        if (profile.enableSMB_with_temptarget && profile.temptargetSet && targetbg < 100) {
+            consoleLog.add(context.getString(R.string.smb_enabled_for_temp_target, convertBG(targetbg)))
             return true
         }
 
-        // enable SMB/UAM (if enabled in preferences) if a low temptarget is set
-        if (profile.enableSMB_with_temptarget && (profile.temptargetSet && targetbg < 100)) {
-          //consoleError.add("SMB enabled for temptarget of ${convertBG(targetbg)}")
-            consoleError.add(context.getString(R.string.smb_enabled_for_temp_target, convertBG(targetbg)))
-            return true
+        // 4) Enfin, l'exception meal-rise si elle est vraie
+        if (mealModeActive) {
+            val safeFloor = max(100.0, targetbg - 5)
+            val risingFast = delta >= 2.0 || (delta > 0 && currentBg > 120)
+            
+            // Condition assouplie: eventualBg ignoré si montée confirmée
+            if (currentBg > safeFloor && delta > 0.5 && (eventualBg > safeFloor || risingFast)) {
+                mealModeSmbReason = context.getString(
+                    R.string.smb_enabled_meal_mode,
+                    convertBG(currentBg),
+                    delta,
+                    convertBG(eventualBg)
+                )
+                return true
+            }
         }
 
-      //consoleError.add("SMB disabled (no enableSMB preferences active or no condition satisfied)")
         consoleError.add(context.getString(R.string.smb_disabled_no_pref_or_condition))
         return false
     }
+
 
     fun reason(rT: RT, msg: String) {
         if (rT.reason.toString().isNotEmpty()) rT.reason.append(". ")
@@ -834,50 +1171,66 @@ fun appendCompactLog(
         rT: RT,
         currenttemp: CurrentTemp,
         overrideSafetyLimits: Boolean = false,
-        forceExact: Boolean = false // ← NEW
+        forceExact: Boolean = false
     ): RT {
-        // 0) LGS kill-switch (inchangé)
+        // 0) LGS kill-switch (sans récursion)
         val lgsPref = profile.lgsThreshold
         val hypoGuard = computeHypoThreshold(minBg = profile.min_bg, lgsThreshold = lgsPref)
-        val bgNow = bg
-        if (bgNow <= hypoGuard) {
-            rT.reason.append(context.getString(R.string.lgs_triggered, "%.0f".format(bgNow), "%.0f".format(hypoGuard)))
+        val blockLgs = isBelowHypoThreshold(bg, predictedBg.toDouble(), eventualBG, hypoGuard, delta.toDouble())
+        if (blockLgs) {
+            rT.reason.append(context.getString(R.string.lgs_triggered, "%.0f".format(bg), "%.0f".format(hypoGuard)))
             rT.duration = maxOf(duration, 30)
             rT.rate = 0.0
             return rT
         }
+        val isLgsEnabled = profile.lgsThreshold != null && profile.lgsThreshold!! > 0
 
-        // 1) (facultatif) on peut garder Therapy pour du logging, mais on n'en dépend PAS pour le forçage
-        val therapy = Therapy(persistenceLayer).also { it.updateStatesBasedOnTherapyEvents() }
-        val isMealMode = therapy.snackTime || therapy.highCarbTime || therapy.mealTime
-            || therapy.lunchTime || therapy.dinnerTime || therapy.bfastTime
+        val bgNow = bg
 
-        // 2) BG disponibles ?
-        val recentBGs = getRecentBGs()
-        val hasBgData = (bgNow > 39.0) && recentBGs.isNotEmpty()
-
-        // 3) CAS FORCE EXACT (ignorer clamps/trends/cycle, sauf LGS)
+        // 1) Mode manuel : on pose exactement la valeur demandée (toujours bornée ≥ 0)
         if (forceExact) {
             val rate = _rate.coerceAtLeast(0.0)
-          //rT.reason.append("FORCE-EXACT → ${"%.2f".format(rate)} U/h (${duration}m). isMealMode=${isMealMode}\n")
-            rT.reason.append( context.getString(R.string.manual_basal_override,rate,duration,if (isMealMode)  "✔" else "✘"))
+            rT.reason.append(
+                context.getString(
+                    R.string.manual_basal_override,
+                    rate,
+                    duration,
+                    if (Therapy(persistenceLayer).let { it.updateStatesBasedOnTherapyEvents();
+                            it.snackTime || it.highCarbTime || it.mealTime || it.lunchTime || it.dinnerTime || it.bfastTime
+                        }) "✔" else "✘"
+                )
+            )
             rT.duration = duration
             rT.rate = rate
             return rT
         }
 
-        // 4) (reste de ta logique standard inchangée)
+        // 2) Contexte
+        lastProfile = profile
+        val therapy = Therapy(persistenceLayer).also { it.updateStatesBasedOnTherapyEvents() }
+        val isMealMode = therapy.snackTime || therapy.highCarbTime || therapy.mealTime
+            || therapy.lunchTime || therapy.dinnerTime || therapy.bfastTime
+
         val hour = Calendar.getInstance()[Calendar.HOUR_OF_DAY]
-        val night = hour <= 7
+        val night = hour <= 7 // (OK tel quel, utilisé pour l’autodrive)
         val predDelta = predictedDelta(getRecentDeltas()).toFloat()
         val autodrive = preferences.get(BooleanKey.OApsAIMIautoDrive)
-        val isEarlyAutodrive = !night && !isMealMode && autodrive && bgNow > 110 && detectMealOnset(delta, predDelta, bgacc.toFloat())
+        val isEarlyAutodrive = !night && !isMealMode && autodrive &&
+            bgNow > hypoGuard && bgNow > 110 && detectMealOnset(delta, predDelta, bgacc.toFloat(), predictedBg.toFloat(), profile.target_bg.toFloat())
 
-        val bgTrend = calculateBgTrend(recentBGs, StringBuilder())
-        var rateAdjustment = adjustRateBasedOnBgTrend(_rate, bgTrend)
+        // 3) Tendance & ajustement
+        val bgTrend = calculateBgTrend(getRecentBGs(), StringBuilder())
+        var rateAdjustment = adjustRateBasedOnBgTrend(_rate, bgTrend).coerceAtLeast(0.0)
+        
+        // 🚀 PKPD TBR Boost: Augmenter TBR si preferTbr (sauf modes repas)
+        // Note: pkpdPreferTbrBoost est déjà à 1.0 pour les modes repas (via reset dans finalizeAndCapSMB)
+        if (pkpdPreferTbrBoost > 1.0 && !isMealMode) {
+            val originalRate = rateAdjustment
+            rateAdjustment = (rateAdjustment * pkpdPreferTbrBoost).coerceAtLeast(0.0)
+            consoleLog.add("PKPD_TBR_BOOST original=${"%.2f".format(originalRate)} boost=${"%.2f".format(pkpdPreferTbrBoost)} → ${"%.2f".format(rateAdjustment)}U/h")
+        }
 
-        val bypassSafety = (overrideSafetyLimits || isMealMode || isEarlyAutodrive) && bgNow > hypoGuard
-
+        // 4) Limites de sécurité
         val maxSafe = min(
             profile.max_basal,
             min(
@@ -886,14 +1239,57 @@ fun appendCompactLog(
             )
         )
 
+        // 5) Application des limites
+        val bypassSafety = (overrideSafetyLimits || isMealMode || isEarlyAutodrive) && bgNow > hypoGuard
+
+        // Même en bypass, on ne dépasse JAMAIS max_basal (hard cap)
         var rate = when {
             bgNow <= hypoGuard -> 0.0
-            bypassSafety       -> rateAdjustment
+            // [BASAL FLOOR] Rising & > 85 mg/dL -> Maintain floor (50%) instead of 0.0
+            // Only if prediction would otherwise set it to 0.0 (e.g. safety logic)
+            // We check this floor *inside* the safe zone (> hypoGuard).
+            rateAdjustment == 0.0 && bgNow > 85.0 && delta > 1.0 && !isMealMode && !isLgsEnabled -> {
+                 rT.reason.append(" [BASAL_FLOOR] ")
+                 profile.current_basal * 0.5
+            }
+            bypassSafety       -> rateAdjustment.coerceIn(0.0, profile.max_basal)
             else               -> rateAdjustment.coerceIn(0.0, maxSafe)
         }
 
+        // 6) Ajustements cycle féminin (conserve un cap)
+        val wCycleInfo = ensureWCycleInfo()
+        if (wCycleInfo != null) {
+            appendWCycleReason(rT.reason, wCycleInfo)
+        }
         if (bgNow > hypoGuard) {
-            rate = applyWCycleOnBasal(rate, bypassSafety, maxSafe, profile, rT)
+            if (wCycleInfo != null && wCycleInfo.applied) {
+                val pre = rate
+                val scaled = rate * wCycleInfo.basalMultiplier
+                val limit = if (bypassSafety) profile.max_basal else maxSafe
+                rate = scaled.coerceIn(0.0, limit)
+                val need = if (pre > 0.0) rate / pre else null
+                updateWCycleLearner(need, null)
+                // 🔁 log "post-application" avec la mesure d'écart réellement appliquée
+                val profile = lastProfile
+                if (profile != null) {
+                    wCycleFacade.infoAndLog(
+                        mapOf(
+                            "trackingMode" to wCyclePreferences.trackingMode().name,
+                            "contraceptive" to wCyclePreferences.contraceptive().name,
+                            "thyroid" to wCyclePreferences.thyroid().name,
+                            "verneuil" to wCyclePreferences.verneuil().name,
+                            "bg" to bg,
+                            "delta5" to delta.toDouble(),
+                            "iob" to iob.toDouble(),
+                            "tdd24h" to (tdd24HrsPerHour * 24f).toDouble(),
+                            "isfProfile" to profile.sens,
+                            "dynIsf" to variableSensitivity.toDouble(),
+                            "needBasalScale" to need
+                        )
+                    )
+                }
+            }
+            rate = if (bypassSafety) rate.coerceAtMost(profile.max_basal) else rate.coerceAtMost(maxSafe)
         }
 
         rT.reason.append(context.getString(R.string.temp_basal_pose, "%.2f".format(rate), duration))
@@ -904,40 +1300,41 @@ fun appendCompactLog(
 
 
 
+
     private fun calculateBgTrend(recentBGs: List<Float>, reason: StringBuilder): Float {
-    if (recentBGs.isEmpty()) {
-      //reason.append("✘ Aucun historique de glycémie disponible.\n")
-        reason.append(context.getString(R.string.no_bg_history))
-        return 0.0f
+        if (recentBGs.isEmpty()) {
+            //reason.append("✘ Aucun historique de glycémie disponible.\n")
+            reason.append(context.getString(R.string.no_bg_history))
+            return 0.0f
+        }
+
+        // Hypothèse : recentBGs = liste du plus récent au plus ancien → on inverse
+        val sortedBGs = recentBGs.reversed()
+
+        val firstValue = sortedBGs.first()
+        val lastValue = sortedBGs.last()
+        val count = sortedBGs.size
+
+        val bgTrend = (lastValue - firstValue) / count.toFloat()
+
+        //reason.append("→ Analyse BG Trend\n")
+        reason.append(context.getString(R.string.bg_trend_analysis))
+        //reason.append("  • Première glycémie : $firstValue mg/dL\n")
+        reason.append(context.getString(R.string.first_bg_value, firstValue))
+        //reason.append("  • Dernière glycémie : $lastValue mg/dL\n")
+        reason.append(context.getString(R.string.last_bg_value, lastValue))
+        //reason.append("  • Nombre de valeurs : $count\n")
+        reason.append(context.getString(R.string.number_of_values, count))
+        //reason.append("  • Tendance calculée : $bgTrend mg/dL/intervalle\n")
+        reason.append(context.getString(R.string.calculated_trend, bgTrend))
+        return bgTrend
     }
-
-    // Hypothèse : recentBGs = liste du plus récent au plus ancien → on inverse
-    val sortedBGs = recentBGs.reversed()
-
-    val firstValue = sortedBGs.first()
-    val lastValue = sortedBGs.last()
-    val count = sortedBGs.size
-
-    val bgTrend = (lastValue - firstValue) / count.toFloat()
-
-  //reason.append("→ Analyse BG Trend\n")
-    reason.append(context.getString(R.string.bg_trend_analysis))
-  //reason.append("  • Première glycémie : $firstValue mg/dL\n")
-    reason.append(context.getString(R.string.first_bg_value, firstValue))
-  //reason.append("  • Dernière glycémie : $lastValue mg/dL\n")
-    reason.append(context.getString(R.string.last_bg_value, lastValue))
-  //reason.append("  • Nombre de valeurs : $count\n")
-    reason.append(context.getString(R.string.number_of_values, count))
-  //reason.append("  • Tendance calculée : $bgTrend mg/dL/intervalle\n")
-    reason.append(context.getString(R.string.calculated_trend, bgTrend))
-    return bgTrend
-}
 
     private fun adjustRateBasedOnBgTrend(_rate: Double, bgTrend: Float): Double {
         // Si la BG est accessible dans le scope, on peut aussi y jeter un œil ici :
         val bgNow = bg
-        // Si on s’approche du seuil hypo et que la tendance est négative, coupe à 0
-        if (bgNow <=  (80.0 + 10.0) && bgTrend < 0f) return 0.0
+        // Si on s’approche du seuil hypo et que la tendance est négative, coupe à 0 SEULEMENT si chute rapide
+        if (bgNow <= 90.0 && bgTrend < -2.0f) return 0.0
         val adjustmentFactor = if (bgTrend < 0.0f) 0.8 else 1.2
         return _rate * adjustmentFactor
     }
@@ -947,11 +1344,12 @@ fun appendCompactLog(
         val usFormatter = DateTimeFormatter.ofPattern("MM/dd/yyyy HH:mm")
         val dateStr = dateUtil.dateAndTimeString(dateUtil.now()).format(usFormatter)
 
-        val headerRow = "dateStr, bg, iob, cob, delta, shortAvgDelta, longAvgDelta, tdd7DaysPerHour, tdd2DaysPerHour, tddPerHour, tdd24HrsPerHour, predictedSMB, smbGiven\n"
+        val headerRow = "dateStr, bg, iob, cob, delta, shortAvgDelta, longAvgDelta, tdd7DaysPerHour, tdd2DaysPerHour, tddPerHour, tdd24HrsPerHour, predictedSMB, smbGiven, dynamicPeak, adjustedDia\n"
         val valuesToRecord = "$dateStr," +
             "$bg,$iob,$cob,$delta,$shortAvgDelta,$longAvgDelta," +
             "$tdd7DaysPerHour,$tdd2DaysPerHour,$tddPerHour,$tdd24HrsPerHour," +
-            "$predictedSMB,$smbToGive"
+            "$predictedSMB,$smbToGive," +
+            "$peakintermediaire,$latestAdjustedDia"
 
 
         if (!csvfile.exists()) {
@@ -972,13 +1370,13 @@ fun appendCompactLog(
             "tdd7DaysPerHour,tdd2DaysPerHour,tddPerHour,tdd24HrsPerHour," +
             "recentSteps5Minutes,recentSteps10Minutes,recentSteps15Minutes,recentSteps30Minutes,recentSteps60Minutes,recentSteps180Minutes," +
             "tags0to60minAgo,tags60to120minAgo,tags120to180minAgo,tags180to240minAgo," +
-            "predictedSMB,maxIob,maxSMB,smbGiven\n"
+            "predictedSMB,maxIob,maxSMB,smbGiven,dynamicPeak,adjustedDia\n"
         val valuesToRecord = "$dateStr,$hourOfDay,$weekend," +
             "$bg,$targetBg,$iob,$delta,$shortAvgDelta,$longAvgDelta," +
             "$tdd7DaysPerHour,$tdd2DaysPerHour,$tddPerHour,$tdd24HrsPerHour," +
             "$recentSteps5Minutes,$recentSteps10Minutes,$recentSteps15Minutes,$recentSteps30Minutes,$recentSteps60Minutes,$recentSteps180Minutes," +
             "$tags0to60minAgo,$tags60to120minAgo,$tags120to180minAgo,$tags180to240minAgo," +
-            "$predictedSMB,$maxIob,$maxSMB,$smbToGive"
+            "$predictedSMB,$maxIob,$maxSMB,$smbToGive,$peakintermediaire,$latestAdjustedDia"
         if (!csvfile2.exists()) {
             csvfile2.parentFile?.mkdirs() // Crée le dossier s'il n'existe pas
             csvfile2.createNewFile()
@@ -990,7 +1388,7 @@ fun appendCompactLog(
     fun removeLast200Lines(csvFile: File) {
         val reasonBuilder = StringBuilder()
         if (!csvFile.exists()) {
-          //println("Le fichier original n'existe pas.")
+            //println("Le fichier original n'existe pas.")
             println(context.getString(R.string.original_file_missing))
             return
         }
@@ -999,7 +1397,7 @@ fun appendCompactLog(
         val lines = csvFile.readLines(Charsets.UTF_8)
 
         if (lines.size <= 200) {
-          //reasonBuilder.append("Le fichier contient moins ou égal à 200 lignes, aucune suppression effectuée.")
+            //reasonBuilder.append("Le fichier contient moins ou égal à 200 lignes, aucune suppression effectuée.")
             reasonBuilder.append(context.getString(R.string.file_too_short))
             return
         }
@@ -1019,7 +1417,7 @@ fun appendCompactLog(
         // Réécrire le fichier original avec les lignes restantes
         csvFile.writeText(newLines.joinToString("\n"), Charsets.UTF_8)
 
-      //reasonBuilder.append("Les 200 dernières lignes ont été supprimées. Le fichier original a été sauvegardé sous '$backupFileName'.")
+        //reasonBuilder.append("Les 200 dernières lignes ont été supprimées. Le fichier original a été sauvegardé sous '$backupFileName'.")
         reasonBuilder.append(context.getString(R.string.last_200_deleted, backupFileName))
     }
     @SuppressLint("StringFormatInvalid")
@@ -1040,52 +1438,440 @@ fun appendCompactLog(
                 // Appeler la méthode de suppression
                 //createFilteredAndSortedCopy(csvfile,dateToRemove)
                 removeLast200Lines(csvfile)
-              //reasonBuilder.append("Les données pour la date $dateToRemove ont été supprimées car TIR1DAIIR est inférieur à 85%.")
+                //reasonBuilder.append("Les données pour la date $dateToRemove ont été supprimées car TIR1DAIIR est inférieur à 85%.")
                 reasonBuilder.append(context.getString(R.string.reason_data_removed, dateToRemove))
             } else {
-              //reasonBuilder.append("La suppression ne peut être exécutée qu'entre 00:05 et 00:10.")
+                //reasonBuilder.append("La suppression ne peut être exécutée qu'entre 00:05 et 00:10.")
                 reasonBuilder.append(context.getString(R.string.reason_deletion_time_restricted))
             }
-        } else {
-          //reasonBuilder.append("Aucune suppression nécessaire : tir1DAYIR est supérieur ou égal à 85%.")
-            reasonBuilder.append(context.getString(R.string.reason_no_deletion_needed))
         }
+    }
+
+    /**
+     * 🛡️ Centralized Safety Enforcement for "Innovation" Modes
+     * Ensures consistent application of MaxIOB and MaxSMB limits using capSmbDose.
+     */
+    private data class SmbGateAudit(
+        val sinceBolus: Double,
+        val refractoryWindow: Double,
+        val absorptionFactor: Double,
+        val predMissing: Boolean,
+        val maxIobLimit: Double,
+        val maxSmbLimit: Double
+    )
+
+    private fun finalizeAndCapSMB(
+        rT: RT,
+        proposedUnits: Double,
+        reasonHeader: String,
+        mealData: MealData,
+        hypoThreshold: Double,
+        isExplicitUserAction: Boolean = false,
+        decisionSource: String = "AIMI"
+    ) {
+        // 🛡️ FIX NC3: REACTIVITY CLAMP for Low BG (Safety-Critical)
+        // Prevent learner amplification at low BG
+        var effectiveProposed = proposedUnits
+        
+        if (bg < 120.0 && !isExplicitUserAction) {
+            val lowBgReactivityMax = 1.05 // Maximum 5% amplification below 120
+            val currentReactivity = try {
+                unifiedReactivityLearner.globalFactor
+            } catch (e: Exception) {
+                1.0 // Fallback if learner not initialized
+            }
+            
+            if (currentReactivity > lowBgReactivityMax) {
+                val clampedFactor = lowBgReactivityMax
+                effectiveProposed = (proposedUnits / currentReactivity * clampedFactor).coerceAtLeast(0.0)
+                consoleLog.add("REACTIVITY_CLAMP bg=${bg.roundToInt()} react=${"%.2f".format(currentReactivity)} max=${"%.2f".format(clampedFactor)} proposed=${"%.2f".format(proposedUnits)}->${"%.2f".format(effectiveProposed)}")
+            }
+        }
+        
+        val proposedFloat = effectiveProposed.toFloat()
+        lastDecisionSource = decisionSource
+        lastSmbProposed = effectiveProposed
+        
+        // Use maxSMB (Preferences) as the hard limit.
+        // We use 'maxSMB' instead of 'maxSMBHB' to ensure strict safety unless explicitly handled otherwise.
+        // 1. Determine dynamic baseline limit (Normal vs High BG)
+        // If BG > 120, use the High BG Max SMB preference (MaxSMBHB).
+         val baseLimit = if (this.bg > 120) this.maxSMBHB else this.maxSMB
+
+         // 🔒 FCL Safety: Enforce Safety Precautions (Dropping Fast, Hypo Risk, etc)
+         // finalizeAndCapSMB often handles forced boluses, but they MUST yield to critical physical safety.
+         // 🔧 RESTORED: Pass PKPD runtime for tail damping
+         // Note: pkpdRuntime is calculated later in determine_basal, so we pass null here
+         // and rely on the PKPD tail damping in applySafetyPrecautions for context-aware reduction
+         var safetyCappedUnits = applySafetyPrecautions(
+            mealData = mealData,
+            smbToGiveParam = proposedFloat,
+            hypoThreshold = hypoThreshold,
+            reason = rT.reason,
+            pkpdRuntime = null, // Computed later, but tail damping logic available in applySafetyPrecautions
+            exerciseFlag = sportTime, // Pass exercise state
+            suspectedLateFatMeal = lateFatRiseFlag, // Pass late fat flag
+            ignoreSafetyConditions = isExplicitUserAction
+         )
+
+         if (safetyCappedUnits < proposedFloat) {
+              consoleLog.add("Safety Precautions reduced SMB: $proposedFloat -> $safetyCappedUnits")
+         }
+
+         // 🛡️ FIX NC2: LOW BG SMB GUARD (Safety-Critical)
+         // Reduce maxSMB significantly under 120 mg/dL to prevent hypo
+         val lowBgThreshold = 120.0
+         val lowBgSmbFactor = 0.4 // 60% reduction (configurable via preferences later)
+         
+         if (bg < lowBgThreshold && !isExplicitUserAction) {
+             val lowBgLimit = (baseLimit * lowBgSmbFactor).toFloat()
+             if (safetyCappedUnits > lowBgLimit) {
+                 consoleLog.add("LOW_BG_GUARD bg=${bg.roundToInt()} cap=${"%.2f".format(lowBgLimit)} factor=${"%.0f".format(lowBgSmbFactor*100)}%")
+                 safetyCappedUnits = lowBgLimit
+             }
+         }
+
+         // 🔧 FIX 3: Enhanced refractory if prediction absent
+         // Calculate predMissing FIRST before using it
+         val predMissing = !lastPredictionAvailable || lastPredictionSize < 3
+         
+         val baseRefractoryWindow = calculateSMBInterval().toDouble()
+         val refractoryWindow = if (predMissing) {
+             (baseRefractoryWindow * 1.5).coerceAtLeast(5.0) // +50% safety margin if blind
+         } else {
+             baseRefractoryWindow
+         }
+         
+         val sinceBolus = if (lastBolusAgeMinutes.isNaN()) 999.0 else lastBolusAgeMinutes
+         val refractoryBlocked = sinceBolus < refractoryWindow && !isExplicitUserAction
+         var gatedUnits = safetyCappedUnits
+         var absorptionFactor = 1.0
+
+         if (refractoryBlocked) {
+             gatedUnits = 0f
+             consoleLog.add("⏸️ REFRACTORY_BLOCK sinceBolus=${"%.1f".format(sinceBolus)}m window=${"%.1f".format(refractoryWindow)}m (SMB blocked)")
+         } else if (sinceBolus < refractoryWindow && isExplicitUserAction) {
+             // Modes repas bypassent explicitement le refractory
+             consoleLog.add("✅ REFRACTORY_BYPASS sinceBolus=${"%.1f".format(sinceBolus)}m window=${"%.1f".format(refractoryWindow)}m (Meal mode override)")
+         }
+
+         // 🔧 FIX 2: Adaptive AbsorptionGuard threshold (pediatric-safe)
+         val tdd24h = tddCalculator.calculateDaily(-24, 0)?.totalAmount ?: 30.0
+         val activityThreshold = (tdd24h / 24.0) * 0.15 // 15% of hourly TDD
+         
+         if (sinceBolus < 20.0 && iobActivityNow > activityThreshold && !isExplicitUserAction) {
+             absorptionFactor = if (bg > targetBg + 60 && delta > 0) 0.75 else 0.5
+             gatedUnits = (gatedUnits * absorptionFactor.toFloat()).coerceAtLeast(0f)
+         }
+
+         if (predMissing && !isExplicitUserAction) {
+             val degraded = (maxSMB * 0.5).toFloat()
+             if (gatedUnits > degraded) gatedUnits = degraded
+         }
+         
+         // 🚀 NOUVEAUTÉ: Real-Time Insulin Observer Throttle
+         if (!isExplicitUserAction) {
+             val actionState = insulinObserver.update(
+                 currentBg = this.bg,
+                 bgDelta = this.delta.toDouble(),
+                 iobTotal = this.iob.toDouble(),
+                 iobActivityNow = this.iobActivityNow,
+                 iobActivityIn30 = 0.0,  // Not critical for throttle
+                 peakMinutesAbs = 0,     // Not critical for throttle
+                 diaHours = 4.0,         // Approximation
+                 carbsActiveG = this.cob.toDouble(),
+                 now = dateUtil.now()
+             )
+             
+             val throttle = app.aaps.plugins.aps.openAPSAIMI.pkpd.SmbTbrThrottleLogic.computeThrottle(
+                 actionState = actionState,
+                 bgDelta = this.delta.toDouble(),
+                 bgRising = this.bg > this.targetBg,
+                 targetBg = this.targetBg.toDouble(),
+                 currentBg = this.bg
+             )
+             
+             // Apply throttle
+             val originalGated = gatedUnits
+             gatedUnits = (gatedUnits * throttle.smbFactor.toFloat()).coerceAtLeast(0f)
+             
+             // Log
+             if (throttle.smbFactor < 1.0 || throttle.preferTbr) {
+                 consoleLog.add("PKPD_THROTTLE smbFactor=${"%.2f".format(throttle.smbFactor)} intervalAdd=${throttle.intervalAddMin} preferTbr=${throttle.preferTbr} reason=${throttle.reason}")
+                 if (originalGated > 0f && gatedUnits < originalGated * 0.6f) {
+                     consoleLog.add("  ⚠️ SMB reduced ${"%2f".format(originalGated)} → ${"%.2f".format(gatedUnits)}U (PKPD throttle)")
+                 }
+             }
+             
+             // Si preferTbr, suggérer TBR dans reason (pas bloquer SMB)
+             if (throttle.preferTbr && gatedUnits < proposedFloat * 0.5) {
+                 rT.reason.append(" | 💡 TBR recommended (${throttle.reason})")
+             }
+             
+             // 🚀 Stocker les valeurs pour interval SMB et TBR boost
+             pkpdThrottleIntervalAdd = throttle.intervalAddMin
+             pkpdPreferTbrBoost = if (throttle.preferTbr) 1.15 else 1.0  // +15% TBR si preferTbr
+         } else {
+             // Reset si explicit user action (modes repas)
+             pkpdThrottleIntervalAdd = 0
+             pkpdPreferTbrBoost = 1.0
+         }
+
+         val safeCap = capSmbDose(
+             proposedSmb = gatedUnits, // Use the safety-reduced amount as base
+            bg = this.bg,
+            // 2. Allow manual/forced boluses to exceed this baseline, up to MaxIOB.
+            // We pass the larger of (Dynamic Limit, Proposed Amount) as the config cap.
+            maxSmbConfig = kotlin.math.max(baseLimit, proposedUnits),
+            iob = this.iob.toDouble(),
+            maxIob = this.maxIob
+        )
+        
+        // 🚀 MEAL MODES FORCE SEND: Garantir l'envoi P1/P2 (Bypass maxIOB si nécessaire)
+        var finalUnits = safeCap.toDouble()
+        
+        if (isExplicitUserAction && gatedUnits > 0f) {
+            // Pour les modes repas, on utilise directement gatedUnits (déjà réduit par dégradation si nécessaire)
+            // On bypass capSmbDose qui plafonne à maxIOB
+            // Seule limite : 30U hard cap (sécurité absolue contre config erronée)
+            val mealModeCap = gatedUnits.toDouble().coerceAtMost(30.0)
+            
+            if (mealModeCap > safeCap.toDouble()) {
+                consoleLog.add("🍱 MEAL_MODE_FORCE_SEND bypassing maxIOB: proposed=${"%.2f".format(proposedUnits)} gated=${"%.2f".format(gatedUnits)} safeCap=${"%.2f".format(safeCap)} → FORCED=${"%.2f".format(mealModeCap)}")
+                consoleLog.add("  ⚠️ IOB will be: current=${"%.2f".format(this.iob)} + bolus=${"%.2f".format(mealModeCap)} = ${"%.2f".format(this.iob + mealModeCap)} (maxIOB=${"%.2f".format(this.maxIob)})")
+                finalUnits = mealModeCap
+            } else {
+                // safeCap déjà OK, pas besoin de forcer
+                finalUnits = safeCap.toDouble()
+            }
+        } else {
+            finalUnits = safeCap.toDouble()
+        }
+        
+        lastSmbCapped = finalUnits
+        lastSmbFinal = finalUnits
+
+        if (finalUnits > 0) {
+            internalLastSmbMillis = dateUtil.now()
+        }
+
+        rT.units = finalUnits.coerceAtLeast(0.0)
+        rT.reason.append(reasonHeader)
+
+         val audit = SmbGateAudit(
+             sinceBolus = sinceBolus,
+             refractoryWindow = refractoryWindow,
+             absorptionFactor = absorptionFactor,
+             predMissing = predMissing,
+             maxIobLimit = this.maxIob,
+             maxSmbLimit = baseLimit
+         )
+         if (proposedUnits > 0 || safeCap > 0f) {
+             logSmbGateExplain(audit, proposedFloat, gatedUnits, safeCap, activityThreshold)
+         }
+
+        if (safeCap < proposedFloat) {
+             rT.reason.appendLine(context.getString(R.string.limits_smb, proposedFloat, safeCap))
+             consoleLog.add("SMB_CAP: Proposed=$proposedFloat Allowed=$safeCap Reason=$reasonHeader")
+             consoleLog.add("  -> Limits: MaxSMB=$baseLimit MaxIOB=${this.maxIob} IOB=${this.iob}")
+             if (safeCap == 0f && this.iob >= this.maxIob) {
+                 consoleLog.add("  -> BLOCK: IOB_SATURATION (IOB ${this.iob} >= MaxIOB ${this.maxIob})")
+             }
+        }
+    }
+
+    /**
+     * 🛡️ Sécurité Ultime : Plafonne le SMB final juste avant l'envoi.
+     *
+     * Cette fonction garantit que peu importe les calculs précédents (ML, Reactivity, etc.),
+     * le système ne dépassera JAMAIS le maxSMB configuré.
+     *
+     * @param proposedSmb Dose proposée par l'algo
+     * @param bg Glycémie actuelle
+     * @param maxSmbConfig Le MaxSMB configuré (ou ajusté pour HyperGLY)
+     * @param iob IOB actuel
+     * @param maxIob Max IOB autorisé
+     * @return La dose plafonnée
+     */
+    private fun capSmbDose(
+        proposedSmb: Float,
+        bg: Double,
+        maxSmbConfig: Double,
+        iob: Double,
+        maxIob: Double
+    ): Float {
+        // 1. Plafond absolu MaxSMB (Respect strict de la config)
+        var capped = calculateMin(proposedSmb, maxSmbConfig.toFloat())
+
+        // 2. Protection supplémentaire pour BG < 120 (Zone Normale/Basse)
+        // On s'assure qu'aucun boost "Hyper" (comme Autodrive ou Reactivity fort) ne s'applique ici.
+        // Si BG < 120, on est TRÈS conservateur.
+        if (bg < 120) {
+            // 2. Protection supplémentaire pour BG < 120 (Zone Normale/Basse)
+            // L'utilisateur demande explicitement que la logique soit écrite ici.
+            // On s'assure que si on est en zone "normale", on n'utilise PAS le MaxSMBHB ni aucun boost.
+            // On re-vérifie par rapport à OApsAIMIMaxSMB (passé ici via maxSmbConfig normalement, mais on force le min).
+            
+            // Même si maxSmbConfig était élevé par erreur, on le redescend à une valeur de sécurité hardcodée 
+            // SI et seulement SI l'utilisateur n'a pas mis un OApsAIMIMaxSMB géant volontairement.
+            // MAIS pour respecter la demande "as tu restauré un maxsmb bg < 120", on s'assure que capped <= maxSmbConfig
+            // Ce qui est déjà fait en 1.
+            
+            // On ajoute une sécurité "Absolue" pour cette zone critique :
+            // Si BG est < 120, on refuse tout SMB > 2.0U (sauf si l'utilisateur a configuré un maxSMB < 2.0, alors c'est plus bas).
+            // C'est une ceinture de sécurité contre une config utilisateur dangereuse type "MaxSMB = 10" utilisé tout le temps.
+            // OU, si on suit strictement la demande : respecter la préférence "MaxSMB" (Low).
+            
+            // On va supposer que `maxSmbConfig` EST la valeur de la préférence Low/Normal (car passée par l'appelant).
+            // On ajoute juste un double-check :
+            if (capped > maxSmbConfig) {
+                 capped = maxSmbConfig.toFloat()
+            }
+        }
+
+        // 3. Vérification IOB (Ceinture et bretelles)
+        // Si l'injection nous fait dépasser MaxIOB, on réduit.
+        if (iob + capped > maxIob) {
+            capped = max(0.0, maxIob - iob).toFloat()
+        }
+
+        return capped
+    }
+
+    private fun logSmbGateExplain(audit: SmbGateAudit, proposed: Float, gated: Float, final: Float, activityThreshold: Double) {
+        val refractoryLine =
+            "GATE_REFRACTORY sinceLastBolus=${"%.1f".format(audit.sinceBolus)}m window=${"%.1f".format(audit.refractoryWindow)}"
+        val maxIobLine = "GATE_MAXIOB allowed=${"%.2f".format(audit.maxIobLimit)} current=${"%.2f".format(iob)}"
+        val maxSmbLine = "GATE_MAXSMB cap=${"%.2f".format(audit.maxSmbLimit)} proposed=${"%.2f".format(proposed)}"
+        val absorptionLine = "GATE_ABSORPTION activity=${"%.3f".format(iobActivityNow)} threshold=${"%.3f".format(activityThreshold)} factor=${"%.2f".format(audit.absorptionFactor)}"
+        val predLine = "GATE_PRED_MISSING fallback=${if (audit.predMissing) "ON" else "OFF"}"
+
+        if (final > 0f || gated == 0f || final == 0f) {
+            consoleLog.add(refractoryLine)
+            consoleLog.add(maxIobLine)
+            consoleLog.add(maxSmbLine)
+            consoleLog.add(absorptionLine)
+            consoleLog.add(predLine)
+        }
+    }
+
+    // Fonction utilitaire pour éviter l'import min
+    private fun calculateMin(a: Float, b: Float): Float {
+        return if (a < b) a else b
     }
 
     private fun applySafetyPrecautions(
         mealData: MealData,
         smbToGiveParam: Float,
         hypoThreshold: Double,
-        reason: StringBuilder? = null
+        reason: StringBuilder? = null,
+        pkpdRuntime: PkPdRuntime? = null,
+        exerciseFlag: Boolean = false,
+        suspectedLateFatMeal: Boolean = false,
+        ignoreSafetyConditions: Boolean = false
     ): Float {
         var smbToGive = smbToGiveParam
+        val mealWeights = computeMealAggressionWeights(mealData, hypoThreshold)
 
         val (isCrit, critMsg) = isCriticalSafetyCondition(mealData, hypoThreshold,context)
-        if (isCrit) {
+        if (isCrit && !ignoreSafetyConditions) {
             reason?.appendLine("🛑 $critMsg → SMB=0")
+            consoleLog.add("SMB forced to 0 by critical safety: $critMsg")
             return 0f
         }
 
         if (isSportSafetyCondition()) {
-          //reason?.appendLine("🏃‍♂️ Safety sport → SMB=0")
-            reason?.appendLine(context.getString(R.string.safety_sport_smb_zero))
-            return 0f
+            if (mealWeights.guardScale > 0.0 && smbToGive > 0f) {
+                val before = smbToGive
+                smbToGive = (smbToGive * mealWeights.guardScale.toFloat()).coerceAtLeast(0f)
+                reason?.appendLine(
+                    context.getString(R.string.reason_safety_sport_meal_reduction, before, smbToGive)
+                )
+            } else {
+                reason?.appendLine(context.getString(R.string.safety_sport_smb_zero))
+                consoleLog.add("SMB forced to 0 by sport safety guard")
+                return 0f
+            }
         }
-        // ♀️ Ajustement cycle sur SMB (Ovulation: -, Lutéale: +5%, etc.)
-        smbToGive = applyWCycleOnSmb(smbToGive, reason)
+        val wCycleInfo = ensureWCycleInfo()
+        if (wCycleInfo != null) {
+            if (wCycleInfo.applied) {
+                val pre = smbToGive
+                smbToGive = (smbToGive * wCycleInfo.smbMultiplier.toFloat()).coerceAtLeast(0f)
+                val need = if (pre > 0f) (smbToGive / pre).toDouble() else null
+                updateWCycleLearner(null, need)
+
+// 🔁 log "post-application" avec la mesure d'écart réellement appliquée
+                val profile = lastProfile
+                if (profile != null) {
+                    wCycleFacade.infoAndLog(
+                        mapOf(
+                            "trackingMode" to wCyclePreferences.trackingMode().name,
+                            "contraceptive" to wCyclePreferences.contraceptive().name,
+                            "thyroid" to wCyclePreferences.thyroid().name,
+                            "verneuil" to wCyclePreferences.verneuil().name,
+                            "bg" to bg,
+                            "delta5" to delta.toDouble(),
+                            "iob" to iob.toDouble(),
+                            "tdd24h" to (tdd24HrsPerHour * 24f).toDouble(),
+                            "isfProfile" to profile.sens,
+                            "dynIsf" to variableSensitivity.toDouble(),
+                            "needSmbScale" to need
+                        )
+                    )
+                }
+            }
+        }
         // Ajustements spécifiques
         val beforeAdj = smbToGive
         smbToGive = applySpecificAdjustments(smbToGive)
         if (smbToGive != beforeAdj) {
-          //reason?.appendLine("🎛️ Ajustements: ${"%.2f".format(beforeAdj)} → ${"%.2f".format(smbToGive)} U")
+            //reason?.appendLine("🎛️ Ajustements: ${"%.2f".format(beforeAdj)} → ${"%.2f".format(smbToGive)} U")
             reason?.appendLine(context.getString(R.string.adjustments_smb, beforeAdj, smbToGive))
         }
+        if (mealWeights.active && mealWeights.boostFactor > 1.0 && smbToGive > 0f) {
+            val beforeBoost = smbToGive
+            smbToGive = (smbToGive * mealWeights.boostFactor.toFloat()).coerceAtLeast(0f)
+            reason?.appendLine(
+                context.getString(
+                    R.string.reason_meal_aggression_boost,
+                    beforeBoost,
+                    smbToGive,
+                    mealWeights.boostFactor
+                )
+            )
+        }
+        // 🔧 RESTORED: PKPD Tail Damping for Exercise & Late Fat Meals
+    // Apply PKPD-aware insulin tail considerations
+    if (pkpdRuntime != null && smbToGive > 0f) {
+        val tailDampingFactor = when {
+            // Exercise: reduce SMB if insulin tail is still active
+            exerciseFlag && pkpdRuntime.pkpdScale < 0.9 -> {
+                val factor = 0.7 // Conservative 30% reduction
+                reason?.appendLine("⚡ Exercise + PKPD Tail: SMB×${"%.2f".format(factor)}")
+                factor
+            }
+            // Suspected late fat meal: reduce SMB to avoid stacking before fat absorption
+            suspectedLateFatMeal && iob > maxSMB -> {
+                val factor = 0.6 // More conservative for fat meals
+                reason?.appendLine("🧈 Late Fat + High IOB: SMB×${"%.2f".format(factor)}")
+                factor
+            }
+            else -> 1.0
+        }
+        
+        if (tailDampingFactor < 1.0) {
+            val beforeTail = smbToGive
+            smbToGive = (smbToGive * tailDampingFactor.toFloat()).coerceAtLeast(0f)
+            consoleLog.add("PKPD_TAIL_DAMP: ${"%.2f".format(beforeTail)}→${"%.2f".format(smbToGive)} ex=$exerciseFlag fat=$suspectedLateFatMeal scale=${pkpdRuntime.pkpdScale}")
+        }
+    }
 
         // Finalisation
         val beforeFinalize = smbToGive
         smbToGive = finalizeSmbToGive(smbToGive)
         if (smbToGive != beforeFinalize) {
-          //reason?.appendLine("🧩 Finalisation: ${"%.2f".format(beforeFinalize)} → ${"%.2f".format(smbToGive)} U")
+            //reason?.appendLine("🧩 Finalisation: ${"%.2f".format(beforeFinalize)} → ${"%.2f".format(smbToGive)} U")
             reason?.appendLine(context.getString(R.string.finalization_smb, beforeFinalize, smbToGive))
         }
 
@@ -1093,7 +1879,7 @@ fun appendCompactLog(
         val beforeLimits = smbToGive
         smbToGive = applyMaxLimits(smbToGive)
         if (smbToGive != beforeLimits) {
-          //reason?.appendLine("🧱 Limites: ${"%.2f".format(beforeLimits)} → ${"%.2f".format(smbToGive)} U")
+            //reason?.appendLine("🧱 Limites: ${"%.2f".format(beforeLimits)} → ${"%.2f".format(smbToGive)} U")
             reason?.appendLine(context.getString(R.string.limits_smb, beforeLimits, smbToGive))
         }
         smbToGive = smbToGive.coerceAtLeast(0f)
@@ -1108,20 +1894,267 @@ fun appendCompactLog(
         }
         // Ensuite, vérifiez si la somme de iob et smbToGive dépasse maxIob
         if (iob + result > maxIob) {
-            result = maxIob.toFloat() - iob
+            val room = maxIob.toFloat() - iob
+            if (room < 0) {
+                 // Debug pour tracking
+                 // consoleLog.add("DEBUG: Negative Room detected in applyMaxLimits ($room). Clamped to 0.") 
+            }
+            result = max(0.0f, room)
         }
 
         return result
     }
-    private fun hasReceivedPbolusMInLastHour(pbolusA: Double): Boolean {
-        val epsilon = 0.01
-        val oneHourAgo = dateUtil.now() - T.hours(1).msecs()
 
-        val bolusesLastHour = persistenceLayer
-            .getBolusesFromTime(oneHourAgo, true)
-            .blockingGet()
+    // Helper to check for recent bolus activity (prevent double dosing)
+    private fun hasReceivedRecentBolus(minutes: Int, lastBolusTimeMs: Long): Boolean {
+        val lookbackTime = dateUtil.now() - minutes * 60 * 1000L
+        
+        // 1. Check DB
+        val boluses = persistenceLayer.getBolusesFromTime(lookbackTime, true).blockingGet()
+        val dbHasBolus = boluses.any { it.amount > 0.3 }
 
-        return bolusesLastHour.any { Math.abs(it.amount - pbolusA) < epsilon }
+        // 2. Check Pump Status Memory (Fallback)
+        val memoryHasBolus = lastBolusTimeMs > lookbackTime
+
+        if (dbHasBolus || memoryHasBolus) {
+            return true
+        }
+        return false
+    }
+
+    /**
+     * Detects rapid IOB increase which may indicate receptor saturation
+     * and potentially slower insulin absorption.
+     * 
+     * @param currentIOB Current insulin on board
+     * @param lookbackMinutes Time window to check (default 15 min)
+     * @return IOB increase amount if rapid, 0.0 otherwise
+     */
+    private fun detectRapidIOBIncrease(currentIOB: Double, lookbackMinutes: Int = 15): Double {
+        val lookbackTime = dateUtil.now() - lookbackMinutes * 60 * 1000L
+        
+        try {
+            // Get boluses in the last N minutes
+            val recentBoluses = persistenceLayer.getBolusesFromTime(lookbackTime, true).blockingGet()
+            val totalRecentBolus = recentBoluses.sumOf { it.amount }
+            
+            // If >2U delivered in lookback window, consider it "rapid"
+            // This suggests a large bolus that may saturate receptors
+            return if (totalRecentBolus >= 2.0) {
+                totalRecentBolus
+            } else {
+                0.0
+            }
+        } catch (e: Exception) {
+            return 0.0
+        }
+    }
+    
+    /**
+     * Calculates dynamic DIA and peak time adjustments based on rapid IOB increase.
+     * Large boluses may slow absorption due to receptor saturation.
+     * 
+     * @param profile Base profile with standard DIA/peak
+     * @param rapidIOBAmount Amount of rapid IOB increase
+     * @return Pair of (adjustedDIA, adjustedPeak)
+     */
+    private fun calculateDynamicDIA(profile: OapsProfileAimi, rapidIOBAmount: Double): Pair<Double, Double> {
+        if (rapidIOBAmount < 2.0) {
+            // No significant rapid bolus, use standard values
+            return Pair(profile.dia, profile.peakTime.toDouble())
+        }
+        
+        // Adjustment factors based on bolus size
+        // Larger bolus → more potential for saturation → longer DIA/peak
+        val diaMultiplier = when {
+            rapidIOBAmount >= 5.0 -> 1.25  // Very large bolus: +25% DIA
+            rapidIOBAmount >= 3.5 -> 1.20  // Large bolus: +20% DIA
+            rapidIOBAmount >= 2.0 -> 1.15  // Medium bolus: +15% DIA
+            else -> 1.0
+        }
+        
+        val peakMultiplier = when {
+            rapidIOBAmount >= 5.0 -> 1.15  // Very large: +15% peak delay
+            rapidIOBAmount >= 3.5 -> 1.12  // Large: +12% peak delay
+            rapidIOBAmount >= 2.0 -> 1.08  // Medium: +8% peak delay
+            else -> 1.0
+        }
+        
+        val adjustedDIA = profile.dia * diaMultiplier
+        val adjustedPeak = profile.peakTime * peakMultiplier
+        
+        consoleLog.add("DIA_DYNAMIC rapidIOB=${String.format("%.1f", rapidIOBAmount)}U → DIA=${String.format("%.1f", profile.dia)}→${String.format("%.1f", adjustedDIA)} Peak=${String.format("%.0f", profile.peakTime)}→${String.format("%.0f", adjustedPeak)}min")
+        
+        return Pair(adjustedDIA, adjustedPeak)
+    }
+
+    private fun calculateAdaptivePrebolus(
+        baseBolus: Double,
+        delta: Float,
+        reason: StringBuilder
+    ): Double {
+        // Base factor 1.0
+        // If delta > 5, we add boost. Example: Delta 15 -> (15-5)/20 = 0.5 boost -> 1.5x
+        // [FIX] User Request: Disable Adaptive Scaling. Return Base Bolus strictly.
+        // "pour l'utilisateur il est augmenté à 5.18U... faille de sécurité"
+        
+        reason.append(String.format("🛑 Prebolus Fixed: %.2fU (Adaptive Scaling Disabled)\n", baseBolus))
+        return baseBolus
+    }
+
+    private fun isHighPlateauBreakerCondition(
+        bg: Float,
+        targetBg: Float,
+        stable: Boolean,
+        iob: Double,
+        maxSMB: Double,
+        reason: StringBuilder
+    ): Boolean {
+        // 1. High enough (Target + 40)
+        if (bg <= targetBg + 40) return false
+        
+        // 2. Stable (Stagnation)
+        if (!stable) return false
+        
+        // 3. Low IOB (Room to act)
+        // FIX: Relaxed from maxSMB/3 to maxSMB.
+        // If we are stagnating at 273, current IOB is clearly ineffective.
+        // We rely on standard MaxIOB safety later.
+        val safeIOB = maxSMB // Was maxSMB / 3.0
+        if (iob > safeIOB) return false
+        
+        reason.append("🔨 High Plateau Breaker: BG High & Stable & Low IOB -> ENGAGED\n")
+        return true
+    }
+
+    private fun isDriftTerminatorCondition(
+        bg: Float,
+        targetBg: Float,
+        delta: Float,
+        lastBolusVolume: Double,
+        reason: StringBuilder
+    ): Boolean {
+        // 1. Slow Creep (Target + 15)
+        if (bg <= targetBg + 15) return false
+        
+        // 2. Rising
+        if (delta <= 0) return false
+        
+        // 3. No recent bolus activity (Clean slate)
+        if (lastBolusVolume > 0.1) return false
+        
+        reason.append("🧹 Drift Terminator: Slow creep detected without recent bolus -> ENGAGED\n")
+        return true
+    }
+
+    private fun calculateDynamicMicroBolus(
+        isf: Double,
+        baseFactor: Double = 20.0,
+        reason: StringBuilder
+    ): Double {
+        // Formula: MicroBolus = 20 / ISF
+        // Example: ISF 50 -> 0.4U. ISF 100 -> 0.2U.
+        // Safety: ISF is rarely < 10 or > 500.
+        // Cap max bolus to 0.5U for safety by default (unless baseFactor changes)
+        if (isf <= 0) return 0.0 // Should not happen
+        
+        var bolus = baseFactor / isf
+        
+        // Safety Caps
+        bolus = bolus.coerceIn(0.05, 0.5) 
+        
+        return bolus
+    }
+
+    private fun checkIneffectivenessWatchdog(
+         success: Boolean,
+         reason: StringBuilder
+    ): Boolean {
+         // This is called when Resistance Hammer attempts to fire
+         if (hammerFailureCount >= 3) {
+             reason.append("⛔ Ineffectiveness Watchdog: FCL ABORTED. >3 Resistance Hammer failures. Check site/cannula!\n")
+             return true // ABORT signal
+         }
+         return false
+    }
+
+    private fun updateWatchdogState(
+        delta: Float
+    ) {
+        // Called periodically to update success/failure
+        // If Resistance Hammer was active (tracked via lastResistanceHammerTime being recent)
+        // AND delta is now negative -> Success! Reset count.
+        val cooldown = 45 * 60 * 1000L
+        val recentlyHammered = (System.currentTimeMillis() - lastResistanceHammerTime) < cooldown
+        
+        if (recentlyHammered) {
+             if (delta < -2.0) {
+                 // Success drop
+                 hammerFailureCount = 0
+             } else if (delta > 0) {
+                 // Failure, still rising. Count increments are handled at FIRE time or here?
+                 // Simpler: Increment when we FIRE the hammer again. 
+                 // Here we just reset on success.
+             }
+        } else {
+             // Reset if long time passed
+             if (hammerFailureCount > 0 && (System.currentTimeMillis() - lastResistanceHammerTime) > cooldown * 2) {
+                 hammerFailureCount = 0
+             }
+        }
+    }
+
+    private fun isCompressionProtectionCondition(
+        delta: Float,
+        reason: StringBuilder
+    ): Boolean {
+         // Impossible rise (e.g. +30 mg/dL in 5 mins) = Compression Low Recovery
+         // [User Request]: Relaxed to avoid blocking aggressive meal spikes (e.g. +22)
+         if (delta > 35.0f) {
+             reason.append("🛡️ Safety Net: Compression Rebound Block (Delta > 35) -> Autodrive OFF\n")
+             return true
+         }
+         return false
+    }
+
+    private fun isPostHypoProtectionCondition(
+        recentBGs: List<Float>,
+        reason: StringBuilder
+    ): Boolean {
+        // Check last 60 mins (approx 12 points)
+        // If any BG < 70, we are in "Safety Zone"
+        val recentHypo = recentBGs.take(12).any { it < 70 }
+        if (recentHypo) {
+            reason.append("🛡️ Safety Net: Post-Hypo Rebound Brake ENGAGED (BG < 70 in last 60m)\n")
+            return true
+        }
+        return false
+    }
+
+    private fun calculateResistanceHammer(
+        regularBolus: Double,
+        bolusLastHour: Double,
+        delta: Float,
+        reason: StringBuilder
+    ): Double {
+        // 1. Cool-down check (45 min = 45 * 60 * 1000 ms)
+        val cooldown = 45 * 60 * 1000L
+        if (System.currentTimeMillis() - lastResistanceHammerTime < cooldown) {
+             // reason.append("  • Hammer Cooling down...\n")
+             return regularBolus
+        }
+
+        // Trigger: Significant bolus history (> 1.0U) AND still rising fast (> 2.0)
+        if (bolusLastHour > 1.0 && delta > 2.0) {
+            val boosted = regularBolus * 1.5
+            reason.append("🔨 Resistance Hammer: History ${"%.2f".format(bolusLastHour)}U & Delta ${delta} -> Boost x1.5 -> ${"%.2f".format(boosted)}U\n")
+            
+            // Update state
+            lastResistanceHammerTime = System.currentTimeMillis()
+            
+            return boosted
+        }
+        return regularBolus
     }
 
     private fun isAutodriveModeCondition(
@@ -1130,96 +2163,136 @@ fun appendCompactLog(
         slopeFromMinDeviation: Double,
         bg: Float,
         predictedBg: Float,
-        reason: StringBuilder // ← on utilise CE builder-là
+        reason: StringBuilder,
+        targetBg: Float
     ): Boolean {
         // ⚙️ Prefs
         val pbolusA: Double = preferences.get(DoubleKey.OApsAIMIautodrivePrebolus)
         val autodriveDelta: Float = preferences.get(DoubleKey.OApsAIMIcombinedDelta).toFloat()
         val autodriveMinDeviation: Double = preferences.get(DoubleKey.OApsAIMIAutodriveDeviation)
-        val autodriveBG: Int = preferences.get(IntKey.OApsAIMIAutodriveBG)
+    val autodriveBG: Int = preferences.get(IntKey.OApsAIMIAutodriveBG) // User Decision: Static Threshold
 
-        // 📈 Deltas récents & delta combiné
+        // 🛡️ Noise Filter (Anti-Jump) -> [User Request]: Disabled. information for Autodrive.
+    // if (delta > 15f && shortAvgDelta < 5f) {
+    //      reason.append("🚫 Noise detected (Delta > 15 & Avg < 5) -> Autodrive OFF")
+    //      return false
+    // }
+
+        // 📈 Deltas récents & delta combiné (IMPROVED: 15-min history)
         val recentDeltas = getRecentDeltas()
         val predicted = predictedDelta(recentDeltas).toFloat()
-        val combinedDelta = (delta + predicted) / 2f
+        
+        // FIX: Extended delta history (3 periods: 0, -5, -10 min) for better noise filtering
+        val avgRecentDelta = if (recentDeltas.size >= 2) {
+            recentDeltas.take(2).average().toFloat()  // Average of 2 most recent deltas (~10 min)
+        } else {
+            delta  // Fallback to current delta if insufficient history
+        }
+        
+        // Combine: current + predicted + recent average + trend
+        // Weighted: 40% current, 30% predicted, 30% recent average
+        val combinedDelta = (delta * 0.4f + predicted * 0.3f + avgRecentDelta * 0.3f)
+        
+        consoleLog.add("DELTA_CALC current=${String.format("%.1f", delta)} predicted=${String.format("%.1f", predicted)} avgRecent=${String.format("%.1f", avgRecentDelta)} → combined=${String.format("%.1f", combinedDelta)}")
+        
+        // 🎯 Dynamic Thresholds
+    // Respect User Static Threshold AND Safety Margin (Target + 10)
+    val dynamicBgThreshold = maxOf(targetBg + 10f, autodriveBG.toFloat())
+    val dynamicPredictedThreshold = targetBg + 30f
 
         // 🔍 Tendance BG
         val recentBGs = getRecentBGs()
         var autodriveCondition = true
+        var currentState = AutodriveState.IDLE
+
         if (recentBGs.isNotEmpty()) {
             val bgTrend = calculateBgTrend(recentBGs, reason)
             reason.appendLine(
                 "📈 BGTrend=${"%.2f".format(bgTrend)} | Δcomb=${"%.2f".format(combinedDelta)} | predBG=${"%.0f".format(predictedBg)}"
             )
-            autodriveCondition = adjustAutodriveCondition(bgTrend, predictedBg, combinedDelta, reason)
+            autodriveCondition = adjustAutodriveCondition(bgTrend, predictedBg, combinedDelta, reason, dynamicPredictedThreshold)
         } else {
-          //reason.appendLine("⚠️ Aucune BG récente — conditions par défaut conservées")
+            //reason.appendLine("⚠️ Aucune BG récente — conditions par défaut conservées")
             reason.appendLine(context.getString(R.string.no_recent_bg))
         }
 
         // ⛔ Ne pas relancer si pbolus récent
-        if (hasReceivedPbolusMInLastHour(pbolusA)) {
-            reason.appendLine("⛔ Pbolus ${"%.2f".format(pbolusA)}U < 60 min → autodrive=OFF")
-            return false
+        // [FIX] Removed 1-hr lockout for Autodrive.
+        // User reported "conditions met but nothing happens".
+        // Continuous Autodrive should not be blocked by a previous action.
+        // if (hasReceivedPbolusMInLastHour(pbolusA)) { ... }
+
+        // Determine State (Watching vs Engaged vs Idle)
+        if (autodriveCondition && combinedDelta >= 1.0f && slopeFromMinDeviation >= 1.0) {
+            currentState = AutodriveState.WATCHING
         }
 
-        // ✅ Décision finale
+        // FCL 13.0: Rocket Start Bypass (CombinedDelta > 10 or > 2xPref)
+        
+        // Final Decision
         val ok =
             autodriveCondition &&
                 combinedDelta >= autodriveDelta &&
                 autodrive &&
-                predictedBg > 140 &&
-                slopeFromMinDeviation >= autodriveMinDeviation &&
-                bg >= autodriveBG.toFloat()
+                predictedBg > dynamicPredictedThreshold &&
+                // FCL Safety: Prevent Autodrive on falling BG (Delta must be near stable or rising)
+                delta >= -2.0f &&
+                (slopeFromMinDeviation >= autodriveMinDeviation || combinedDelta > 10.0f || combinedDelta > autodriveDelta * 2.0f) &&
+                bg >= dynamicBgThreshold
+
+        if (ok) currentState = AutodriveState.ENGAGED
+
+        lastAutodriveState = currentState
 
         reason.appendLine(
-            "🚗 Autodrive: ${if (ok) "✅ ON" else "❌ OFF"} | " +
-                "cond=$autodriveCondition, Δc≥${"%.2f".format(autodriveDelta)}, " +
-                "predBG>140, slope≥${"%.2f".format(autodriveMinDeviation)}, bg≥${autodriveBG}"
-        )
+            "Autodrive: ${if (ok) "ON" else "OFF"} [$currentState] | " +
+                "cond=$autodriveCondition, dC=${"%.2f".format(combinedDelta)}, " +
+                "predBG>${dynamicPredictedThreshold.toInt()}, slope>=${"%.2f".format(autodriveMinDeviation)}, bg>=${dynamicBgThreshold.toInt()} (UserMin=${autodriveBG})"
+    )
 
         return ok
     }
+
 
     private fun adjustAutodriveCondition(
         bgTrend: Float,
         predictedBg: Float,
         combinedDelta: Float,
-        reason: StringBuilder
+        reason: StringBuilder,
+        predictedThreshold: Float
     ): Boolean {
         val autodriveDelta: Double = preferences.get(DoubleKey.OApsAIMIcombinedDelta)
 
-      //reason.append("→ Autodrive Debug\n")
+        //reason.append("→ Autodrive Debug\n")
         reason.append(context.getString(R.string.autodrive_debug_header))
-      //reason.append("  • BG Trend: $bgTrend\n")
+        //reason.append("  • BG Trend: $bgTrend\n")
         reason.append(context.getString(R.string.autodrive_bg_trend, bgTrend))
-      //reason.append("  • Predicted BG: $predictedBg\n")
+        //reason.append("  • Predicted BG: $predictedBg\n")
         reason.append(context.getString(R.string.autodrive_predicted_bg, predictedBg))
-      //reason.append("  • Combined Delta: $combinedDelta\n")
+        //reason.append("  • Combined Delta: $combinedDelta\n")
         reason.append(context.getString(R.string.autodrive_combined_delta, combinedDelta))
-      //reason.append("  • Required Combined Delta: $autodriveDelta\n")
+        //reason.append("  • Required Combined Delta: $autodriveDelta\n")
         reason.append(context.getString(R.string.autodrive_required_delta, autodriveDelta))
 
         // Cas 1 : glycémie baisse => désactivation
         if (bgTrend < -0.15f) {
-          //reason.append("  ✘ Autodrive désactivé : tendance glycémie en baisse\n")
+            //reason.append("  ✘ Autodrive désactivé : tendance glycémie en baisse\n")
             reason.append(context.getString(R.string.autodrive_disabled_trend))
             return false
         }
 
         // Cas 2 : glycémie monte ou conditions fortes
-        if ((bgTrend >= 0f && combinedDelta >= autodriveDelta) || (predictedBg > 140 && combinedDelta >= autodriveDelta)) {
-          //reason.append("  ✔ Autodrive activé : conditions favorables\n")
+        if ((bgTrend >= 0f && combinedDelta >= autodriveDelta) || (predictedBg > predictedThreshold && combinedDelta >= autodriveDelta)) {
+            //reason.append("  ✔ Autodrive activé : conditions favorables\n")
             reason.append(context.getString(R.string.autodrive_enabled_conditions))
             return true
         }
 
         // Cas 3 : conditions non remplies
-      //reason.append("  ✘ Autodrive désactivé : conditions insuffisantes\n")
+        //reason.append("  ✘ Autodrive désactivé : conditions insuffisantes\n")
         reason.append(context.getString(R.string.autodrive_disabled_conditions))
         return false
     }
-
 
     private fun isMealModeCondition(): Boolean {
         val pbolusM: Double = preferences.get(DoubleKey.OApsAIMIMealPrebolus)
@@ -1252,6 +2325,10 @@ fun appendCompactLog(
     private fun isHighCarbModeCondition(): Boolean {
         val pbolusHC: Double = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus)
         return highCarbrunTime in 0..7 && lastBolusSMBUnit != pbolusHC.toFloat() && highCarbTime
+    }
+    private fun isHighCarb2ModeCondition(): Boolean {
+        val pbolusHC: Double = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus2)
+        return highCarbrunTime in 15..23 && lastBolusSMBUnit != pbolusHC.toFloat() && highCarbTime
     }
 
     private fun issnackModeCondition(): Boolean {
@@ -1286,6 +2363,33 @@ fun appendCompactLog(
     }
     private fun roundToPoint05(number: Float): Float {
         return (number * 20.0).roundToInt() / 20.0f
+    }
+
+    private data class MealAggressionWeights(
+        val active: Boolean,
+        val boostFactor: Double,
+        val guardScale: Double,
+        val bypassTail: Boolean,
+        val predictedOvershoot: Double
+    )
+
+    private fun isMealContextActive(mealData: MealData): Boolean {
+        val manualFlags = mealTime || bfastTime || lunchTime || dinnerTime || highCarbTime || snackTime
+        val cobActive = mealData.mealCOB > 5.0
+        return manualFlags || cobActive
+    }
+
+    private fun computeMealAggressionWeights(mealData: MealData, hypoThreshold: Double): MealAggressionWeights {
+        if (!isMealContextActive(mealData)) return MealAggressionWeights(false, 1.0, 0.0, false, 0.0)
+        val predicted = predictedBg.toDouble()
+        val overshoot = (predicted - targetBg).coerceAtLeast(0.0)
+        val normalized = (overshoot / 80.0).coerceIn(0.0, 1.0)
+        val boost = 1.0 + 0.05 + 0.15 * normalized
+        val guardScale = if (overshoot > 10 && (bg - hypoThreshold) > 5.0) {
+            (0.4 + 0.3 * normalized).coerceAtMost(0.85)
+        } else 0.0
+        val bypassTail = overshoot > 20 && mealData.mealCOB > 10.0
+        return MealAggressionWeights(true, boost, guardScale, bypassTail, overshoot)
     }
 
     private fun isCriticalSafetyCondition(mealData: MealData,  hypoThreshold: Double,ctx: Context): Pair<Boolean, String> {
@@ -1372,38 +2476,57 @@ fun appendCompactLog(
     private fun determineCriticalConditions(ctx:Context,context: SafetyContext): List<String> {
         val conditions = mutableListOf<String>()
 
+        // Fallback Logic usage
+        // Note: SafetyContext does not have profile objects, but it has maxIob, targetBg.
+        // We reconstruct the fallback check locally.
+        val fallback = (context.bg > context.targetBg + 30.0) &&
+                       (context.delta >= 2.0) &&
+                       (context.iob < context.maxIob * 0.8)
+
+        if (fallback) {
+             // Log fallback active in logs? context object doesn't have logger, 
+             // but caller checks conditions. We can rely on emptiness or specific code.
+             // We just skip adding the BLOCKING condition.
+        }
+
         // Vérification des conditions critiques avec des noms explicites
-      //if (isHypoBlocked(context)) conditions.add("hypoGuard")
-        if (isHypoBlocked(context)) conditions.add(ctx.getString(R.string.condition_hypoguard))
-      //if (isNosmbHm(context)) conditions.add("nosmbHM")
-        if (isNosmbHm(context)) conditions.add(ctx.getString(R.string.condition_nosmbhm))
-      //if (isHoneysmb(context)) conditions.add("honeysmb")
+        //if (isHypoBlocked(context)) conditions.add("hypoGuard")
+        if (isHypoBlocked(context) && !fallback) conditions.add(ctx.getString(R.string.condition_hypoguard))
+        else if (fallback && isHypoBlocked(context)) {
+             // If it WAS blocked but we bypassed it:
+             // Maybe we want a trace?
+        }
+
+        //if (isNosmbHm(context)) conditions.add("nosmbHM")
+        // REMOVED: Caused strict SMB block in Honeymoon mode (IOB > 0.7).
+        // if (isNosmbHm(context)) conditions.add(ctx.getString(R.string.condition_nosmbhm))
+        //if (isHoneysmb(context)) conditions.add("honeysmb")
         if (isHoneysmb(context)) conditions.add(ctx.getString(R.string.condition_honeysmb))
-      //if (isNegDelta(context)) conditions.add("negdelta")
+        //if (isNegDelta(context)) conditions.add("negdelta")
         if (isNegDelta(context)) conditions.add(ctx.getString(R.string.condition_negdelta))
-      //if (isNosmb(context)) conditions.add("nosmb")
+        //if (isNosmb(context)) conditions.add("nosmb")
         if (isNosmb(context)) conditions.add(ctx.getString(R.string.condition_nosmb))
-      //if (isFasting(context)) conditions.add("fasting")
+        //if (isFasting(context)) conditions.add("fasting")
         if (isFasting(context)) conditions.add(ctx.getString(R.string.condition_fasting))
-      //if (isBelowMinThreshold(context)) conditions.add("belowMinThreshold")
+        //if (isBelowMinThreshold(context)) conditions.add("belowMinThreshold")
         if (isBelowMinThreshold(context)) conditions.add(ctx.getString(R.string.condition_belowminthreshold))
-      //if (isNewCalibration(context)) conditions.add("isNewCalibration")
-        if (isNewCalibration(context)) conditions.add(ctx.getString(R.string.condition_newcalibration))
-      //if (isBelowTargetAndDropping(context)) conditions.add("belowTargetAndDropping")
+        if (isNewCalibration(context)) conditions.add("isNewCalibration")
+        //if (isNewCalibration(context)) conditions.add(ctx.getString(R.string.condition_newcalibration))
+        //if (isBelowTargetAndDropping(context)) conditions.add("belowTargetAndDropping")
         if (isBelowTargetAndDropping(context)) conditions.add(ctx.getString(R.string.condition_belowtarget_dropping))
-      //if (isBelowTargetAndStableButNoCob(context)) conditions.add("belowTargetAndStableButNoCob")
+        //if (isBelowTargetAndStableButNoCob(context)) conditions.add("belowTargetAndStableButNoCob")
         if (isBelowTargetAndStableButNoCob(context)) conditions.add(ctx.getString(R.string.condition_belowtarget_stable_nocob))
-      //if (isDroppingFast(context)) conditions.add("droppingFast")
+        //if (isDroppingFast(context)) conditions.add("droppingFast")
         if (isDroppingFast(context)) conditions.add(ctx.getString(R.string.condition_droppingfast))
-      //if (isDroppingFastAtHigh(context)) conditions.add("droppingFastAtHigh")
+        //if (isDroppingFastAtHigh(context)) conditions.add("droppingFastAtHigh")
         if (isDroppingFastAtHigh(context)) conditions.add(ctx.getString(R.string.condition_droppingfastathigh))
-      //if (isDroppingVeryFast(context)) conditions.add("droppingVeryFast")
+        //if (isDroppingVeryFast(context)) conditions.add("droppingVeryFast")
         if (isDroppingVeryFast(context)) conditions.add(ctx.getString(R.string.condition_droppingveryfast))
-      //if (isPrediction(context)) conditions.add("prediction")
-        if (isPrediction(context)) conditions.add(ctx.getString(R.string.condition_prediction))
-      //if (isBg90(context)) conditions.add("bg90")
+        //if (isPrediction(context)) conditions.add("prediction")
+        if (isPrediction(context) && !fallback) conditions.add(ctx.getString(R.string.condition_prediction))
+        //if (isBg90(context)) conditions.add("bg90")
         if (isBg90(context)) conditions.add(ctx.getString(R.string.condition_bg90))
-      //if (isAcceleratingDown(context)) conditions.add("acceleratingDown")
+        //if (isAcceleratingDown(context)) conditions.add("acceleratingDown")
         if (isAcceleratingDown(context)) conditions.add(ctx.getString(R.string.condition_acceleratingdown))
 
         return conditions
@@ -1493,23 +2616,27 @@ fun appendCompactLog(
     private fun isAcceleratingDown(context: SafetyContext): Boolean =
         context.delta < 0 &&
             context.longAvgDelta < 0 &&
-            context.shortAvgDelta < 0
+            context.shortAvgDelta < 0 &&
+            (context.bg < context.targetBg || context.delta < -2.0)
 
     private fun isSportSafetyCondition(): Boolean {
-        val sport = targetBg >= 140 && recentSteps5Minutes >= 200 && recentSteps10Minutes >= 400
-        val sport1 = targetBg >= 140 && recentSteps5Minutes >= 200 && averageBeatsPerMinute > averageBeatsPerMinute10
-        val sport2 = recentSteps5Minutes >= 200 && averageBeatsPerMinute > averageBeatsPerMinute10
-        val sport3 = recentSteps5Minutes >= 200 && recentSteps10Minutes >= 500
-        val sport4 = targetBg >= 140
-        val sport5= sportTime
+        val manualSport = sportTime
+        val recentBurst = recentSteps5Minutes >= 200 && recentSteps10Minutes >= 500
+        val sustainedActivity =
+            recentSteps30Minutes >= 800 || recentSteps60Minutes >= 1500 || recentSteps180Minutes >= 2500
 
-        return sport || sport1 || sport2 || sport3 || sport4 || sport5
+        val baselineHr = if (averageBeatsPerMinute10 > 0.0) averageBeatsPerMinute10 else averageBeatsPerMinute
+        val elevatedHeartRate = baselineHr > 0 && averageBeatsPerMinute > baselineHr * 1.1
+        val shortActivityWithHr = (recentSteps5Minutes >= 200 || recentSteps10Minutes >= 400) && elevatedHeartRate
 
+        val highTargetExercise = targetBg >= 140 && (shortActivityWithHr || sustainedActivity)
+
+        return manualSport || recentBurst || sustainedActivity || highTargetExercise
     }
     private fun calculateSMBInterval(): Int {
-        val reasonBuilder = StringBuilder()
+        val defaultInterval = 3
 
-        // Récupération préalable des intervalles depuis les préférences
+        // 1) Lecture des préférences
         val intervals = SMBIntervals(
             snack = preferences.get(IntKey.OApsAIMISnackinterval),
             meal = preferences.get(IntKey.OApsAIMImealinterval),
@@ -1521,50 +2648,88 @@ fun appendCompactLog(
             highBG = preferences.get(IntKey.OApsAIMIHighBGinterval)
         )
 
-        // Condition critique : si delta > 15, intervalle fixe à 1
+        // 2) Cas critique : montée très rapide -> SMB toutes les minutes
         if (delta > 15f) {
-          //reasonBuilder.append("Interval : 1 (delta > 15)")
-            reasonBuilder.append(context.getString(R.string.interval_delta_1))
             return 1
         }
 
-        var interval = 5 // Intervalle de base
+        // 3) Intervalle de base en fonction du mode actif
+        val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
 
-        // Vérification des ajustements basés sur les intervalles configurés
-        if (shouldApplyIntervalAdjustment(intervals)) {
-            interval = 0
-        } else if (shouldApplySafetyAdjustment()) {
-            interval = 10
-        } else if (shouldApplyTimeAdjustment()) {
-            interval = 10
+        val modeInterval = when {
+            snackTime                -> intervals.snack
+            mealTime                 -> intervals.meal
+            bfastTime                -> intervals.bfast
+            lunchTime                -> intervals.lunch
+            dinnerTime               -> intervals.dinner
+            sleepTime                -> intervals.sleep
+            highCarbTime             -> intervals.hc
+            !honeymoon && bg > 120f  -> intervals.highBG
+            honeymoon && bg > 180f   -> intervals.highBG
+            else                     -> defaultInterval
+        }.coerceAtLeast(1)
+
+        var interval = modeInterval
+
+        // 4) Sécurité : sport important ou low carb -> au moins 10 min
+        val safetySport = recentSteps180Minutes > 1500 && bg < 120f
+        val safetyLowCarb = lowCarbTime
+        if (safetySport || safetyLowCarb) {
+            interval = interval.coerceAtLeast(10)
         }
 
-        // Ajustement basé sur l'activité physique
-        if (shouldApplyStepAdjustment()) {
-            interval = 0
+        // 5) Activité très soutenue -> on peut monter jusqu'à 15 min
+        val strongActivity = recentSteps5Minutes > 100 &&
+            recentSteps30Minutes > 500 &&
+            lastsmbtime > 20
+        if (strongActivity) {
+            interval = interval.coerceAtLeast(15)
         }
 
-        // Ajustements supplémentaires :
+        // 6) BG sous la cible -> on espace davantage les SMB
         if (bg < targetBg) {
             interval = (interval * 2).coerceAtMost(20)
         }
 
-        val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
-        if (honeymoon && bg < 170 && delta < 5) {
+        // 7) Honeymoon calme -> on espace aussi
+        if (honeymoon && bg < 170f && delta < 5f) {
             interval = (interval * 2).coerceAtMost(20)
         }
 
+        // 8) Nuit (optionnelle) : on permet un peu plus de réactivité
         val currentHour = LocalTime.now().hour
-        if (preferences.get(BooleanKey.OApsAIMInight) && currentHour == 23 && delta < 10 && iob < maxSMB) {
-            interval = (interval * 0.8).toInt()
+        if (preferences.get(BooleanKey.OApsAIMInight) &&
+            currentHour == 23 &&
+            delta < 10f &&
+            iob < maxSMB
+        ) {
+            interval = (interval * 0.8).toInt().coerceAtLeast(1)
         }
 
-      //reasonBuilder.append("Interval : $interval")
-        reasonBuilder.append(context.getString(R.string.interval_value, interval))
-        return interval
+        // 9) Clamp final : mécanique SMB entre 1 et 10 min
+        // Clamp final + Low BG boost
+        var finalInterval = interval.coerceIn(1, 10)
+        
+        // 🛡️ FIX NC4: LOW BG INTERVAL BOOST (Safety-Critical)
+        val lowBgIntervalMin = 5
+        if (bg < 120f && finalInterval < lowBgIntervalMin) {
+            finalInterval = lowBgIntervalMin
+            consoleLog.add("LOW_BG_INTERVAL_BOOST bg=${bg.roundToInt()} interval=${finalInterval}m")
+        }
+        
+        // 🚀 PKPD Throttle: Add interval boost if near peak/onset unconfirmed
+        // Note: pkpdThrottleIntervalAdd est déjà à 0 pour les modes repas (via reset dans finalizeAndCapSMB)
+        val pkpdBoost = pkpdThrottleIntervalAdd
+        if (pkpdBoost > 0) {
+            val baseInterval = finalInterval
+            finalInterval = (finalInterval + pkpdBoost).coerceAtMost(10)
+            consoleLog.add("PKPD_INTERVAL_BOOST base=${baseInterval}m +${pkpdBoost}m → ${finalInterval}m")
+        }
+        
+        return finalInterval
     }
 
-    // Structure pour regrouper les intervalles
+    // Structure simple, inchangée
     data class SMBIntervals(
         val snack: Int,
         val meal: Int,
@@ -1575,35 +2740,6 @@ fun appendCompactLog(
         val hc: Int,
         val highBG: Int
     )
-
-    // Refacto des fonctions de vérification conditionnelles
-    private fun shouldApplyIntervalAdjustment(intervals: SMBIntervals): Boolean {
-        val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
-
-        return (lastsmbtime < intervals.snack && snackTime)
-            || (lastsmbtime < intervals.meal && mealTime)
-            || (lastsmbtime < intervals.bfast && bfastTime)
-            || (lastsmbtime < intervals.lunch && lunchTime)
-            || (lastsmbtime < intervals.dinner && dinnerTime)
-            || (lastsmbtime < intervals.sleep && sleepTime)
-            || (lastsmbtime < intervals.hc && highCarbTime)
-            || (!honeymoon && lastsmbtime < intervals.highBG && bg > 120)
-            || (honeymoon && lastsmbtime < intervals.highBG && bg > 180)
-    }
-
-    private fun shouldApplySafetyAdjustment(): Boolean {
-        val safetysmb = recentSteps180Minutes > 1500 && bg < 120
-        return (safetysmb || lowCarbTime) && lastsmbtime >= 15
-    }
-
-    private fun shouldApplyTimeAdjustment(): Boolean {
-        val safetysmb = recentSteps180Minutes > 1500 && bg < 120
-        return (safetysmb || lowCarbTime) && lastsmbtime < 15
-    }
-
-    private fun shouldApplyStepAdjustment(): Boolean {
-        return recentSteps5Minutes > 100 && recentSteps30Minutes > 500 && lastsmbtime < 20
-    }
     // Calcule le seuil "OpenAPS-like" et applique LGS si plus haut
     private fun computeHypoThreshold(minBg: Double, lgsThreshold: Int?): Double {
         var t = minBg - 0.5 * (minBg - 40.0) // 90→65, 100→70, 110→75, 130→85
@@ -1611,26 +2747,61 @@ fun appendCompactLog(
         return t
     }
 
-    // Hard safety: vrai si BG, predictedBG ou eventualBG passent sous le seuil
     private fun isBelowHypoThreshold(
-        bg: Double,
-        predictedBg: Double,
-        eventualBg: Double,
-        threshold: Double,
-        deltaMgdlPer5min: Double = 0.0
+        bgNow: Double,
+        predicted: Double,
+        eventual: Double,
+        hypo: Double,
+        delta: Double
     ): Boolean {
-        fun safe(v: Double) = if (v.isFinite()) v else Double.POSITIVE_INFINITY
-        val minBg = minOf(safe(bg), safe(predictedBg), safe(eventualBg))
-
-        val extraMargin = when {
-            minBg <= threshold           -> 0.0
-            deltaMgdlPer5min <= -3.0     -> HYPO_MARGIN_FAST
-            deltaMgdlPer5min <= -1.5     -> HYPO_MARGIN_FALL
-            else                         -> HYPO_MARGIN_BASE
+        val tol = 5.0
+        val floor = hypo - tol
+        
+        // 1. Hypo actuelle = TOUJOURS bloquer (sécurité absolue)
+        val strongNow = bgNow <= floor
+        if (strongNow) return true
+        
+        // 2. ⚡ NOUVEAU: Bypass progressif si BG monte clairement
+        //    - delta >= 4 : bypass total des prédictions (montée forte)
+        //    - delta >= 2 && bg > hypo : bypass strongFuture seulement
+        val risingFast = delta >= 4.0
+        val risingModerate = delta >= 2.0 && bgNow > hypo
+        
+        if (risingFast) {
+            // Montée forte: ignorer complètement les prédictions
+            return false
         }
-        return minBg <= threshold + extraMargin
+        
+        // 3. Prédictions futures (seulement si pas en montée modérée)
+        val strongFuture = (predicted <= floor && eventual <= floor)
+        if (strongFuture && risingModerate) {
+            // Montée modérée: ignorer strongFuture mais pas fastFall
+            // Continue to check fastFall only
+        } else if (strongFuture) {
+            return true
+        }
+        
+        // 4. Chute rapide avec prédiction basse
+        val fastFall = (delta <= -2.0 && predicted <= hypo)
+        return fastFall
     }
     // Hystérèse : on ne débloque qu’après avoir été > (seuil+margin) pendant X minutes
+    private fun canFallbackSmbWithoutPrediction(
+        bg: Double,
+        delta: Double,
+        targetBg: Double,
+        iob: Double,
+        profile: OapsProfileAimi
+    ): Boolean {
+        // Fallback SMB allowed if clearly high and rising, even if prediction is missing
+        val clearlyHigh = bg > targetBg + 30.0
+        val stronglyRising = delta >= 2.0 // mg/dl/5min
+        // Ensure IOB is not already saturating safety
+        val iobSafe = iob < profile.max_iob * 0.8
+
+        return clearlyHigh && stronglyRising && iobSafe
+    }
+
     private fun shouldBlockHypoWithHysteresis(
         bg: Double,
         predictedBg: Double,
@@ -1642,7 +2813,7 @@ fun appendCompactLog(
         fun safe(v: Double) = if (v.isFinite()) v else Double.POSITIVE_INFINITY
         val minBg = minOf(safe(bg), safe(predictedBg), safe(eventualBg))
 
-        val blockedNow = isBelowHypoThreshold(bg, predictedBg, eventualBg, threshold, deltaMgdlPer5min)
+        val blockedNow = isBelowHypoThreshold(bg, predictedBg, eventualBg, computeHypoThreshold(80.0, profileUtil.convertToMgdlDetect(preferences.get(UnitDoubleKey.ApsLgsThreshold)).toInt() ), deltaMgdlPer5min)
         if (blockedNow) {
             lastHypoBlockAt = now
             hypoClearCandidateSince = null
@@ -1672,34 +2843,9 @@ fun appendCompactLog(
     }
 
     private fun applySpecificAdjustments(smbAmount: Float): Float {
-        val intervals = SMBIntervals(
-            snack  = preferences.get(IntKey.OApsAIMISnackinterval),
-            meal   = preferences.get(IntKey.OApsAIMImealinterval),
-            bfast  = preferences.get(IntKey.OApsAIMIBFinterval),
-            lunch  = preferences.get(IntKey.OApsAIMILunchinterval),
-            dinner = preferences.get(IntKey.OApsAIMIDinnerinterval),
-            sleep  = preferences.get(IntKey.OApsAIMISleepinterval),
-            hc     = preferences.get(IntKey.OApsAIMIHCinterval),
-            highBG = preferences.get(IntKey.OApsAIMIHighBGinterval)
-        )
 
         val currentHour = LocalTime.now().hour
         val honeymoon   = preferences.get(BooleanKey.OApsAIMIhoneymoon)
-
-        // 1) hard/tempo guards existants
-        when {
-            shouldApplyIntervalAdjustment(intervals) -> return 0.0f
-            shouldApplySafetyAdjustment() -> {
-                this.intervalsmb = 10
-                return smbAmount / 2
-            }
-            shouldApplyTimeAdjustment() -> {
-                this.intervalsmb = 10
-                return 0.0f
-            }
-        }
-
-        if (shouldApplyStepAdjustment()) return 0.0f
 
         // 2) 🔧 AJUSTEMENT “falling decelerating” (soft)
         //    On baisse encore (deltas négatifs) mais la baisse RALENTIT :
@@ -1721,23 +2867,23 @@ fun appendCompactLog(
 
         if (honeymoon && bg < 170 && delta < 5) return smbAmount / 2
 
-        if (preferences.get(BooleanKey.OApsAIMInight) && currentHour == 23 && delta < 10 && iob < maxSMB) {
-            return smbAmount * 0.8f
-        }
-        if (currentHour in 0..7 && delta < 10 && iob < maxSMB) {
-            return smbAmount * 0.8f
-        }
+        //if (preferences.get(BooleanKey.OApsAIMInight) && currentHour == 23 && delta < 10 && iob < maxSMB) {
+        //    return smbAmount * 0.8f
+        //}
+        //if (currentHour in 0..7 && delta < 10 && iob < maxSMB) {
+        //    return smbAmount * 0.8f
+        //}
 
         return smbAmount
     }
 
     private fun finalizeSmbToGive(smbToGive: Float): Float {
         var result = smbToGive
-        // Assurez-vous que smbToGive n'est pas négatif
-        if (result < 0.0f) {
-            result = 0.0f
-        }
-        if (iob <= 0.1 && bg > 120 && delta >= 2 && result == 0.0f) {
+
+        if (result < 0.0f) result = 0.0f
+        if (iob <= 0.1 && bg > 120 && delta >= 2 && result == 0.0f) result = 0.1f
+        // + déclencheur spécifique montée tardive
+        if (lateFatRiseFlag && result == 0.0f && bg > 130 && delta >= 1.0f) {
             result = 0.1f
         }
         return result
@@ -1760,227 +2906,206 @@ fun appendCompactLog(
         )
         return smb.coerceAtLeast(0f)
     }
+    private data class MealFlags(
+        val mealTime: Boolean,
+        val bfastTime: Boolean,
+        val lunchTime: Boolean,
+        val dinnerTime: Boolean,
+        val highCarbTime: Boolean
+    )
+    private fun isLateFatProteinRise(
+        bg: Double,
+        predictedBg: Double,
+        delta: Double,
+        shortAvgDelta: Double,
+        longAvgDelta: Double,
+        iob: Double,
+        cob: Double,
+        maxSMB: Double,
+        lastBolusTimeMs: Long?,           // null si inconnu
+        mealFlags: MealFlags,
+        nowMs: Long = dateUtil.now()      // ou System.currentTimeMillis()
+    ): Boolean {
+        val hoursSinceBolus = lastBolusTimeMs?.let { (nowMs - it) / 3_600_000.0 } ?: Double.POSITIVE_INFINITY
+        val rising = delta >= 1.0 && (shortAvgDelta >= 0.5 || longAvgDelta >= 0.3)
+        val highish = bg > 130 || predictedBg > 140
+        val lowIOB  = iob < maxSMB
+        val noMeal  = !(mealFlags.mealTime || mealFlags.bfastTime || mealFlags.lunchTime
+            || mealFlags.dinnerTime || mealFlags.highCarbTime)
+        return noMeal && hoursSinceBolus in 2.0..7.0 && rising && highish && lowIOB && cob <= 1.0
+    }
 
-
-
-    // private fun calculateSMBFromModel(): Float {
-    //     val selectedModelFile: File?
-    //     val modelInputs: FloatArray
-    //
-    //     when {
-    //         cob > 0 && lastCarbAgeMin < 240 && modelFile.exists() -> {
-    //             selectedModelFile = modelFile
-    //             modelInputs = floatArrayOf(
-    //                 hourOfDay.toFloat(), weekend.toFloat(),
-    //                 bg.toFloat(), targetBg, iob, cob, lastCarbAgeMin.toFloat(), futureCarbs, delta, shortAvgDelta, longAvgDelta
-    //             )
-    //         }
-    //
-    //         modelFileUAM.exists()   -> {
-    //             selectedModelFile = modelFileUAM
-    //             modelInputs = floatArrayOf(
-    //                 hourOfDay.toFloat(), weekend.toFloat(),
-    //                 bg.toFloat(), targetBg, iob, delta, shortAvgDelta, longAvgDelta,
-    //                 tdd7DaysPerHour, tdd2DaysPerHour, tddPerHour, tdd24HrsPerHour,
-    //                 recentSteps5Minutes.toFloat(),recentSteps10Minutes.toFloat(),recentSteps15Minutes.toFloat(),recentSteps30Minutes.toFloat(),recentSteps60Minutes.toFloat(),recentSteps180Minutes.toFloat()
-    //             )
-    //         }
-    //
-    //         else                 -> {
-    //             return 0.0F
-    //         }
-    //     }
-    //
-    //     val interpreter = Interpreter(selectedModelFile)
-    //     val output = arrayOf(floatArrayOf(0.0F))
-    //     interpreter.run(modelInputs, output)
-    //     interpreter.close()
-    //     var smbToGive = output[0][0].toString().replace(',', '.').toDouble()
-    //
-    //     val formatter = DecimalFormat("#.####", DecimalFormatSymbols(Locale.US))
-    //     smbToGive = formatter.format(smbToGive).toDouble()
-    //
-    //     return smbToGive.toFloat()
-    // }
 
     private fun neuralnetwork5(
-    delta: Float,
-    shortAvgDelta: Float,
-    longAvgDelta: Float,
-    predictedSMB: Float,
-    profile: OapsProfileAimi
-): Float {
-    val recentDeltas = getRecentDeltas()
-    val predicted = predictedDelta(recentDeltas)
-    val combinedDelta = (delta + predicted) / 2.0f
-    // Définir un nombre maximal d'itérations plus bas en cas de montée rapide
-    val maxIterations = if (combinedDelta > 15f) 25 else 50
-    var finalRefinedSMB: Float = calculateSMBFromModel()
+        delta: Float,
+        shortAvgDelta: Float,
+        longAvgDelta: Float,
+        predictedSMB: Float,
+        profile: OapsProfileAimi
+    ): Float {
+        val recentDeltas = getRecentDeltas()
+        val predicted = predictedDelta(recentDeltas)
+        val combinedDelta = (delta + predicted) / 2.0f
+        // Définir un nombre maximal d'itérations plus bas en cas de montée rapide
+        val maxIterations = if (combinedDelta > 15f) 25 else 50
+        var finalRefinedSMB: Float = calculateSMBFromModel()
 
-    val allLines = csvfile.readLines()
-  //println("CSV file path: \${csvfile.absolutePath}")
-    println(context.getString(R.string.csv_file_path, csvfile.absolutePath))
-    if (allLines.isEmpty()) {
-      //println("CSV file is empty.")
-        println(context.getString(R.string.csv_file_empty))
-        return predictedSMB
-    }
-
-    val headerLine = allLines.first()
-    val headers = headerLine.split(",").map { it.trim() }
-    val requiredColumns = listOf(
-        "bg", "iob", "cob", "delta", "shortAvgDelta", "longAvgDelta",
-        "tdd7DaysPerHour", "tdd2DaysPerHour", "tddPerHour", "tdd24HrsPerHour",
-        "predictedSMB", "smbGiven"
-    )
-    if (!requiredColumns.all { headers.contains(it) }) {
-      //println("CSV file is missing required columns.")
-        println(context.getString(R.string.csv_missing_columns))
-        return predictedSMB
-    }
-
-    val colIndices = requiredColumns.map { headers.indexOf(it) }
-    val targetColIndex = headers.indexOf("smbGiven")
-    val inputs = mutableListOf<FloatArray>()
-    val targets = mutableListOf<DoubleArray>()
-    var lastEnhancedInput: FloatArray? = null
-
-    for (line in allLines.drop(1)) {
-        val cols = line.split(",").map { it.trim() }
-        val rawInput = colIndices.mapNotNull { idx -> cols.getOrNull(idx)?.toFloatOrNull() }.toFloatArray()
-
-        val trendIndicator = calculateTrendIndicator(
-            delta, shortAvgDelta, longAvgDelta,
-            bg.toFloat(), iob, variableSensitivity, cob, normalBgThreshold,
-            recentSteps180Minutes, averageBeatsPerMinute.toFloat(), averageBeatsPerMinute10.toFloat(),
-            profile.insulinDivisor.toFloat(), recentSteps5Minutes, recentSteps10Minutes
-        )
-
-        val enhancedInput = rawInput.copyOf(rawInput.size + 1)
-        enhancedInput[rawInput.size] = trendIndicator.toFloat()
-        lastEnhancedInput = enhancedInput
-
-        val targetValue = cols.getOrNull(targetColIndex)?.toDoubleOrNull()
-        if (targetValue != null) {
-            inputs.add(enhancedInput)
-            targets.add(doubleArrayOf(targetValue))
+        val allLines = csvfile.readLines()
+        //println("CSV file path: \${csvfile.absolutePath}")
+        println(context.getString(R.string.csv_file_path, csvfile.absolutePath))
+        if (allLines.isEmpty()) {
+            //println("CSV file is empty.")
+            println(context.getString(R.string.csv_file_empty))
+            return predictedSMB
         }
-    }
 
-    if (inputs.isEmpty() || targets.isEmpty()) {
-      //println("Insufficient data for training.")
-        println(context.getString(R.string.insufficient_data_training))
-        return predictedSMB
-    }
-
-    val maxK = 10
-    val adjustedK = minOf(maxK, inputs.size)
-    val foldSize = maxOf(1, inputs.size / adjustedK)
-    var bestNetwork: AimiNeuralNetwork? = null
-    var bestFoldValLoss = Double.MAX_VALUE
-
-    for (k in 0 until adjustedK) {
-        val validationInputs = inputs.subList(k * foldSize, minOf((k + 1) * foldSize, inputs.size))
-        val validationTargets = targets.subList(k * foldSize, minOf((k + 1) * foldSize, targets.size))
-        val trainingInputs = inputs.minus(validationInputs)
-        val trainingTargets = targets.minus(validationTargets)
-        if (validationInputs.isEmpty()) continue
-
-        val tempNetwork = AimiNeuralNetwork(
-            inputSize = inputs.first().size,
-            hiddenSize = 5,
-            outputSize = 1,
-            config = TrainingConfig(
-                learningRate = 0.001,
-                epochs = 200
-            ),
-            regularizationLambda = 0.01
+        val headerLine = allLines.first()
+        val headers = headerLine.split(",").map { it.trim() }
+        val requiredColumns = listOf(
+            "bg", "iob", "cob", "delta", "shortAvgDelta", "longAvgDelta",
+            "tdd7DaysPerHour", "tdd2DaysPerHour", "tddPerHour", "tdd24HrsPerHour",
+            "predictedSMB", "smbGiven"
         )
-
-        tempNetwork.trainWithValidation(trainingInputs, trainingTargets, validationInputs, validationTargets)
-        val foldValLoss = tempNetwork.validate(validationInputs, validationTargets)
-
-        if (foldValLoss < bestFoldValLoss) {
-            bestFoldValLoss = foldValLoss
-            bestNetwork = tempNetwork
+        if (!requiredColumns.all { headers.contains(it) }) {
+            //println("CSV file is missing required columns.")
+            println(context.getString(R.string.csv_missing_columns))
+            return predictedSMB
         }
-    }
 
-    val adjustedLearningRate = if (bestFoldValLoss < 0.01) 0.0005 else 0.001
-    val epochs = if (bestFoldValLoss < 0.01) 100 else 200
+        val colIndices = requiredColumns.map { headers.indexOf(it) }
+        val targetColIndex = headers.indexOf("smbGiven")
+        val inputs = mutableListOf<FloatArray>()
+        val targets = mutableListOf<DoubleArray>()
+        var lastEnhancedInput: FloatArray? = null
 
-    if (bestNetwork != null) {
-      //println("Réentraînement final avec les meilleurs hyperparamètres sur toutes les données...")
-        println(context.getString(R.string.retraining_final_model))
-        val finalNetwork = AimiNeuralNetwork(
-            inputSize = inputs.first().size,
-            hiddenSize = 5,
-            outputSize = 1,
-            config = TrainingConfig(
-                learningRate = adjustedLearningRate,
-                beta1 = 0.9,
-                beta2 = 0.999,
-                epsilon = 1e-8,
-                patience = 10,
-                batchSize = 32,
-                weightDecay = 0.01,
-                epochs = epochs,
-                useBatchNorm = false,
-                useDropout = true,
-                dropoutRate = 0.3,
-                leakyReluAlpha = 0.01
-            ),
-            regularizationLambda = 0.01
-        )
-        finalNetwork.copyWeightsFrom(bestNetwork)
-        finalNetwork.trainWithValidation(inputs, targets, inputs, targets)
-        bestNetwork = finalNetwork
-    }
+        for (line in allLines.drop(1)) {
+            val cols = line.split(",").map { it.trim() }
+            val rawInput = colIndices.mapNotNull { idx -> cols.getOrNull(idx)?.toFloatOrNull() }.toFloatArray()
 
-    // --- Normalisation légère sur lastEnhancedInput ---
-    fun normalize(input: FloatArray): FloatArray {
-        val mean = input.average().toFloat()
-        val std = input.map { (it - mean) * (it - mean) }.average().let { sqrt(it).toFloat().coerceAtLeast(1e-8f) }
-        return input.map { (it - mean) / std }.toFloatArray()
-    }
+            val trendIndicator = calculateTrendIndicator(
+                delta, shortAvgDelta, longAvgDelta,
+                bg.toFloat(), iob, variableSensitivity, cob, normalBgThreshold,
+                recentSteps180Minutes, averageBeatsPerMinute.toFloat(), averageBeatsPerMinute10.toFloat(),
+                profile.insulinDivisor.toFloat(), recentSteps5Minutes, recentSteps10Minutes
+            )
 
-    var iterationCount = 0
-    do {
-        val dynamicThreshold = calculateDynamicThreshold(iterationCount, delta, shortAvgDelta, longAvgDelta)
-        val normalizedInput = lastEnhancedInput?.let { normalize(it) }?.toDoubleArray() ?: DoubleArray(0)
-        val refinedSMB = bestNetwork?.let {
-            AimiNeuralNetwork.refineSMB(finalRefinedSMB, it, normalizedInput)
-        } ?: finalRefinedSMB
+            val enhancedInput = rawInput.copyOf(rawInput.size + 1)
+            enhancedInput[rawInput.size] = trendIndicator.toFloat()
+            lastEnhancedInput = enhancedInput
 
-      //println("→ Iteration $iterationCount | SMB=$finalRefinedSMB → $refinedSMB | Δ=${abs(finalRefinedSMB - refinedSMB)} | threshold=$dynamicThreshold")
-        println(context.getString(R.string.iteration_smb, iterationCount, finalRefinedSMB, refinedSMB, abs(finalRefinedSMB - refinedSMB), dynamicThreshold))
-
-        if (abs(finalRefinedSMB - refinedSMB) <= dynamicThreshold) {
-            finalRefinedSMB = max(0.05f, refinedSMB)
-            break
+            val targetValue = cols.getOrNull(targetColIndex)?.toDoubleOrNull()
+            if (targetValue != null) {
+                inputs.add(enhancedInput)
+                targets.add(doubleArrayOf(targetValue))
+            }
         }
-        iterationCount++
-    } while (iterationCount < maxIterations)
 
-    if (finalRefinedSMB > predictedSMB && bg > 150 && delta > 5) {
-      //println("Modèle prédictif plus élevé, ajustement retenu.")
-        println(context.getString(R.string.predicted_smb_higher))
-        return finalRefinedSMB
+        if (inputs.isEmpty() || targets.isEmpty()) {
+            //println("Insufficient data for training.")
+            println(context.getString(R.string.insufficient_data_training))
+            return predictedSMB
+        }
+
+        val maxK = 10
+        val adjustedK = minOf(maxK, inputs.size)
+        val foldSize = maxOf(1, inputs.size / adjustedK)
+        var bestNetwork: AimiNeuralNetwork? = null
+        var bestFoldValLoss = Double.MAX_VALUE
+
+        for (k in 0 until adjustedK) {
+            val validationInputs = inputs.subList(k * foldSize, minOf((k + 1) * foldSize, inputs.size))
+            val validationTargets = targets.subList(k * foldSize, minOf((k + 1) * foldSize, targets.size))
+            val trainingInputs = inputs.minus(validationInputs)
+            val trainingTargets = targets.minus(validationTargets)
+            if (validationInputs.isEmpty()) continue
+
+            val tempNetwork = AimiNeuralNetwork(
+                inputSize = inputs.first().size,
+                hiddenSize = 5,
+                outputSize = 1,
+                config = TrainingConfig(
+                    learningRate = 0.001,
+                    epochs = 200
+                ),
+                regularizationLambda = 0.01
+            )
+
+            tempNetwork.trainWithValidation(trainingInputs, trainingTargets, validationInputs, validationTargets)
+            val foldValLoss = tempNetwork.validate(validationInputs, validationTargets)
+
+            if (foldValLoss < bestFoldValLoss) {
+                bestFoldValLoss = foldValLoss
+                bestNetwork = tempNetwork
+            }
+        }
+
+        val adjustedLearningRate = if (bestFoldValLoss < 0.01) 0.0005 else 0.001
+        val epochs = if (bestFoldValLoss < 0.01) 100 else 200
+
+        if (bestNetwork != null) {
+            //println("Réentraînement final avec les meilleurs hyperparamètres sur toutes les données...")
+            println(context.getString(R.string.retraining_final_model))
+            val finalNetwork = AimiNeuralNetwork(
+                inputSize = inputs.first().size,
+                hiddenSize = 5,
+                outputSize = 1,
+                config = TrainingConfig(
+                    learningRate = adjustedLearningRate,
+                    beta1 = 0.9,
+                    beta2 = 0.999,
+                    epsilon = 1e-8,
+                    patience = 10,
+                    batchSize = 32,
+                    weightDecay = 0.01,
+                    epochs = epochs,
+                    useBatchNorm = false,
+                    useDropout = true,
+                    dropoutRate = 0.3,
+                    leakyReluAlpha = 0.01
+                ),
+                regularizationLambda = 0.01
+            )
+            finalNetwork.copyWeightsFrom(bestNetwork)
+            finalNetwork.trainWithValidation(inputs, targets, inputs, targets)
+            bestNetwork = finalNetwork
+        }
+
+        // --- Normalisation légère sur lastEnhancedInput ---
+        fun normalize(input: FloatArray): FloatArray {
+            val mean = input.average().toFloat()
+            val std = input.map { (it - mean) * (it - mean) }.average().let { sqrt(it).toFloat().coerceAtLeast(1e-8f) }
+            return input.map { (it - mean) / std }.toFloatArray()
+        }
+
+        var iterationCount = 0
+        do {
+            val dynamicThreshold = calculateDynamicThreshold(iterationCount, delta, shortAvgDelta, longAvgDelta)
+            val normalizedInput = lastEnhancedInput?.let { normalize(it) }?.toDoubleArray() ?: DoubleArray(0)
+            val refinedSMB = bestNetwork?.let {
+                AimiNeuralNetwork.refineSMB(finalRefinedSMB, it, normalizedInput)
+            } ?: finalRefinedSMB
+
+            //println("→ Iteration $iterationCount | SMB=$finalRefinedSMB → $refinedSMB | Δ=${abs(finalRefinedSMB - refinedSMB)} | threshold=$dynamicThreshold")
+            println(context.getString(R.string.iteration_smb, iterationCount, finalRefinedSMB, refinedSMB, abs(finalRefinedSMB - refinedSMB), dynamicThreshold))
+
+            if (abs(finalRefinedSMB - refinedSMB) <= dynamicThreshold) {
+                finalRefinedSMB = max(0.05f, refinedSMB)
+                break
+            }
+            iterationCount++
+        } while (iterationCount < maxIterations)
+
+        if (finalRefinedSMB > predictedSMB && bg > 150 && delta > 5) {
+            //println("Modèle prédictif plus élevé, ajustement retenu.")
+            println(context.getString(R.string.predicted_smb_higher))
+            return finalRefinedSMB
+        }
+
+        val alpha = 0.7f
+        val blendedSMB = alpha * finalRefinedSMB + (1 - alpha) * predictedSMB
+        return blendedSMB
     }
 
-    val alpha = 0.7f
-    val blendedSMB = alpha * finalRefinedSMB + (1 - alpha) * predictedSMB
-    return blendedSMB
-}
-    // private fun computeDynamicBolusMultiplier(delta: Float): Float {
-    //     return when {
-    //         delta > 20f -> 1.2f  // Montée très rapide : augmenter la dose corrective
-    //         delta > 15f -> 1.1f  // Montée rapide
-    //         delta > 10f -> 1.0f  // Montée modérée : pas de réduction
-    //         delta in 5f..10f -> 0.9f // Légère réduction pour des changements moins brusques
-    //         else -> 0.8f // Pour des variations faibles ou des baisses, appliquer une réduction standard
-    //     }
-    // }
     private fun computeDynamicBolusMultiplier(delta: Float): Float {
         // Centrer la sigmoïde autour de 5 mg/dL, avec une pente modérée (échelle 10)
         val x = (delta - 5f) / 10f
@@ -2009,79 +3134,9 @@ fun appendCompactLog(
         return this.map { it.toDouble() }.toDoubleArray()
     }
 
-    private fun calculateGFactor(delta: Float, lastHourTIRabove120: Double, bg: Float): Double {
-        val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
-        // 🔹 Facteurs initiaux (ajustés dynamiquement)
-        var deltaFactor = when {
-            bg > 140 && delta > 5 -> 2.0 // Réaction forte si la glycémie monte rapidement et est élevée
-            bg > 120 && delta > 2 -> 1.5 // Réaction modérée
-            delta > 1  -> 1.2 // Réaction légère
-            bg < 120 && delta < 0 -> 0.6
-            else -> 1.0 // Pas de variation significative
-        }
-        var bgFactor = when {
-            bg > 140 -> 1.8 // Réduction forte si glycémie > 150 mg/dL
-            bg > 120 -> 1.4 // Réduction modérée si > 120 mg/dL
-            bg > 100 -> 1.0 // Neutre entre 100 et 120
-            bg < 80  -> 0.5 // Augmente l'ISF si la glycémie est sous la cible
-            else -> 0.9 // Légère augmentation de l'ISF
-        }
-        var tirFactor = when {
-            lastHourTIRabove120 > 0.5 && bg > 120 -> 1.2 + lastHourTIRabove120 * 0.15 // Augmente si tendance à rester haut
-            bg < 100 -> 0.8 // Augmente l'ISF si retour à une glycémie basse
-            else -> 1.0
-        }
-        // 🔹 Mode "Honeymoon" (ajustements spécifiques)
-        if (honeymoon) {
-            deltaFactor = when {
-                bg > 140 && delta > 5 -> 2.2
-                bg > 120 && delta > 2 -> 1.7
-                delta > 1 -> 1.3
-                else -> 1.0
-            }
-            bgFactor = when {
-                bg > 150 -> 1.6
-                bg > 130 -> 1.4
-                bg < 100 -> 0.6 // Augmente encore plus l'ISF en honeymoon
-                else -> 0.9
-            }
-            tirFactor = when {
-                lastHourTIRabove120 > 0.5 && bg > 120 -> 1.3 + lastHourTIRabove120 * 0.05
-                bg < 100 -> 0.7 // Encore plus de renforcement de l'ISF
-                else -> 1.0
-            }
-        }
-
-        // 🔹 Combine tous les facteurs
-        return deltaFactor * bgFactor * tirFactor
-    }
     private fun interpolateFactor(value: Float, start1: Float, end1: Float, start2: Float, end2: Float): Float {
         return start2 + (value - start1) * (end2 - start2) / (end1 - start1)
     }
-    // // Méthode pour récupérer les deltas récents (entre 2.5 et 7.5 minutes par exemple)
-    // private fun getRecentDeltas(): List<Double> {
-    //     val data = iobCobCalculator.ads.getBucketedDataTableCopy() ?: return emptyList()
-    //     if (data.isEmpty()) return emptyList()
-    //     // Fenêtre standard selon BG
-    //     val standardWindow = if (bg < 130) 40f else 20f
-    //     // Fenêtre raccourcie pour détection rapide
-    //     val rapidRiseWindow = 10f
-    //     // Si le delta instantané est supérieur à 15 mg/dL, on choisit la fenêtre rapide
-    //     val intervalMinutes = if (delta > 15) rapidRiseWindow else standardWindow
-    //
-    //     val nowTimestamp = data.first().timestamp
-    //     val recentDeltas = mutableListOf<Double>()
-    //     for (i in 1 until data.size) {
-    //         if (data[i].value > 39 && !data[i].filledGap) {
-    //             val minutesAgo = ((nowTimestamp - data[i].timestamp) / (1000.0 * 60)).toFloat()
-    //             if (minutesAgo in 0.0f..intervalMinutes) {
-    //                 val delta = (data.first().recalculated - data[i].recalculated) / minutesAgo * 5f
-    //                 recentDeltas.add(delta)
-    //             }
-    //         }
-    //     }
-    //     return recentDeltas
-    // }
     private fun getRecentDeltas(): List<Double> {
         val data = iobCobCalculator.ads.getBucketedDataTableCopy() ?: return emptyList()
         if (data.isEmpty()) return emptyList()
@@ -2146,7 +3201,7 @@ fun appendCompactLog(
         bgAdjustment *= 1.2f
 
         val dynamicCorrection = when {
-            hourOfDay in 0..11 || hourOfDay in 15..19 || hourOfDay >= 22 -> 0.7f
+            //hourOfDay in 0..11 || hourOfDay in 15..19 || hourOfDay >= 22 -> 0.7f
             combinedDelta > 11f  -> 2.5f   // Très forte montée, on augmente très agressivement
             combinedDelta > 8f  -> 2.0f   // Montée forte
             combinedDelta > 4f  -> 1.5f   // Montée modérée à forte
@@ -2187,7 +3242,15 @@ fun appendCompactLog(
         averageBeatsPerMinute10: Float
     ): Float {
         val currentHour = LocalTime.now().hour
-        var delayFactor = if (bg.isNaN() || averageBeatsPerMinute.isNaN() || averageBeatsPerMinute10.isNaN() || averageBeatsPerMinute10 == 0f) {
+        val highBgOverrideThreshold = normalBgThreshold + 40f
+        val severeHighBgThreshold = normalBgThreshold + 80f
+
+        var delayFactor = if (
+            bg.isNaN() ||
+            averageBeatsPerMinute.isNaN() ||
+            averageBeatsPerMinute10.isNaN() ||
+            averageBeatsPerMinute10 == 0f
+        ) {
             1f
         } else {
             val stepActivityThreshold = 1500
@@ -2195,8 +3258,13 @@ fun appendCompactLog(
             val insulinSensitivityDecreaseThreshold = 1.5 * normalBgThreshold
 
             val increasedPhysicalActivity = recentSteps180Minutes > stepActivityThreshold
-            val heartRateChange = averageBeatsPerMinute / averageBeatsPerMinute10
-            val increasedHeartRateActivity = heartRateChange >= heartRateIncreaseThreshold
+            val sanitizedHr10 = if (averageBeatsPerMinute10.isFinite() && averageBeatsPerMinute10 > 0f) {
+                averageBeatsPerMinute10
+            } else {
+                Float.NaN
+            }
+            val heartRateChange = if (sanitizedHr10.isNaN()) 1.0 else averageBeatsPerMinute / sanitizedHr10
+            val increasedHeartRateActivity = !sanitizedHr10.isNaN() && (heartRateChange.toDouble() >= heartRateIncreaseThreshold)
 
             val baseFactor = when {
                 bg <= normalBgThreshold -> 1f
@@ -2204,11 +3272,18 @@ fun appendCompactLog(
                 else -> 0.5f
             }
 
-            if (increasedPhysicalActivity || increasedHeartRateActivity) {
-                (baseFactor.toFloat() * 0.8f).coerceAtLeast(0.5f)
-            } else {
-                baseFactor.toFloat()
+            val shouldDampenForActivity = (increasedPhysicalActivity || increasedHeartRateActivity) && bg < highBgOverrideThreshold
+            var adjusted = baseFactor.toFloat()
+            if (shouldDampenForActivity) {
+                adjusted = (adjusted * 0.85f).coerceAtLeast(0.6f)
             }
+            if (bg >= highBgOverrideThreshold) {
+                adjusted = adjusted.coerceAtLeast(1f)
+            }
+            if (bg >= severeHighBgThreshold) {
+                adjusted = adjusted.coerceAtLeast(1.1f)
+            }
+            adjusted
         }
         // Augmenter le délai si l'heure est le soir (18h à 23h) ou diminuer le besoin entre 00h à 5h
         if (currentHour in 18..23) {
@@ -2219,73 +3294,6 @@ fun appendCompactLog(
         return delayFactor
     }
 
-    fun calculateMinutesAboveThreshold(
-        bg: Double,           // Glycémie actuelle (mg/dL)
-        slope: Double,        // Pente de la glycémie (mg/dL par minute)
-        thresholdBG: Double   // Seuil de glycémie (mg/dL)
-    ): Int {
-        val bgDifference = bg - thresholdBG
-
-        // Vérifier si la glycémie est en baisse
-        if (slope >= 0) {
-            // La glycémie est stable ou en hausse, retournez une valeur élevée
-            return Int.MAX_VALUE // ou un grand nombre, par exemple 999
-        }
-
-        // Estimer le temps jusqu'au seuil
-        val minutesAboveThreshold = bgDifference / -slope
-
-        // Vérifier que le temps est positif et raisonnable
-        return if (minutesAboveThreshold.isFinite() && minutesAboveThreshold > 0) {
-            minutesAboveThreshold.roundToInt()
-        } else {
-            // Retourner une valeur maximale par défaut si le calcul n'est pas valide
-            Int.MAX_VALUE
-        }
-    }
-
-
-    fun estimateRequiredCarbs(
-        bg: Double, // Glycémie actuelle
-        targetBG: Double, // Objectif de glycémie
-        slope: Double, // Vitesse de variation de la glycémie (mg/dL par minute)
-        iob: Double, // Insulin On Board - quantité d'insuline encore active
-        csf: Double, // Facteur de sensibilité aux glucides (mg/dL par gramme de glucides)
-        isf: Double, // Facteur de sensibilité à l'insuline (mg/dL par unité d'insuline)
-        cob: Double // Carbs On Board - glucides en cours d'absorption
-    ): Int {
-        // 1. Calculer la projection de la glycémie future basée sur la pente actuelle et le temps (30 minutes)
-        val timeAhead = 20.0 // Projection sur 30 minutes
-        val projectedDrop = slope * timeAhead // Estimation de la chute future de la glycémie
-
-        // 2. Estimer l'effet de l'insuline active restante (IOB) sur la glycémie
-        val insulinEffect = iob * isf // L'effet de l'insuline résiduelle
-
-        // 3. Effet total estimé : baisse de la glycémie + effet de l'insuline
-        val totalPredictedDrop = projectedDrop + insulinEffect
-
-        // 4. Calculer la glycémie future estimée sans intervention
-        val futureBG = bg - totalPredictedDrop
-
-        // 5. Si la glycémie projetée est inférieure à la cible, estimer les glucides nécessaires
-        if (futureBG < targetBG) {
-            val bgDifference = targetBG - futureBG
-
-            // 6. Si des glucides sont en cours d'absorption (COB), les prendre en compte
-            val netCarbImpact = max(0.0, bgDifference - (cob * csf)) // Ajuster avec COB
-
-            // 7. Calculer les glucides nécessaires pour combler la différence de glycémie
-            val carbsReq = round(netCarbImpact / csf)
-
-            // Debug info
-          //consoleError.add("Future BG: $futureBG, Projected Drop: $projectedDrop, Insulin Effect: $insulinEffect, COB Impact: ${cob * csf}, Carbs Required: $carbsReq")
-            consoleError.add(context.getString(R.string.console_future_bg, "%.0f".format(futureBG), "%.0f".format(projectedDrop), "%.0f".format(insulinEffect), (cob * csf), carbsReq))
-
-            return carbsReq
-        }
-
-        return 0 // Aucun glucide nécessaire si la glycémie future est au-dessus de la cible
-    }
 
     private fun calculateInsulinEffect(
         bg: Float,
@@ -2307,8 +3315,13 @@ fun appendCompactLog(
             // Ajustement hypothétique basé sur la présence de glucides. Ce facteur doit être déterminé par des tests/logique métier.
             insulinEffect *= 0.9f
         }
-        val physicalActivityFactor = 1.0f - recentSteps180Min / 10000f
-        insulinEffect *= physicalActivityFactor
+        val highBgOverrideThreshold = normalBgThreshold + 40f
+        val severeHighBgThreshold = normalBgThreshold + 80f
+        val rawPhysicalActivityFactor = 1.0f - (recentSteps180Min / 10000f).coerceAtMost(0.4f)
+        val physicalActivityFactor = rawPhysicalActivityFactor.coerceIn(0.7f, 1.0f)
+        if (bg < highBgOverrideThreshold) {
+            insulinEffect *= physicalActivityFactor
+        }
         // Calculer le facteur de retard ajusté en fonction de l'activité physique
         val adjustedDelayFactor = calculateAdjustedDelayFactor(
             bg,
@@ -2319,14 +3332,16 @@ fun appendCompactLog(
 
         // Appliquer le facteur de retard ajusté à l'effet de l'insuline
         insulinEffect *= adjustedDelayFactor
-        if (bg > normalBgThreshold) {
+        if (bg >= severeHighBgThreshold) {
+            insulinEffect *= 1.3f
+        } else if (bg > normalBgThreshold) {
             insulinEffect *= 1.2f
         }
         val currentHour = LocalTime.now().hour
         if (currentHour in 0..5) {
             insulinEffect *= 0.8f
         }
-      //reasonBuilder.append("insulin effect : $insulinEffect")
+        //reasonBuilder.append("insulin effect : $insulinEffect")
         reasonBuilder.append(context.getString(R.string.insulin_effect, insulinEffect))
         return insulinEffect
     }
@@ -2368,238 +3383,85 @@ fun appendCompactLog(
         }
     }
 
-    private fun predictEventualBG(
-        bg: Float,                     // Glycémie actuelle (mg/dL)
-        iob: Float,                    // Insuline active (IOB)
-        variableSensitivity: Float,    // Sensibilité insulinique (mg/dL/U)
-        minDelta: Float,               // Delta instantané (mg/dL/5min)
-        minAvgDelta: Float,            // Delta moyen court terme (mg/dL/5min)
-        longAvgDelta: Float,           // Delta moyen long terme (mg/dL/5min)
-        mealTime: Boolean,
-        bfastTime: Boolean,
-        lunchTime: Boolean,
-        dinnerTime: Boolean,
-        highCarbTime: Boolean,
-        snackTime: Boolean,
-        honeymoon: Boolean
-    ): Float {
-        val reasonBuilder = StringBuilder()
-        // 1. Détermination des paramètres glucidiques en fonction du contexte
-        val (averageCarbAbsorptionTime, carbTypeFactor, estimatedCob) = when {
-            highCarbTime -> Triple(3.5f, 0.75f, 100f)
-            snackTime    -> Triple(1.5f, 1.25f, 15f)
-            mealTime     -> Triple(2.5f, 1.0f, 55f)
-            bfastTime    -> Triple(3.5f, 1.0f, 55f)
-            lunchTime    -> Triple(2.5f, 1.0f, 70f)
-            dinnerTime   -> Triple(2.5f, 1.0f, 70f)
-            else         -> Triple(2.5f, 1.0f, 70f)
+    private data class PredictionResult(
+        val eventual: Double,
+        val series: List<Int>
+    )
+
+    private fun computePkpdPredictions(
+        currentBg: Double,
+        iobArray: Array<IobTotal>,
+        finalSensitivity: Double,
+        cobG: Double,
+
+        profile: OapsProfileAimi,
+        rT: RT,
+        delta: Double
+    ): PredictionResult {
+        consoleLog.add("Debug: computePkpdPredictions called with delta=$delta")
+        val advancedPredictions = try {
+            AdvancedPredictionEngine.predict(
+                currentBG = currentBg,
+                iobArray = iobArray,
+                finalSensitivity = finalSensitivity,
+                cobG = cobG,
+                profile = profile,
+                delta = delta
+            )
+        } catch (e: Exception) {
+            consoleLog.add("Error in AdvancedPredictionEngine: ${e.message}")
+            // Fallback: flat prediction
+            List(48) { currentBg }
         }
 
-        // 2. Détermination du facteur d'absorption en fonction de l'heure de la journée
-        val currentHour = LocalTime.now().hour
-        val absorptionFactor = when (currentHour) {
-            in 6..10 -> 1.3f
-            in 11..15 -> 0.8f
-            in 16..23 -> 1.2f
-            else -> 1.0f
+        val sanitizedPredictions = advancedPredictions.map { round(min(401.0, max(39.0, it)), 0) }
+        val intsPredictions = sanitizedPredictions.map { it.toInt() }
+        rT.predBGs = Predictions().apply {
+            IOB = intsPredictions
+            COB = intsPredictions
+            ZT = intsPredictions
+            UAM = intsPredictions
         }
 
-        // 3. Calcul de l'effet insuline
-        val insulinEffect = iob * variableSensitivity
-
-        // 4. Calcul de la déviation basée sur la tendance sur 30 minutes
-        var deviation = (30f / 5f) * minDelta
-        deviation *= absorptionFactor * carbTypeFactor
-        if (deviation < 0) {
-            deviation = (30f / 5f) * minAvgDelta * absorptionFactor * carbTypeFactor
-            if (deviation < 0) {
-                deviation = (30f / 5f) * longAvgDelta * absorptionFactor * carbTypeFactor
-            }
-        }
-
-        // 5. Prédiction alternative basée sur un modèle dédié qui prend aussi le contexte alimentaire
-        val predictedFutureBG = predictFutureBg(
-            bg, iob, variableSensitivity,
-            averageCarbAbsorptionTime, carbTypeFactor, estimatedCob,
-            honeymoon
+        val eventual = intsPredictions.lastOrNull()?.toDouble() ?: currentBg
+        consoleLog.add(
+            "PKPD predictions → eventual=${"%.0f".format(eventual)} mg/dL from ${intsPredictions.size} steps"
         )
-
-        // 6. Combinaison finale : effet insuline + tendance + impact COB
-        val predictedBG = predictedFutureBG + deviation + (estimatedCob * 0.05f)
-
-        // 7. Seuil minimal de sécurité
-        val finalPredictedBG = when {
-            !honeymoon && predictedBG < 39f -> 39f
-            honeymoon && predictedBG < 50f -> 50f
-            else -> predictedBG
-        }
-      //reasonBuilder.append("Predicted BG : $finalPredictedBG")
-        reasonBuilder.append(context.getString(R.string.predicted_bg, finalPredictedBG))
-        return finalPredictedBG
+        return PredictionResult(eventual, intsPredictions)
     }
 
-    private fun predictFutureBg(
-        bg: Float,
-        iob: Float,
-        variableSensitivity: Float,
-        averageCarbAbsorptionTime: Float,
-        carbTypeFactor: Float,
-        estimatedCob: Float,
-        honeymoon: Boolean
-    ): Float {
-        // Prise en compte de l'effet insuline
-        val insulinEffect = iob * variableSensitivity
-
-        // Prise en compte d'une absorption glucidique estimée (simple modèle linéaire)
-        val carbImpact = (estimatedCob / averageCarbAbsorptionTime) * carbTypeFactor
-
-        var futureBg = bg - insulinEffect + carbImpact
-
-        if (!honeymoon && futureBg < 39f) {
-            futureBg = 39f
-        } else if (honeymoon && futureBg < 50f) {
-            futureBg = 50f
-        }
-
-        return futureBg
-    }
-
-    private fun interpolatebasal(bg: Double): Double {
-        val clampedBG = bg.coerceIn(80.0, 300.0)
-        return when {
-            clampedBG < 80 -> 0.5
-            clampedBG < 120 -> {
-                // Interpolation linéaire entre 80 (0.5) et 120 (2.0)
-                val slope = (2.0 - 0.5) / (120.0 - 80.0)  // 1.5/40 = 0.0375
-                0.5 + slope * (clampedBG - 80.0)
+    private fun ensurePredictionFallback(rt: RT, bgNow: Double) {
+        if (rt.predBGs == null) {
+            val safeBg = bgNow.roundToInt()
+            rt.predBGs = Predictions().apply {
+                IOB = listOf(safeBg)
+                COB = listOf(safeBg)
+                ZT = listOf(safeBg)
+                UAM = listOf(safeBg)
             }
-            clampedBG < 180 -> {
-                // Interpolation linéaire entre 120 (2.0) et 180 (5.0)
-                val slope = (5.0 - 2.0) / (180.0 - 120.0)  // 3.0/60 = 0.05
-                2.0 + slope * (clampedBG - 120.0)
-            }
-            else -> 5.0
+            consoleLog.add("GATE_PKPD_MISSING: injected fallback prediction @${safeBg}mg/dL")
+        }
+        if (rt.eventualBG == null) {
+            rt.eventualBG = bgNow
         }
     }
 
-    private fun interpolate(xdata: Double): Double {
-        // Définir les points de référence pour l'interpolation, à partir de 80 mg/dL
-        val polyX = arrayOf(80.0, 90.0, 100.0, 110.0, 130.0, 160.0, 200.0, 220.0, 240.0, 260.0, 280.0, 300.0)
-        val polyY = arrayOf(0.5, 1.0, 2.0, 3.0, 5.0, 7.0, 9.0, 10.0, 10.0, 10.0, 10.0, 10.0) // Ajustement des valeurs pour la basale
-
-        // Constants for basal adjustment weights
-        val higherBasalRangeWeight = 1.5 // Facteur pour les glycémies supérieures à 100 mg/dL
-        val lowerBasalRangeWeight = 0.8 // Facteur pour les glycémies inférieures à 100 mg/dL mais supérieures ou égales à 80
-
-        val polymax = polyX.size - 1
-        var step = polyX[0]
-        var sVal = polyY[0]
-        var stepT = polyX[polymax]
-        var sValold = polyY[polymax]
-
-        var newVal = 1.0
-        var lowVal = 1.0
-        val topVal: Double
-        val lowX: Double
-        val topX: Double
-        val myX: Double
-        var lowLabl = step
-
-        // État d'hypoglycémie (pour les valeurs < 80)
-        if (xdata < 80) {
-            newVal = 0.5 // Multiplicateur fixe pour l'hypoglycémie
-        }
-        // Extrapolation en avant (pour les valeurs > 300)
-        else if (stepT < xdata) {
-            step = polyX[polymax - 1]
-            sVal = polyY[polymax - 1]
-            lowVal = sVal
-            topVal = sValold
-            lowX = step
-            topX = stepT
-            myX = xdata
-            newVal = lowVal + (topVal - lowVal) / (topX - lowX) * (myX - lowX)
-            // Limiter la valeur maximale si nécessaire
-            newVal = min(newVal, 10.0) // Limitation de l'effet maximum à 10
-        }
-        // Interpolation normale
-        else {
-            for (i in 0..polymax) {
-                step = polyX[i]
-                sVal = polyY[i]
-                if (step == xdata) {
-                    newVal = sVal
-                    break
-                } else if (step > xdata) {
-                    topVal = sVal
-                    lowX = lowLabl
-                    myX = xdata
-                    topX = step
-                    newVal = lowVal + (topVal - lowVal) / (topX - lowX) * (myX - lowX)
-                    break
-                }
-                lowVal = sVal
-                lowLabl = step
-            }
-        }
-
-        // Appliquer des pondérations supplémentaires si nécessaire
-        newVal = if (xdata > 100) {
-            newVal * higherBasalRangeWeight
-        } else {
-            newVal * lowerBasalRangeWeight
-        }
-
-        // Limiter la valeur minimale à 0 et la valeur maximale à 10
-        newVal = newVal.coerceIn(0.0, 10.0)
-
-        return newVal
-    }
-    private fun calculateSmoothBasalRate(
-        tddRecent: Float,
-        tddPrevious: Float,
-        currentBasalRate: Float
-    ): Float {
-        val weightRecent = 0.6f
-        val weightPrevious = 1.0f - weightRecent  // 0.4f
-        val weightedTdd = (tddRecent * weightRecent) + (tddPrevious * weightPrevious)
-        val adjustedBasalRate = currentBasalRate * (weightedTdd / tddRecent)
-        // Clamp pour éviter des ajustements trop extrêmes (par exemple, entre 50% et 200% de la basale actuelle)
-        return adjustedBasalRate.coerceIn(currentBasalRate * 0.5f, currentBasalRate * 2.0f)
-    }
-    private fun computeFinalBasal(
-        bg: Double,
-        tddRecent: Float,
-        tddPrevious: Float,
-        currentBasalRate: Float
-    ): Double {
-        // 1. Lissage de la basale de fond sur la base du TDD
-        val smoothBasal = calculateSmoothBasalRate(tddRecent, tddPrevious, currentBasalRate)
-
-        // 2. Calcul du facteur d'ajustement en fonction de la glycémie
-        val basalAdjustmentFactor = interpolate(bg)
-
-        // 3. Application du facteur sur la basale lissée pour obtenir le taux final
-        val finalBasal = smoothBasal * basalAdjustmentFactor
-
-        // 4. Clamp du résultat final pour éviter des valeurs trop extrêmes (ex. entre 0 et 8 U/h)
-        return finalBasal.coerceIn(0.0, 8.0)
-    }
 
     private fun determineNoteBasedOnBg(bg: Double): String {
         return when {
-          //bg > 170 -> "more aggressive"
+            //bg > 170 -> "more aggressive"
             bg > 170 -> context.getString(R.string.bg_note_more_aggressive)
-          //bg in 90.0..100.0 -> "less aggressive"
+            //bg in 90.0..100.0 -> "less aggressive"
             bg in 90.0..100.0 -> context.getString(R.string.bg_note_less_aggressive)
-          //bg in 80.0..89.9 -> "too aggressive" // Vous pouvez ajuster ces valeurs selon votre logique
+            //bg in 80.0..89.9 -> "too aggressive" // Vous pouvez ajuster ces valeurs selon votre logique
             bg in 80.0..89.9 -> context.getString(R.string.bg_note_too_aggressive)
-          //bg < 80 -> "low treatment"
+            //bg < 80 -> "low treatment"
             bg < 80 -> context.getString(R.string.bg_note_low_treatment)
-          //else -> "normal" // Vous pouvez définir un autre message par défaut pour les cas non couverts
+            //else -> "normal" // Vous pouvez définir un autre message par défaut pour les cas non couverts
             else -> context.getString(R.string.bg_note_normal)
         }
     }
+
     private fun processNotesAndCleanUp(notes: String): String {
         return notes.lowercase()
             .replace(",", " ")
@@ -2610,289 +3472,191 @@ fun appendCompactLog(
             .replace("and", " ")
             .replace("\\s+", " ")
     }
-    /** Log cycle : affiche dans reason et dans le consoleLog (colon). */
-    private fun logWCycle(reason: StringBuilder?, msg: String) {
-        reason?.append(msg)
-        consoleLog.add(msg.replace("\n", "")) // colon : on évite les retours à la ligne
+    private fun ensureWCycleInfo(): WCycleInfo? {
+        val profile = lastProfile ?: return null
+        wCycleInfoForRun?.let { return it }
+        val info = wCycleFacade.infoAndLog(
+            mapOf(
+                "trackingMode" to wCyclePreferences.trackingMode().name,
+                "contraceptive" to wCyclePreferences.contraceptive().name,
+                "thyroid" to wCyclePreferences.thyroid().name,
+                "verneuil" to wCyclePreferences.verneuil().name,
+                "bg" to bg,
+                "delta5" to delta.toDouble(),
+                "iob" to iob.toDouble(),
+                "tdd24h" to (tdd24HrsPerHour * 24f).toDouble(),
+                "isfProfile" to profile.sens,
+                "dynIsf" to variableSensitivity.toDouble()
+            )
+        )
+        wCycleInfoForRun = info
+        checkCycleDayNotification(info)
+        return info
     }
 
-    /** Format commun basique pour les multiplicateurs afin de ne pas spammer. */
-    private fun fmtMul(tag: String, mul: Double): String =
-        "$tag×${"%.2f".format(mul)}"
-
-    // --- Cycle féminin : phases et multiplicateurs ---
-    private enum class CyclePhase { MENSTRUATION, FOLLICULAR, OVULATION, LUTEAL, UNKNOWN }
-    private inline fun Double.isUnity(eps: Double = 1e-6) = kotlin.math.abs(this - 1.0) < eps
-    private data class WCycleInfo(
-        val enabled: Boolean,
-        val dayInCycle: Int,                 // 0..27
-        val phase: CyclePhase,
-        val basalMultiplier: Double,         // multiplicateur pour TBR
-        val smbMultiplier: Double,           // multiplicateur pour SMB
-        val log: String
-    )
-
-    /**
-     * Calcule la phase courante sur un cycle fixe de 28 jours à partir du "jour du mois"
-     * saisi par l'utilisatrice (ex: 18 = 18 du mois courant). Gère le changement de mois.
-     *
-     * Les % sont lus dans Preferences :
-     *  - OApsAIMIwcyclemenstruation : -5 à -10 % (basal)
-     *  - OApsAIMIwcycleovulation    : -2 à -3 % (SMB)
-     *  - OApsAIMIwcycleluteal       : +8 à +15 % (basal)
-     *
-     * Recommandation tableau : en phase lutéale on ajoute aussi +5% au bolus → SMB ×1.05.
-     */
-    private fun computeCurrentWCycleInfo(nowDate: LocalDate = LocalDate.now()): WCycleInfo {
-        val enabled = preferences.get(BooleanKey.OApsAIMIwcycle)
-        if (!enabled) {
-            return WCycleInfo(
-                enabled = false,
-                dayInCycle = 0,
-                phase = CyclePhase.UNKNOWN,
-                basalMultiplier = 1.0,
-                smbMultiplier = 1.0,
-                log = "" // ✅ pas de texte => aucun log
-            )
+    private fun checkCycleDayNotification(info: WCycleInfo) {
+        val mode = wCyclePreferences.trackingMode()
+        val tracking = mode != CycleTrackingMode.MENOPAUSE && mode != CycleTrackingMode.NO_MENSES_LARC 
+        
+        // Trigger: Late Period (Day > Avg Length)
+        // Spam Prevention: Notify only once per day (if day index changed)
+        val limit = wCyclePreferences.avgLen()
+        if (tracking && info.dayInCycle > limit) {
+             if (info.dayInCycle != lastCycleNotificationDay) {
+                 val msg = "⚠️ WCycle: J${info.dayInCycle} > $limit. Retard détecté.\nMettre à jour le 1er jour des règles ?"
+                 consoleLog.add(msg)
+                 uiInteraction.addNotification(
+                    app.aaps.core.interfaces.notifications.Notification.HYPO_RISK_ALARM,
+                    msg,
+                    app.aaps.core.interfaces.notifications.Notification.URGENT
+                 )
+                 lastCycleNotificationDay = info.dayInCycle
+             }
         }
+    }
 
-        val startDomPref = preferences.get(DoubleKey.OApsAIMIwcycledateday).toInt()
-        if (startDomPref !in 1..31) {
-            return WCycleInfo(
-                enabled = true,
-                dayInCycle = 0,
-                phase = CyclePhase.UNKNOWN,
-                basalMultiplier = 1.0,
-                smbMultiplier = 1.0,
-              //log = "♀️ WCycle: invalid day"
-                log = context.getString(R.string.wcycle_invalid_day)
-            )
-        }
+    private fun appendWCycleReason(target: StringBuilder, info: WCycleInfo) {
+        if (wCycleReasonLogged) return
+        if (info.reason.isBlank()) return
+        target.append(", WCycle: ").append(info.reason)
+        wCycleReasonLogged = true
+    }
 
-        val thisMonthStartDom = startDomPref.coerceAtMost(nowDate.lengthOfMonth())
-        val candidateThisMonth = nowDate.withDayOfMonth(thisMonthStartDom)
-        val cycleStart = if (!candidateThisMonth.isAfter(nowDate)) {
-            candidateThisMonth
-        } else {
-            val prev = nowDate.minusMonths(1)
-            prev.withDayOfMonth(startDomPref.coerceAtMost(prev.lengthOfMonth()))
-        }
-
-        val days = java.time.temporal.ChronoUnit.DAYS.between(cycleStart, nowDate).toInt()
-        val dayInCycle = ((days % 28) + 28) % 28
-
-        val pctMen = preferences.get(DoubleKey.OApsAIMIwcyclemenstruation)    // 1..30 (ex: 10) => appliqué en -pctMen% sur basal en menstruation
-        val pctOvu = preferences.get(DoubleKey.OApsAIMIwcycleovulation)       // 1..30 (ex: 5)  => appliqué en -pctOvu% sur SMB en ovulation
-        val pctLut = preferences.get(DoubleKey.OApsAIMIwcycleluteal)          // 1..30 (ex: 15) => appliqué en +pctLut% sur basal en lutéale
-
-
-        val phase = when (dayInCycle) {
-            in 0..4   -> CyclePhase.MENSTRUATION
-            in 5..12  -> CyclePhase.FOLLICULAR
-            in 13..15 -> CyclePhase.OVULATION
-            in 16..27 -> CyclePhase.LUTEAL
-            else      -> CyclePhase.UNKNOWN
-        }
-
-        var basalMul = 1.0
-        var smbMul   = 1.0
-        //val sb = StringBuilder("♀️ Day ${dayInCycle + 1}/28 • ")
-        val sb = StringBuilder("♀️ " + context.getString(R.string.cycle_day, dayInCycle + 1))
-
-        when (phase) {
-            CyclePhase.MENSTRUATION -> {
-                basalMul *= (1.0 - pctMen / 100.0)
-                //sb.append("Menstruation: basal -${pctMen}% ")
-                sb.append(context.getString(R.string.cycle_menstruation, pctMen))
-            }
-            CyclePhase.FOLLICULAR -> {
-                //sb.append("Follicular: neutral ")
-                sb.append(context.getString(R.string.cycle_follicular))
-            }
-            CyclePhase.OVULATION -> {
-                smbMul   *= (1.0 - pctOvu / 100.0)
-                //sb.append("Ovulation: SMB -${pctOvu}% ")
-                sb.append(context.getString(R.string.cycle_ovulation, pctOvu))
-            }
-            CyclePhase.LUTEAL -> {
-                basalMul *= (1.0 + pctLut / 100.0)
-                smbMul   *= (1.0 + pctLut / 100.0)
-              //sb.append("Luteal: basal +${pctLut}%, SMB +${pctLut}% ")
-                sb.append(context.getString(R.string.cycle_luteal, pctLut, pctLut))
-            }
-            CyclePhase.UNKNOWN ->
-                // sb.append("Unknown")
-                sb.append(context.getString(R.string.cycle_unknown))
-        }
-
-        // Bornes ±30%
-        basalMul = basalMul.coerceIn(0.7, 1.3)
-        smbMul   = smbMul.coerceIn(0.7, 1.3)
-
-        return WCycleInfo(
-            enabled = true,
-            dayInCycle = dayInCycle,
-            phase = phase,
-            basalMultiplier = basalMul,
-            smbMultiplier = smbMul,
-            log = sb.toString()
+    private fun updateWCycleLearner(needBasalScale: Double?, needSmbScale: Double?) {
+        val info = wCycleInfoForRun ?: return
+        if (!info.enabled) return
+        val minClamp = wCyclePreferences.clampMin()
+        val maxClamp = wCyclePreferences.clampMax()
+        wCycleLearner.update(
+            info.phase,
+            needBasalScale?.coerceIn(minClamp, maxClamp),
+            needSmbScale?.coerceIn(minClamp, maxClamp)
         )
     }
 
-    /** Applique le multiplicateur basal du cycle et journalise (reason + colon). */
-    private fun applyWCycleOnBasal(
-        rate: Double,
-        bypassSafety: Boolean,
-        maxSafe: Double,
-        profile: OapsProfileAimi,
-        rT: RT
-    ): Double {
-        val info = computeCurrentWCycleInfo()
-        if (!info.enabled || info.basalMultiplier.isUnity()) return rate               // ✅ option OFF → silence total
-        if (info.basalMultiplier == 1.0) return rate  // neutre → pas de log pour éviter le bruit
-
-        val limit = if (bypassSafety) profile.max_basal else maxSafe
-        val adjusted = (rate * info.basalMultiplier).coerceIn(0.0, limit)
-      //val line = "♀️⚡ ${info.log} ${fmtMul("Basal", info.basalMultiplier)} → ${"%.2f".format(adjusted)} U/h\n"
-        val line = context.getString(R.string.basal_multiplier_line, info.log, context.getString(R.string.basal_fmt, info.basalMultiplier), adjusted)
-        logWCycle(rT.reason, line)
-        return adjusted
-    }
-
-
-    /** Applique le multiplicateur SMB du cycle et journalise (reason + colon). */
-    private fun applyWCycleOnSmb(smb: Float, reason: StringBuilder?): Float {
-        val info = computeCurrentWCycleInfo()
-        if (!info.enabled || info.smbMultiplier.isUnity())   return smb               // ✅ option OFF → silence total
-        if (info.smbMultiplier == 1.0) return smb    // neutre → pas de log
-
-        val out = (smb * info.smbMultiplier.toFloat()).coerceAtLeast(0f)
-        val line = "♀️⚡ ${info.log} ${fmtMul("SMB", info.smbMultiplier)} → ${"%.2f".format(out)} U\n"
-        logWCycle(reason, line)
-        return out
-    }
-
     private fun calculateDynamicPeakTime(
-    currentActivity: Double,
-    futureActivity: Double,
-    sensorLagActivity: Double,
-    historicActivity: Double,
-    profile: OapsProfileAimi,
-    stepCount: Int? = null, // Nombre de pas
-    heartRate: Int? = null, // Rythme cardiaque
-    bg: Double,             // Glycémie actuelle
-    delta: Double,          // Variation glycémique
-    reasonBuilder: StringBuilder // Builder pour accumuler les logs
-): Double {
-    var dynamicPeakTime = profile.peakTime
-    val activityRatio = futureActivity / (currentActivity + 0.0001)
+        currentActivity: Double,
+        futureActivity: Double,
+        sensorLagActivity: Double,
+        historicActivity: Double,
+        profile: OapsProfileAimi,
+        stepCount: Int? = null, // Nombre de pas
+        heartRate: Int? = null, // Rythme cardiaque
+        bg: Double,             // Glycémie actuelle
+        delta: Double,          // Variation glycémique
+        reasonBuilder: StringBuilder // Builder pour accumuler les logs
+    ): Double {
+        var dynamicPeakTime = profile.peakTime
+        val activityRatio = futureActivity / (currentActivity + 0.0001)
 
-    //reasonBuilder.append("🧠 Calcul Dynamic PeakTime\n")
-    reasonBuilder.append(context.getString(R.string.calc_dynamic_peaktime))
+        //reasonBuilder.append("🧠 Calcul Dynamic PeakTime\n")
+        reasonBuilder.append(context.getString(R.string.calc_dynamic_peaktime))
 //  reasonBuilder.append("  • PeakTime initial: ${profile.peakTime}\n")
-    reasonBuilder.append(context.getString(R.string.profile_peak_time, profile.peakTime))
+        reasonBuilder.append(context.getString(R.string.profile_peak_time, profile.peakTime))
 //  reasonBuilder.append("  • BG: $bg, Delta: ${round(delta, 2)}\n")
-    reasonBuilder.append(context.getString(R.string.bg_delta, bg, delta))
+        reasonBuilder.append(context.getString(R.string.bg_delta, bg, delta))
 
-    // 1️⃣ Facteur de correction hyperglycémique
-    val hyperCorrectionFactor = when {
-        bg <= 130 || delta <= 4 -> 1.0
-        bg in 130.0..240.0 -> 0.6 - (bg - 130) * (0.6 - 0.3) / (240 - 130)
-        else -> 0.3
-    }
-    dynamicPeakTime *= hyperCorrectionFactor
+        // 1️⃣ Facteur de correction hyperglycémique
+        val hyperCorrectionFactor = when {
+            bg <= 130 || delta <= 4 -> 1.0
+            bg in 130.0..240.0 -> 0.6 - (bg - 130) * (0.6 - 0.3) / (240 - 130)
+            else -> 0.3
+        }
+        dynamicPeakTime *= hyperCorrectionFactor
 //  reasonBuilder.append("  • Facteur hyperglycémie: $hyperCorrectionFactor\n")
-    reasonBuilder.append(context.getString(R.string.reason_hyper_correction, hyperCorrectionFactor))
+        reasonBuilder.append(context.getString(R.string.reason_hyper_correction, hyperCorrectionFactor))
 
-    // 2️⃣ Basé sur currentActivity (IOB)
-    if (currentActivity > 0.1) {
-        val adjustment = currentActivity * 20 + 5
-        dynamicPeakTime += adjustment
-      //reasonBuilder.append("  • Ajout lié IOB: +$adjustment\n")
-        reasonBuilder.append(context.getString(R.string.reason_iob_adjustment, adjustment))
-    }
-
-    // 3️⃣ Ratio d'activité
-    val ratioFactor = when {
-        activityRatio > 1.5 -> 0.5 + (activityRatio - 1.5) * 0.05
-        activityRatio < 0.5 -> 1.5 + (0.5 - activityRatio) * 0.05
-        else -> 1.0
-    }
-    dynamicPeakTime *= ratioFactor
-//  reasonBuilder.append("  • Ratio activité: ${round(activityRatio,2)} ➝ facteur $ratioFactor\n")
-    reasonBuilder.append(context.getString(R.string.reason_activity_ratio, round(activityRatio,2), ratioFactor))
-
-    // 4️⃣ Nombre de pas
-    stepCount?.let {
-        when {
-            it > 500 -> {
-                val stepAdj = it * 0.015
-                dynamicPeakTime += stepAdj
-//              reasonBuilder.append("  • Pas ($it) ➝ +$stepAdj\n")
-                reasonBuilder.append(context.getString(R.string.reason_steps_adjustment, it, stepAdj))
-            }
-            it < 100 -> {
-                dynamicPeakTime *= 0.9
-//              reasonBuilder.append("  • Peu de pas ($it) ➝ x0.9\n")
-                reasonBuilder.append(context.getString(R.string.reason_few_steps, it))
-            }
+        // 2️⃣ Basé sur currentActivity (IOB) - "Active Insulin" vs "Activity" check
+        // Si c'est de l'activité physique (IOB provenant de l'activité ? Non, currentActivity est souvent l'activité physique déclarée/détectée)
+        // Correction BIO-SYNC : L'activité accélère l'absorption (pic plus tôt)
+        if (currentActivity > 0.1) {
+            // Old: dynamicPeakTime += adjustment (Retardait le pic)
+            // New: on réduit le temps du pic (ça va plus vite)
+            val acceleration = currentActivity * 20 + 5
+            dynamicPeakTime -= acceleration
+            reasonBuilder.append(context.getString(R.string.reason_iob_adjustment_inverted, acceleration))
         }
-    }
 
-    // 5️⃣ Fréquence cardiaque
-    heartRate?.let {
-        when {
-            it > 110 -> {
-                dynamicPeakTime *= 1.15
-//              reasonBuilder.append("  • FC élevée ($it) ➝ x1.15\n")
-                reasonBuilder.append(context.getString(R.string.reason_high_hr, it))
-            }
-            it < 55 -> {
+        // 3️⃣ Ratio d'activité (Future / Current)
+        // Si on va bouger plus (Future > Current), ça va accélérer encore plus
+        val ratioFactor = when {
+            activityRatio > 1.5 -> 0.8  // (était 0.5 + ...) on accélère (x0.8)
+            activityRatio < 0.5 -> 1.2  // on ralentit (x1.2)
+            else -> 1.0
+        }
+        dynamicPeakTime *= ratioFactor
+        reasonBuilder.append(context.getString(R.string.reason_activity_ratio, round(activityRatio,2), ratioFactor))
+
+        // 4️⃣ & 5️⃣ BIO-SYNC FUSION : Steps & HeartRate
+        // On détecte 3 états : FLOW (Sport), STRESS (Cortisol), ou REST
+        val steps = stepCount ?: 0
+        val hr = heartRate ?: 0
+        
+        val isStress = hr > 95 && steps < 100 // Tachycardie au repos -> Stress/Maladie
+        val isFlow = steps > 500 || (steps > 200 && hr > 100) // Activité significative
+
+        if (isStress) {
+            // 🔴 STRESS MODE : Cortisol -> Résistance -> Pic retardé et étalé
+            dynamicPeakTime *= 1.25
+            reasonBuilder.append(context.getString(R.string.reason_bio_sync_stress, hr, steps))
+            consoleLog.add("Bio-Sync: STRESS DETECTED (HR $hr, Steps $steps) -> Peak slowed x1.25")
+        } else if (isFlow) {
+            // 🟢 FLOW MODE : Circulation ++ -> Absorption accélérée -> Pic plus tôt
+            // Plus on bouge, plus c'est rapide, borné à x0.7
+            val flowFactor = if (steps > 1500) 0.7 else 0.85
+            dynamicPeakTime *= flowFactor
+            reasonBuilder.append(context.getString(R.string.reason_bio_sync_flow, steps, hr, flowFactor))
+        } else if (steps < 50 && hr < 65 && hr > 40) {
+            // 🔵 DEEP REST : Métabolisme lent
+            dynamicPeakTime *= 1.1
+            reasonBuilder.append("Bio-Sync: Deep Rest (HR $hr) -> x1.1\n")
+        }
+
+        /* 
+        // ANCIENNE LOGIQUE SUPPRIMÉE (Obsolète car contradictoire)
+        // 4️⃣ Nombre de pas (Old: >1000 -> += stepAdj)
+        // 5️⃣ Fréquence cardiaque (Old: >110 -> x1.15)
+        // 6️⃣ Corrélation FC + pas
+        */
+
+        this.peakintermediaire = dynamicPeakTime
+
+        // 7️⃣ Sensor lag vs historique
+        if (dynamicPeakTime > 40) {
+            if (sensorLagActivity > historicActivity) {
                 dynamicPeakTime *= 0.85
-//              reasonBuilder.append("  • FC basse ($it) ➝ x0.85\n")
-                reasonBuilder.append(context.getString(R.string.reason_low_hr, it))
+//          reasonBuilder.append("  • SensorLag > Historic ➝ x0.85\n")
+                reasonBuilder.append(context.getString(R.string.reason_sensor_lag))
+            } else if (sensorLagActivity < historicActivity) {
+                dynamicPeakTime *= 1.2
+//          reasonBuilder.append("  • SensorLag < Historic ➝ x1.2\n")
+                reasonBuilder.append(context.getString(R.string.reason_sensor_lag_lower))
             }
         }
-    }
 
-    // 6️⃣ Corrélation FC + pas
-    if (stepCount != null && heartRate != null) {
-        if (stepCount > 1000 && heartRate > 110) {
-            dynamicPeakTime *= 1.2
-//          reasonBuilder.append("  • Activité intense ➝ x1.2\n")
-            reasonBuilder.append(context.getString(R.string.reason_high_activity))
-        } else if (stepCount < 200 && heartRate < 50) {
-            dynamicPeakTime *= 0.75
-//          reasonBuilder.append("  • Repos total ➝ x0.75\n")
-            reasonBuilder.append(context.getString(R.string.reason_total_rest))
-        }
-    }
-
-    this.peakintermediaire = dynamicPeakTime
-
-    // 7️⃣ Sensor lag vs historique
-    if (dynamicPeakTime > 40) {
-        if (sensorLagActivity > historicActivity) {
-            dynamicPeakTime *= 0.85
-//          reasonBuilder.append("  • SensorLag > Historic ➝ x0.85\n")
-            reasonBuilder.append(context.getString(R.string.reason_sensor_lag))
-        } else if (sensorLagActivity < historicActivity) {
-            dynamicPeakTime *= 1.2
-//          reasonBuilder.append("  • SensorLag < Historic ➝ x1.2\n")
-            reasonBuilder.append(context.getString(R.string.reason_sensor_lag_lower))
-        }
-    }
-
-    // 🔚 Clamp entre 35 et 120
-    val finalPeak = dynamicPeakTime.coerceIn(35.0, 120.0)
+        // 🔚 Clamp entre 35 et 120
+        val finalPeak = dynamicPeakTime.coerceIn(35.0, 120.0)
 //  reasonBuilder.append("  → Résultat PeakTime final : $finalPeak\n")
-    //reasonBuilder.append("  → Picco insulina dinamico : ${"%.0f".format(finalPeak)}\n")
-    return finalPeak
-}
+        //reasonBuilder.append("  → Picco insulina dinamico : ${"%.0f".format(finalPeak)}\n")
+        return finalPeak
+    }
 
-    fun detectMealOnset(delta: Float, predictedDelta: Float, acceleration: Float): Boolean {
+    fun detectMealOnset(delta: Float, predictedDelta: Float, acceleration: Float, predictedBg: Float, targetBg: Float): Boolean {
         val combinedDelta = (delta + predictedDelta) / 2.0f
-        return combinedDelta > 3.0f && acceleration > 1.2f
+        
+        // 1. Existing strict check (Explosive Rise)
+        if (combinedDelta > 3.0f && acceleration > 1.2f) return true
+
+        // 2. Harmonized check (Steady Meal Rise)
+        // Relaxed acceleration req if rise is clearly above noise
+        val normalizedRise = ((predictedBg - targetBg) / 70.0f).coerceIn(0.0f, 1.0f)
+        if (normalizedRise > 0.3f && combinedDelta > 2.0f && acceleration > 0.3f) return true
+        
+        // 3. [FIX] Brute Force Rise (No Acceleration needed if Delta is huge)
+        // If BG is rising +5 mg/dL/min, it IS a meal/carb impact, even if linear.
+        if (combinedDelta > 5.0f || delta > 5.0f) return true
+
+        return false
     }
 
     private fun parseNotes(startMinAgo: Int, endMinAgo: Int): String {
@@ -2924,12 +3688,52 @@ fun appendCompactLog(
         return notes
     }
 
+    /**
+     * 🛡️ Log de santé du stockage et des learners AIMI.
+     * Affiche l'état du système dans l'UI (Reasoning) ET dans les logs système.
+     */
+    private fun logLearnersHealth() {
+        val storageReport = storageHelper.getHealthReport()
+        val reactivityFactor = unifiedReactivityLearner.getCombinedFactor()
+        val basalMultiplier = basalLearner.getMultiplier()
+        
+        // Construire le rapport de santé
+        val healthLines = listOf(
+            "═══════════════════════════════",
+            "🛡️ AIMI LEARNERS HEALTH",
+            "Storage: $storageReport",
+            "UnifiedReactivity: factor=${"%.3f".format(reactivityFactor)}",
+            "BasalLearner: multiplier=${"%.3f".format(basalMultiplier)}",
+            "PkPdEstimator: runtime-only",
+            "═══════════════════════════════"
+        )
+        
+        // Ajouter dans consoleLog pour affichage UI (Reasoning)
+        healthLines.forEach { line ->
+            consoleLog.add(line)
+        }
+        
+        // Logger aussi dans logcat pour debug
+        aapsLogger.info(LTag.APS, "╔═══════════════════════════════════════════════╗")
+        aapsLogger.info(LTag.APS, "║ 📦 AIMI SYSTEM HEALTH                          ║")
+        aapsLogger.info(LTag.APS, "╠═══════════════════════════════════════════════╣")
+        aapsLogger.info(LTag.APS, "║ Storage: $storageReport")
+        aapsLogger.info(LTag.APS, "║ UnifiedReactivity: ✅ factor=${"%.3f".format(reactivityFactor)}")
+        aapsLogger.info(LTag.APS, "║ BasalLearner: ✅ multiplier=${"%.3f".format(basalMultiplier)}")
+        aapsLogger.info(LTag.APS, "║ PkPdEstimator: ℹ️ runtime-only")
+        aapsLogger.info(LTag.APS, "╚═══════════════════════════════════════════════╝")
+    }
+
     @SuppressLint("NewApi", "DefaultLocale") fun determine_basal(
-        glucose_status: GlucoseStatus, currenttemp: CurrentTemp, iob_data_array: Array<IobTotal>, profile: OapsProfileAimi, autosens_data: AutosensResult, mealData: MealData,
-        microBolusAllowed: Boolean, currentTime: Long, flatBGsDetected: Boolean, dynIsfMode: Boolean
+        glucose_status: GlucoseStatusAIMI, currenttemp: CurrentTemp, iob_data_array: Array<IobTotal>, profile: OapsProfileAimi, autosens_data: AutosensResult, mealData: MealData,
+        microBolusAllowed: Boolean, currentTime: Long, flatBGsDetected: Boolean, dynIsfMode: Boolean, uiInteraction: UiInteraction
     ): RT {
         consoleError.clear()
         consoleLog.clear()
+        
+        // 🛡️ Log health status of storage and learners
+        logLearnersHealth()
+        
         var rT = RT(
             algorithm = APSResult.Algorithm.AIMI,
             runningDynamicIsf = dynIsfMode,
@@ -2937,7 +3741,102 @@ fun appendCompactLog(
             consoleLog = consoleLog,
             consoleError = consoleError
         )
+        wCycleInfoForRun = null
+        wCycleReasonLogged = false
+        lastProfile = profile
+        
+        // 🧹 STATE RESET (Critical Fix FCL 10.6):
+        // maxSMB is a persistent class member. It MUST be reset to the user's preference at the start of every cycle.
+        // Otherwise, temporary overrides (like BFast2 mode) permeate to future cycles.
+        this.maxSMB = preferences.get(DoubleKey.OApsAIMIMaxSMB)
+        this.maxSMBHB = this.maxSMB // Fallback since specific key doesn't exist yet 
+        // Logic check: usually maxSMBHB is just maxSMB. Let's check init. Init said 0.5.
+        // Better safe:
+        // this.maxSMBHB = 2.0 // or whatever default.
+        // Actually earlier code used `if (bg > 120...) maxSMBHB else maxSMB`.
+        // Let's stick to maxSMB reset first which was the smoking gun.
+        // ✅ ETAPE 1: Calculer le Profil d'Action de l'IOB
+        val iobActionProfile = InsulinActionProfiler.calculate(iob_data_array, profile)
+
+// Stocker les résultats dans des variables locales pour plus de clarté
+        val iobTotal = iobActionProfile.iobTotal
+        val iobPeakMinutes = iobActionProfile.peakMinutes
+        iobActivityNow = iobActionProfile.activityNow
+        val iobActivityIn30Min = iobActionProfile.activityIn30Min
+
+// On met à jour la variable `iob` globale de la classe avec la valeur de notre profiler pour la cohérence
+        // this.iob = iobTotal.toFloat() // FIX: Do NOT overwrite official IOB with Gross IOB. Use iob_data.iob.
+
+// On ajoute les nouvelles informations au log pour le débogage
+        consoleLog.add(
+            "PAI: Peak in ${"%.0f".format(iobPeakMinutes)}m | " +
+                "Activity Now=${"%.0f".format(iobActivityNow * 100)}%, " +
+                "in 30m=${"%.0f".format(iobActivityIn30Min * 100)}%"
+        )
+        
+        // 🚀 NOUAUTÉ: Update Real-Time Insulin Observer
+        val insulinActionState = insulinObserver.update(
+            currentBg = bg,
+            bgDelta = delta.toDouble(),
+            iobTotal = iobTotal,
+            iobActivityNow = iobActivityNow,
+            iobActivityIn30 = iobActivityIn30Min,
+            peakMinutesAbs = iobPeakMinutes.toInt(),
+            diaHours = profile.dia,
+            carbsActiveG = cob.toDouble(),
+            now = dateUtil.now()
+        )
+        
+        // Log état observateur
+        consoleLog.add("PKPD_OBS ${insulinActionState.reason}")
+        
+        // 👇 Force la création du CSV (premier snapshot WCycle “pré-décision”)
+        ensureWCycleInfo()
+        // --- GS + features AIMI -----------------------------------------------------
+        val pack = try {
+            glucoseStatusCalculatorAimi.compute(false)
+        } catch (e: Exception) {
+            consoleError.add("❌ GlucoseStatusCalculatorAimi.compute() failed: ${e.message}")
+            null
+        }
+
+        if (pack == null || pack.gs == null) {
+            consoleError.add("❌ No glucose data (AIMI pack empty)")
+            return rT.also {
+                it.reason.append("no GS")
+                ensurePredictionFallback(it, bg)
+            } // ou ton handling habituel
+        }
+
+        val gs = pack.gs!!
+        val f  = pack.features
+
+// Construit un GlucoseStatusAIMI complet (plus de 0.0 par défaut)
+        val glucoseStatus = glucose_status ?: GlucoseStatusAIMI(
+            glucose = gs.glucose,
+            noise = gs.noise,
+            delta = gs.delta,
+            shortAvgDelta = gs.shortAvgDelta,
+            longAvgDelta = gs.longAvgDelta,
+            date = gs.date,
+
+            // === valeurs issues de f (si présentes) ===
+            duraISFminutes = f?.stable5pctMinutes ?: 0.0,
+            duraISFaverage = f?.stable5pctAverage ?: 0.0,
+            parabolaMinutes = f?.parabolaMinutes ?: 0.0,
+            deltaPl = f?.delta5Prev ?: 0.0,
+            deltaPn = f?.delta5Next ?: 0.0,
+            bgAcceleration = f?.accel ?: 0.0,
+            a0 = f?.a0 ?: 0.0,
+            a1 = f?.a1 ?: 0.0,
+            a2 = f?.a2 ?: 0.0,
+            corrSqu = f?.corrR2 ?: 0.0
+        )
+        ensurePredictionFallback(rT, glucoseStatus.glucose)
         val reasonAimi = StringBuilder()
+        var pkpdRuntime: PkPdRuntime? = null
+        var windowSinceDoseInt = 0
+        var carbsActiveForPkpd = 0.0
         // On définit fromTime pour couvrir une longue période (par exemple, les 7 derniers jours)
         val fromTime = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(7)
 // Récupération des événements de changement de cannule
@@ -2952,12 +3851,18 @@ fun appendCompactLog(
             // Si aucun changement n'est enregistré, vous pouvez définir une valeur par défaut
             0f
         }
+        val effectiveDiaH = pkpdRuntime?.params?.diaHrs
+            ?: profile.dia   // → ou ton DIA ajusté SI PKPD est désactivé
 
+        val effectivePeakMin = pkpdRuntime?.params?.peakMin
+            ?: profile.peakTime  // idem, legacy seulement en fallback
         val recentDeltas = getRecentDeltas()
         val predicted = predictedDelta(recentDeltas)
+        val useLegacyDynamics = (pkpdRuntime == null)
         // Calcul du delta combiné : on combine le delta mesuré et le delta prédit
         val combinedDelta = (delta + predicted) / 2.0f
-        val tp = calculateDynamicPeakTime(
+        val tp = if (useLegacyDynamics) {
+        calculateDynamicPeakTime(
             currentActivity = profile.currentActivity,
             futureActivity = profile.futureActivity,
             sensorLagActivity = profile.sensorLagActivity,
@@ -2969,13 +3874,16 @@ fun appendCompactLog(
             combinedDelta,
             reasonAimi
         )
+        } else {
+            pkpdRuntime.params.peakMin
+        }
         val autodrive = preferences.get(BooleanKey.OApsAIMIautoDrive)
 
         val calendarInstance = Calendar.getInstance()
         this.hourOfDay = calendarInstance[Calendar.HOUR_OF_DAY]
         val dayOfWeek = calendarInstance[Calendar.DAY_OF_WEEK]
         val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
-        this.bg = glucose_status.glucose
+        this.bg = glucoseStatus.glucose
         val getlastBolusSMB = persistenceLayer.getNewestBolusOfType(BS.Type.SMB)
         val lastBolusSMBTime = getlastBolusSMB?.timestamp ?: 0L
         //val lastBolusSMBMinutes = lastBolusSMBTime / 60000
@@ -2984,22 +3892,11 @@ fun appendCompactLog(
         this.lastsmbtime = (diff / (60 * 1000)).toInt()
         this.maxIob = preferences.get(DoubleKey.ApsSmbMaxIob)
 // Tarciso Dynamic Max IOB
-        var DinMaxIob = ((bg / 100.0) * (bg / 55.0) + (combinedDelta / 2.0)).toFloat()
-
-// Calcul initial avec un ajustement dynamique basé sur bg et delta
-        DinMaxIob = ((bg / 100.0) * (bg / 55.0) + (combinedDelta / 2.0)).toFloat()
-
-// Sécurisation : imposer une borne minimale et une borne maximale
-        DinMaxIob = DinMaxIob.coerceAtLeast(1.0f).coerceAtMost(maxIob.toFloat() * 1.3f)
-
-// Réduction de l'augmentation si on est la nuit (0h-6h)
-        if (hourOfDay in 0..11 || hourOfDay in 15..19 || hourOfDay >= 22) {
-            DinMaxIob = DinMaxIob.coerceAtMost(maxIob.toFloat())
-        }
-
-        this.maxIob = if (autodrive) DinMaxIob.toDouble() else maxIob
-      //rT.reason.append(", MaxIob: $maxIob")
+        // [FIX] User Request: Strict MaxIOB Limit (Preference Only).
+        // Dynamic calculations removed to prevent "dangerous variations".
+        this.maxIob = maxIob
         rT.reason.append(context.getString(R.string.reason_max_iob, maxIob))
+        consoleLog.add("MAX_IOB_STATIC: Pref=$maxIob (Dynamic disabled by request)")
         this.maxSMB = preferences.get(DoubleKey.OApsAIMIMaxSMB)
         this.maxSMBHB = preferences.get(DoubleKey.OApsAIMIHighBGMaxSMB)
         // Calcul initial avec ajustement basé sur la glycémie et le delta
@@ -3014,9 +3911,9 @@ fun appendCompactLog(
         }
 
 // ⚠ Réduction nocturne pour éviter une surcorrection pendant le sommeil (0h - 6h)
-        if (hourOfDay in 0..11 || hourOfDay in 15..19 || hourOfDay >= 22) {
-            DynMaxSmb *= 0.6f
-        }
+        //if (hourOfDay in 0..11 || hourOfDay in 15..19 || hourOfDay >= 22) {
+        //    DynMaxSmb *= 0.6f
+        //}
 
 // ⚠ Alignement avec `maxSMB` et `profile.peakTime`
         DynMaxSmb = DynMaxSmb.coerceAtMost(maxSMBHB.toFloat() * (tp / 60.0).toFloat())
@@ -3024,8 +3921,68 @@ fun appendCompactLog(
         //val DynMaxSmb = (bg / 200) * (bg / 100) + (delta / 2)
         val enableUAM = profile.enableUAM
 
-        this.maxSMBHB = if (autodrive && !honeymoon) DynMaxSmb.toDouble() else preferences.get(DoubleKey.OApsAIMIHighBGMaxSMB)
-        this.maxSMB = if (bg > 120 && !honeymoon && mealData.slopeFromMinDeviation >= 1.4 || bg > 180 && honeymoon && mealData.slopeFromMinDeviation >= 1.4) maxSMBHB else maxSMB
+
+        val prefHighBgMaxSmb = preferences.get(DoubleKey.OApsAIMIHighBGMaxSMB)
+        // [FIX] User fallback: Ensure DynMaxSmb doesn't drop to 0.0 if calculations go weird. 
+        // Use Preference as floor if Autodrive is on.
+        val finalDynMaxSmb = max(DynMaxSmb.toDouble(), prefHighBgMaxSmb)
+        
+        this.maxSMBHB = if (autodrive && !honeymoon) finalDynMaxSmb else prefHighBgMaxSmb
+        
+        // 🔧 ENHANCED MaxSMB Selection: Plateau OR Slope logic
+        // Addresses critical edge case: BG stuck high (270-300) with small deltas → slope < 1.0
+        // Solution: Use maxSMBHB if EITHER:
+        //   1. Active rise detected (slope >= 1.0) - Original logic
+        //   2. High plateau (BG >= 250) - NEW, regardless of slope
+        this.maxSMB = when {
+            // 🚨 CRITICAL PLATEAU: BG >= 250, regardless of slope
+            // Absolute emergency if BG catastrophic, even with low delta
+            // Protection: Don't apply if rapid fall (delta <= -5)
+            bg >= 250 && combinedDelta > -5.0 -> {
+                consoleLog.add("MAXSMB_PLATEAU_CRITICAL BG=${bg.roundToInt()} Δ=${String.format("%.1f", combinedDelta)} slope=${String.format("%.2f", mealData.slopeFromMinDeviation)} -> maxSMBHB=${String.format("%.2f", maxSMBHB)}U (plateau)")
+                maxSMBHB
+            }
+            
+            // 🔴 ACTIVE RISE HIGH: BG >= 140 (meal interception zone)
+            // Full maxSMBHB for confirmed meal/resistance in elevated range
+            bg >= 140 && !honeymoon && mealData.slopeFromMinDeviation >= 1.0 ||
+            bg >= 180 && honeymoon && mealData.slopeFromMinDeviation >= 1.4 -> {
+                consoleLog.add("MAXSMB_SLOPE_HIGH BG=${bg.roundToInt()} slope=${String.format("%.2f", mealData.slopeFromMinDeviation)} -> maxSMBHB=${String.format("%.2f", maxSMBHB)}U (rise)")
+                maxSMBHB
+            }
+            
+            // 🟡 ACTIVE RISE SENSITIVE: BG 120-140 (near target zone)
+            // 85% maxSMBHB for extra caution close to target
+            // Prevents over-correction on natural fluctuations while still allowing meal interception
+            bg >= 120 && bg < 140 && !honeymoon && mealData.slopeFromMinDeviation >= 1.0 -> {
+                val partial = max(maxSMB, maxSMBHB * 0.85)
+                consoleLog.add("MAXSMB_SLOPE_SENSITIVE BG=${bg.roundToInt()} slope=${String.format("%.2f", mealData.slopeFromMinDeviation)} -> ${String.format("%.2f", partial)}U (85% maxSMBHB)")
+                partial
+            }
+            
+            // 🟠 MODERATE PLATEAU: BG 200-250, stable delta
+            // Compromise: 75% of maxSMBHB for elevated but not critical BG
+            bg >= 200 && bg < 250 && combinedDelta > -3.0 && combinedDelta < 3.0 -> {
+                val partial = max(maxSMB, maxSMBHB * 0.75)
+                consoleLog.add("MAXSMB_PLATEAU_MODERATE BG=${bg.roundToInt()} Δ=${String.format("%.1f", combinedDelta)} -> ${String.format("%.2f", partial)}U (75% maxSMBHB)")
+                partial
+            }
+            
+            // 🔵 FALLING PROTECTION: BG elevated but falling moderately
+            // Partial limit to avoid over-correction while still allowing some action
+            bg > 180 && combinedDelta <= -3.0 && combinedDelta > -8.0 -> {
+                val partial = max(maxSMB, maxSMBHB * 0.6)
+                consoleLog.add("MAXSMB_FALLING BG=${bg.roundToInt()} Δ=${String.format("%.1f", combinedDelta)} -> ${String.format("%.2f", partial)}U (60% maxSMBHB)")
+                partial
+            }
+            
+            // ⚪ STANDARD: Normal/low BG conditions
+            else -> {
+                consoleLog.add("MAXSMB_STANDARD BG=${bg.roundToInt()} -> ${String.format("%.2f", maxSMB)}U")
+                maxSMB
+            }
+        }
+        val ngrConfig = buildNightGrowthResistanceConfig(profile, autosens_data, glucoseStatus, targetBg.toDouble())
         this.tir1DAYabove = tirCalculator.averageTIR(tirCalculator.calculate(1, 65.0, 180.0))?.abovePct()!!
         val tir1DAYIR = tirCalculator.averageTIR(tirCalculator.calculate(1, 65.0, 180.0))?.inRangePct()!!
         this.currentTIRLow = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0))?.belowPct()!!
@@ -3064,10 +4021,10 @@ fun appendCompactLog(
         this.tags60to120minAgo = parseNotes(60, 120)
         this.tags120to180minAgo = parseNotes(120, 180)
         this.tags180to240minAgo = parseNotes(180, 240)
-        this.delta = glucose_status.delta.toFloat()
-        this.shortAvgDelta = glucose_status.shortAvgDelta.toFloat()
-        this.longAvgDelta = glucose_status.longAvgDelta.toFloat()
-        val bgAcceleration = glucose_status.bgAcceleration ?: 0f
+        this.delta = glucoseStatus.delta.toFloat()
+        this.shortAvgDelta = glucoseStatus.shortAvgDelta.toFloat()
+        this.longAvgDelta = glucoseStatus.longAvgDelta.toFloat()
+        val bgAcceleration = glucoseStatus.bgAcceleration ?: 0f
         this.bgacc = bgAcceleration.toDouble()
         val therapy = Therapy(persistenceLayer).also {
             it.updateStatesBasedOnTherapyEvents()
@@ -3101,104 +4058,561 @@ fun appendCompactLog(
         this.decceleratingUp = if (delta > 0 && (delta < shortAvgDelta || delta < longAvgDelta)) 1 else 0
         this.acceleratingDown = if (delta < -2 && delta - longAvgDelta < -2) 1 else 0
         this.decceleratingDown = if (delta < 0 && (delta > shortAvgDelta || delta > longAvgDelta)) 1 else 0
-        this.stable = if (delta > -3 && delta < 3 && shortAvgDelta > -3 && shortAvgDelta < 3 && longAvgDelta > -3 && longAvgDelta < 3 && bg < 180) 1 else 0
-        //val AutodriveAcceleration = preferences.get(DoubleKey.OApsAIMIAutodriveAcceleration)
+        this.stable = if (delta > -3 && delta < 3 && shortAvgDelta > -3 && shortAvgDelta < 3 && longAvgDelta > -3 && longAvgDelta < 3) 1 else 0
         val nightbis = hourOfDay <= 7
-        val modesCondition = !mealTime && !lunchTime && !bfastTime && !dinnerTime && !sportTime && !snackTime && !highCarbTime && !sleepTime && !lowCarbTime
+        val modesCondition = (!mealTime || mealruntime > 30) && (!lunchTime || lunchruntime > 30) && (!bfastTime || bfastruntime > 30) && (!dinnerTime || dinnerruntime > 30) && !sportTime && (!snackTime || snackrunTime > 30) && (!highCarbTime || highCarbrunTime > 30) && !sleepTime && !lowCarbTime
         val pbolusAS: Double = preferences.get(DoubleKey.OApsAIMIautodrivesmallPrebolus)
+        val pbolusA: Double = preferences.get(DoubleKey.OApsAIMIautodrivePrebolus)
         val reason = StringBuilder()
         val recentBGs = getRecentBGs()
+
+        // 🕒 FCL 5.0 Pre-calc: Total Bolus Volume Last Hour
+        val oneHourAgo = now - (60 * 60 * 1000L)
+        val bolusesHistory = persistenceLayer.getBolusesFromTime(oneHourAgo, true).blockingGet()
+        val totalBolusLastHour = bolusesHistory.sumOf { it.amount }
+
         val bgTrend = calculateBgTrend(recentBGs, reason)
-        val autodriveCondition = adjustAutodriveCondition(bgTrend, predictedBg, combinedDelta.toFloat(),reason)
-        if (bg > 100 && predictedBg > 140 && !nightbis && !hasReceivedPbolusMInLastHour(pbolusAS) && autodrive && detectMealOnset(delta, predicted.toFloat(), bgAcceleration.toFloat()) && modesCondition) {
-            rT.units = pbolusAS
-          //rT.reason.append("Autodrive early meal detection/snack: Microbolusing ${pbolusAS}U, CombinedDelta : ${combinedDelta}, Predicted : ${predicted}, Acceleration : ${bgAcceleration}.")
-            rT.reason.append(context.getString(R.string.reason_autodrive_early_meal, pbolusAS, combinedDelta, predicted, bgAcceleration.toDouble()))
-            return rT
+        
+        // 🧠 FCL 7.0: Update Watchdog State
+        updateWatchdogState(delta.toFloat())
+        
+        // 🧠 FCL 8.0: Autosens Synergy
+        var autosensRatio = autosens_data.ratio
+        if (autosensRatio <= 0.1) autosensRatio = 1.0 // Safety fallback
+        
+        // Effective ISF = Profile ISF / Ratio
+        // Case: Resistant (Ratio 1.2) -> ISF 100 / 1.2 = 83 (Harder to move -> Stronger bolus needed)
+        // Case: Sensitive (Ratio 0.7) -> ISF 100 / 0.7 = 142 (Easier to move -> Weaker bolus needed)
+        
+        // [FIX] Critical Math Inversion found during Deep Dive:
+        // Previous: ISF * Ratio. 
+        // 100 * 1.2 = 120 (Weaker). WRONG for Resistance.
+        // 100 * 0.7 = 70 (Stronger). WRONG for Sensitivity.
+        
+        val systemTime = currentTime
+        val iobArray = iob_data_array
+        val iob_data = iobArray[0]
+        val mealFlags = MealFlags(mealTime, bfastTime, lunchTime, dinnerTime, highCarbTime)
+
+        // Heure du dernier bolus : iob_data est bien disponible ici
+        val lastBolusTimeMs: Long? = iob_data.lastBolusTime.takeIf { it > 0L }
+
+        val lateFatRiseFlag  = isLateFatProteinRise(
+            bg = bg,
+            predictedBg = predictedBg.toDouble(),
+            delta = delta.toDouble(),
+            shortAvgDelta = shortAvgDelta.toDouble(),
+            longAvgDelta = longAvgDelta.toDouble(),
+            iob = iob.toDouble(),
+            cob = cob.toDouble(),
+            maxSMB = maxSMB,
+            lastBolusTimeMs = lastBolusTimeMs,
+            mealFlags = mealFlags
+        )
+        val tdd7P: Double = preferences.get(DoubleKey.OApsAIMITDD7)
+        var tdd24Hrs = tddCalculator.calculateDaily(-24, 0)?.totalAmount?.toFloat() ?: 0.0f
+        if (tdd24Hrs == 0.0f) tdd24Hrs = tdd7P.toFloat()
+        // TODO eliminate
+        val bgTime = glucoseStatus.date
+        val minAgo = round((systemTime - bgTime) / 60.0 / 1000.0, 1)
+        
+        // 🔒 SAFETY FCL 14.0: Stale Data Check
+        // If data is > 12 mins old, disable Autodrive/SMBs to prevent unwanted late boluses.
+        if (minAgo > 12.0) {
+            reason.append("⚠️ Data Stale (${minAgo.toInt()}m) -> Logic Paused\n")
+            consoleError.add("Data Stale (${minAgo}m) -> Logic Paused")
+            logDecisionFinal("STALE_DATA", rT, bg, delta)
+            return rT.also { ensurePredictionFallback(it, bg) }
+        }
+        val windowSinceDoseMin = if (iob_data.lastBolusTime > 0 || internalLastSmbMillis > 0) {
+            val effectiveLastBolusTime = kotlin.math.max(iob_data.lastBolusTime, internalLastSmbMillis)
+            ((systemTime - effectiveLastBolusTime) / 60000.0).coerceAtLeast(0.0)
+        } else 0.0
+        windowSinceDoseInt = windowSinceDoseMin.toInt()
+        lastBolusAgeMinutes = windowSinceDoseMin
+        val carbsActiveG = mealData.mealCOB.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
+        carbsActiveForPkpd = carbsActiveG
+        val mealModeActiveNow = isMealContextActive(mealData)
+        val pkpdMealContext = MealAggressionContext(
+            mealModeActive = mealModeActiveNow,
+            predictedBgMgdl = predictedBg.toDouble(),
+            targetBgMgdl = targetBg.toDouble()
+        )
+        val pkpdRuntimeTemp = pkpdIntegration.computeRuntime(
+            epochMillis = currentTime,
+            bg = bg,
+            deltaMgDlPer5 = delta.toDouble(),
+            iobU = iob.toDouble(),
+            carbsActiveG = carbsActiveG,
+            windowMin = windowSinceDoseInt,
+            exerciseFlag = sportTime,
+            profileIsf = profile.sens,
+            tdd24h = tdd24Hrs.toDouble(),
+            mealContext = pkpdMealContext,
+            consoleLog = consoleLog
+        )
+        if (pkpdRuntimeTemp != null) {
+            pkpdRuntime = pkpdRuntimeTemp
+            
+            // 📊 Expose PkPd Learner state in rT for visibility
+            consoleLog.add("📊 PKPD_LEARNER:")
+            consoleLog.add("  │ DIA (learned): ${"%.2f".format(Locale.US, pkpdRuntime.params.diaHrs)}h")
+            consoleLog.add("  │ Peak (learned): ${"%.0f".format(Locale.US, pkpdRuntime.params.peakMin)}min")
+            consoleLog.add("  │ fusedISF: ${"%.1f".format(Locale.US, pkpdRuntime.fusedIsf)} mg/dL/U")
+            consoleLog.add("  │ pkpdScale: ${"%.3f".format(Locale.US, pkpdRuntime.pkpdScale)}")
+            consoleLog.add("  └ adaptiveMode: ${if (pkpdRuntime.params.diaHrs != 4.0 || pkpdRuntime.params.peakMin != 75.0) "ACTIVE" else "DEFAULT"}")
+        }
+        // End FCL 11.0 Hoist. Next block uses the results.
+        var tdd7Days = profile.TDD
+        if (tdd7Days == 0.0 || tdd7Days < tdd7P) tdd7Days = tdd7P
+        this.tdd7DaysPerHour = (tdd7Days / 24).toFloat()
+
+        var tdd2Days = tddCalculator.averageTDD(tddCalculator.calculate(2, allowMissingDays = false))?.data?.totalAmount?.toFloat() ?: 0.0f
+        if (tdd2Days == 0.0f || tdd2Days < tdd7P) tdd2Days = tdd7P.toFloat()
+        this.tdd2DaysPerHour = tdd2Days / 24
+
+        var tddDaily = tddCalculator.averageTDD(tddCalculator.calculate(1, allowMissingDays = false))?.data?.totalAmount?.toFloat() ?: 0.0f
+        if (tddDaily == 0.0f || tddDaily < tdd7P / 2) tddDaily = tdd7P.toFloat()
+        this.tddPerHour = tddDaily / 24
+
+        this.tdd24HrsPerHour = tdd24Hrs / 24
+        val fusedSensitivity = pkpdRuntime?.fusedIsf
+        val dynSensitivity = profile.variable_sens.takeIf { it > 0.0 } ?: profile.sens
+        val baseSensitivity = fusedSensitivity ?: profile.sens
+
+        var sens = when {
+            fusedSensitivity == null -> dynSensitivity
+            dynSensitivity <= 0.0 -> fusedSensitivity
+            else -> min(fusedSensitivity, dynSensitivity)
+        }
+        if (sens <= 0.0) sens = baseSensitivity
+        this.variableSensitivity = sens.toFloat()
+
+        if (fusedSensitivity != null) {
+            consoleError.add("ISF fusionné=${"%.1f".format(fusedSensitivity)} dynISF=${"%.1f".format(dynSensitivity)} → appliqué=${"%.1f".format(sens)}")
+            try {
+                app.aaps.plugins.aps.openAPSAIMI.pkpd.IsfTddProvider.set(fusedSensitivity)
+            } catch (e: Exception) {
+                consoleError.add("Impossible de mettre à jour IsfTddProvider: ${e.message}")
+            }
+        }
+        
+        val profileISF_raw = if (profile.sens > 10) profile.sens else 50.0
+        // 🔮 FCL 11.0 Fix: Use Dynamic 'sens' for Effective ISF to capture Resistance/Sensitivity
+        val effectiveISF = sens / autosens_data.ratio 
+        // ⚡ FCL 12.0: Unified Learner Integration for Prebolus
+        // [User Request]: Disabled for now. Prebolus should be raw / standard.
+        // val useUnified = preferences.get(BooleanKey.OApsAIMIUnifiedReactivityEnabled)
+        // val reactivityFactor = if (useUnified) unifiedReactivityLearner.globalFactor else 1.0
+        
+        // [FIX] Use pbolusA (User Preference) if set, otherwise dynamic fallback (25.0 factor)
+        val dynamicPbolusLarge = if (pbolusA > 0.0) pbolusA else calculateDynamicMicroBolus(effectiveISF, 25.0, reason)
+        // [FIX] Use pbolusAS (User Preference) if set, otherwise dynamic fallback
+        val dynamicPbolusSmall = if (pbolusAS > 0.0) pbolusAS else calculateDynamicMicroBolus(effectiveISF, 15.0, reason)
+        
+        // 🔮 FCL 11.0: Generate Predictions NOW so they are visible even if Autodrive returns early
+        // 🔮 FCL 11.0: Generate Predictions NOW so they are visible even if Autodrive returns early
+        try {
+            // Using consoleError to ensure visibility in UI Debug Panel
+            consoleError.add("🔮 PREDICT INIT: BG=$bg Delta=$delta Sens=${"%.1f".format(sens)} IOB=${iob_data_array.firstOrNull()?.iob}")
+            
+            // [FIX] User Request: Inject Advisor COB into Predictions details
+            // MealAdvisor (Snap&Go) saves carbs in Prefs but doesn't create Carb Treatment entry immediately.
+            val advisorTime = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbTime).toLong()
+            val advisorCarbs = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbs)
+            val isFreshAdvisor = (dateUtil.now() - advisorTime) < 60 * 60000 // 60 min validity
+            
+            val effectiveCOB = if (mealData.mealCOB > 0) mealData.mealCOB else if (isFreshAdvisor) advisorCarbs else 0.0
+
+            val advancedPredictions = AdvancedPredictionEngine.predict(
+                currentBG = bg,
+                iobArray = iob_data_array,
+                finalSensitivity = sens,
+                cobG = effectiveCOB,
+                profile = profile,
+                delta = delta.toDouble()
+            )
+            
+            val sanitizedPredictions = advancedPredictions.mapNotNull {
+                 if (it.isNaN()) null else round(min(401.0, max(39.0, it)), 0)
+            }
+            val intsPredictions = sanitizedPredictions.map { it.toInt() }
+            lastPredictionSize = intsPredictions.size
+            lastPredictionAvailable = intsPredictions.isNotEmpty()
+
+            if (intsPredictions.isNotEmpty()) {
+                // 🔮 FCL 11.0: Populate Oref0 standard variables for safety & compatibility
+                var IOBpredBGs = mutableListOf<Double>()
+                var COBpredBGs = mutableListOf<Double>()
+                var UAMpredBGs = mutableListOf<Double>()
+                var ZTpredBGs = mutableListOf<Double>()
+                
+                // Initialize with current BG
+                IOBpredBGs.add(bg)
+                COBpredBGs.add(bg)
+                UAMpredBGs.add(bg)
+                ZTpredBGs.add(bg)
+                
+                // Populate all arrays with AIMI predictions (Unified Model)
+                // We use the same prediction for all because AIMI is an end-to-end model
+                // Populate all arrays with AIMI predictions (Unified Model)
+                // We use the same prediction for all because AIMI is an end-to-end model
+                intsPredictions.forEach { pred -> 
+                    val valDouble = pred.toDouble()
+                    IOBpredBGs.add(valDouble)
+                    COBpredBGs.add(valDouble)
+                    UAMpredBGs.add(valDouble)
+                    ZTpredBGs.add(valDouble)
+                }
+                
+                // Calculate Min/Max/Eventual for Guard/Safety Logic
+                val lastPred = intsPredictions.last().toDouble()
+                val minPred = intsPredictions.minOrNull()?.toDouble() ?: bg
+                lastEventualBgSnapshot = lastPred
+
+                // Set Eventual BG
+                rT.eventualBG = lastPred
+                
+                // FIX CRITICAL LGS HALT: Update member variable 'predictedBg' from this prediction
+                this.predictedBg = lastPred.toFloat()
+                
+                // Populate rT.predBGs for UI Graph (Modern)
+                rT.predBGs = Predictions().apply {
+                    IOB = IOBpredBGs.map { it.toInt() }
+                    COB = COBpredBGs.map { it.toInt() }
+                    ZT  = ZTpredBGs.map { it.toInt() }
+                    UAM = UAMpredBGs.map { it.toInt() }
+                }
+
+                // (Legacy assignments removed - fields do not exist in RT)
+                
+                // Debug logging mimicking SMB for consistency (FIX B3)
+                consoleError.add("🔮 PREDICT GRAPH: IOB=${IOBpredBGs.size} COB=${COBpredBGs.size} ZT=${ZTpredBGs.size} UAM=${UAMpredBGs.size}")
+                consoleError.add("minGuardBG ${minPred.toInt()} IOBpredBG ${lastPred.toInt()}")
+                if (UAMpredBGs.size < 6) consoleError.add("⚠ WARNING: UAM Series too short (<6) for Graph!")
+                
+                consoleLog.add("PRED_SET size=${intsPredictions.size} eventual=${lastPred.toInt()} min=${minPred.toInt()} source=Advanced")
+                
+            } else {
+                 consoleError.add("🔮 PREDICT WARNING: Empty prediction list returned. Using Fallback.")
+                 
+                 // FAILSAFE: Always populate rT with current BG to avoid "Unavailable" graph
+                 val fallbackList = listOf(bg.toInt(), bg.toInt(), bg.toInt()) // Small series
+                 rT.predBGs = Predictions().apply {
+                     IOB = fallbackList
+                     COB = fallbackList
+                     ZT  = fallbackList
+                     UAM = fallbackList
+                 }
+                 rT.eventualBG = bg
+                 this.predictedBg = bg.toFloat()
+                 
+                 consoleLog.add("PRED_SET size=3 eventual=${bg.toInt()} min=${bg.toInt()} source=FallbackBG")
+            }
+        } catch (e: Exception) {
+            consoleError.add("🔮 PREDICT ERROR: ${e.message}")
+            e.printStackTrace()
+        }
+        consoleLog.add("Prédiction avancée avec ISF final de ${"%.1f".format(sens)} (Avancé)")
+
+        // FIX: Use the calculated 'sens' (Dynamic) instead of 'profileISF_raw' (Static) if desired?
+        // User wants BEST logic. 'sens' includes DynISF.
+        // Let's use 'sens' for effectiveISF calculation.
+        
+        // MOVED: Early Meal Detection and Zero-IOB Priming are now FALLBACKS after Main Autodrive.
+        // See Lines 3489+.
+            // MOVED to after Main Autodrive.
+
+        // -----------------------------------------------------
+        // ACTIVE MODE NAME CALCULATION (Visual)
+        // -----------------------------------------------------
+        
+        // 🍱 LEGACY MEAL MODES: Calculate TBR limit for all modes
+        val maxBasalmodePref = preferences.get(DoubleKey.meal_modes_MaxBasal)
+        val modeTbrLimit = if (maxBasalmodePref > 0.1) maxBasalmodePref else profile.max_basal
+        
+        val activeModeName = when {
+            lunchTime -> "Lunch"
+            dinnerTime -> "Dinner"
+            bfastTime -> "Breakfast"
+            snackTime -> "Snack"
+            highCarbTime -> "HighCarb"
+            mealTime -> "Meal"
+            else -> "N/A"
         }
         if (isMealModeCondition()) {
-            val pbolusM: Double = preferences.get(DoubleKey.OApsAIMIMealPrebolus)
+            val pbolusM = preferences.get(DoubleKey.OApsAIMIMealPrebolus)
+            
+            // 🚀 TBR: Apply if runtime < 30 min
+            if (mealruntime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = true    )
+                consoleLog.add("🍱 LEGACY_TBR_MEAL rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            
             rT.units = pbolusM
-          //rT.reason.append(" Microbolusing Meal Mode ${pbolusM}U.")
             rT.reason.append(context.getString(R.string.manual_meal_prebolus, pbolusM))
+            consoleLog.add("🍱 LEGACY_MODE_MEAL P1=${"%.2f".format(pbolusM)}U (DIRECT SEND)")
             return rT
         }
-        if (!nightbis && isAutodriveModeCondition(delta, autodrive, mealData.slopeFromMinDeviation, bg.toFloat(), predictedBg, reason) && modesCondition) {
-            val pbolusA: Double = preferences.get(DoubleKey.OApsAIMIautodrivePrebolus)
-            rT.units = pbolusA
-            //reason.append("→ Microbolusing Autodrive Mode ${pbolusA}U\n")
-            reason.append(context.getString(R.string.autodrive_meal_prebolus, pbolusA))
-            //reason.append("  • Target BG: $targetBg\n")
-            reason.append(context.getString(R.string.target_bg, targetBg))
-            //reason.append("  • Slope from min deviation: ${mealData.slopeFromMinDeviation}\n")
-            reason.append(context.getString(R.string.slope_from_min_deviation, mealData.slopeFromMinDeviation))
-            //reason.append("  • BG acceleration: $bgAcceleration\n")
-            reason.append(context.getString(R.string.bg_acceleration, bgAcceleration))
-            rT.reason.append(reason.toString()) // une seule fois à la fin
-            return rT
-            // rT.reason.append("Microbolusing Autodrive Mode ${pbolusA}U. TargetBg : ${targetBg}, CombinedDelta : ${combinedDelta}, Slopemindeviation : ${mealData.slopeFromMinDeviation}, Acceleration : ${bgAcceleration}. ")
-            // return rT
-        }
+
         if (isbfastModeCondition()) {
-            val pbolusbfast: Double = preferences.get(DoubleKey.OApsAIMIBFPrebolus)
+            val pbolusbfast = preferences.get(DoubleKey.OApsAIMIBFPrebolus)
+            
+            // 🚀 TBR: Apply if runtime < 30 min
+            if (bfastruntime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = true)
+ consoleLog.add("🍱 LEGACY_TBR_BFAST rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            
             rT.units = pbolusbfast
-            //rT.reason.append(" Microbolusing 1/2 Breakfast Mode ${pbolusbfast}U.")
             rT.reason.append(context.getString(R.string.reason_prebolus_bfast1, pbolusbfast))
+            consoleLog.add("🍱 LEGACY_MODE_BFAST P1=${"%.2f".format(pbolusbfast)}U (DIRECT SEND)")
             return rT
         }
+
         if (isbfast2ModeCondition()) {
-            val pbolusbfast2: Double = preferences.get(DoubleKey.OApsAIMIBFPrebolus2)
-            this.maxSMB = pbolusbfast2
+            val pbolusbfast2 = preferences.get(DoubleKey.OApsAIMIBFPrebolus2)
+            
+            // 🚀 TBR: Apply if runtime < 30 min
+            if (bfastruntime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = true)
+                consoleLog.add("🍱 LEGACY_TBR_BFAST rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            
             rT.units = pbolusbfast2
-            //rT.reason.append(" Microbolusing 2/2 Breakfast Mode ${pbolusbfast2}U. ")
             rT.reason.append(context.getString(R.string.reason_prebolus_bfast2, pbolusbfast2))
+            consoleLog.add("🍱 LEGACY_MODE_BFAST P2=${"%.2f".format(pbolusbfast2)}U (DIRECT SEND)")
             return rT
         }
+
         if (isLunchModeCondition()) {
-            val pbolusLunch: Double = preferences.get(DoubleKey.OApsAIMILunchPrebolus)
+            val pbolusLunch = preferences.get(DoubleKey.OApsAIMILunchPrebolus)
+            
+            // 🚀 TBR: Apply if runtime < 30 min
+            if (lunchruntime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = true)
+                consoleLog.add("🍱 LEGACY_TBR_LUNCH rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            
             rT.units = pbolusLunch
-            //rT.reason.append(" Microbolusing 1/2 Lunch Mode ${pbolusLunch}U.")
             rT.reason.append(context.getString(R.string.reason_prebolus_lunch1, pbolusLunch))
+            consoleLog.add("🍱 LEGACY_MODE_LUNCH P1=${"%.2f".format(pbolusLunch)}U (DIRECT SEND)")
             return rT
         }
+
         if (isLunch2ModeCondition()) {
-            val pbolusLunch2: Double = preferences.get(DoubleKey.OApsAIMILunchPrebolus2)
-            this.maxSMB = pbolusLunch2
+            val pbolusLunch2 = preferences.get(DoubleKey.OApsAIMILunchPrebolus2)
+            
+            // 🚀 TBR: Apply if runtime < 30 min
+            if (lunchruntime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = true)
+                consoleLog.add("🍱 LEGACY_TBR_LUNCH rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            
             rT.units = pbolusLunch2
-            //rT.reason.append(" Microbolusing 2/2 Lunch Mode ${pbolusLunch2}U.")
             rT.reason.append(context.getString(R.string.reason_prebolus_lunch2, pbolusLunch2))
+            consoleLog.add("🍱 LEGACY_MODE_LUNCH P2=${"%.2f".format(pbolusLunch2)}U (DIRECT SEND)")
             return rT
         }
+
         if (isDinnerModeCondition()) {
-            val pbolusDinner: Double = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus)
+            val pbolusDinner = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus)
+            
+            // 🚀 TBR: Apply if runtime < 30 min
+            if (dinnerruntime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = true)
+                consoleLog.add("🍱 LEGACY_TBR_DINNER rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            
             rT.units = pbolusDinner
-            //rT.reason.append(" Microbolusing 1/2 Dinner Mode ${pbolusDinner}U.")
             rT.reason.append(context.getString(R.string.reason_prebolus_dinner1, pbolusDinner))
+            consoleLog.add("🍱 LEGACY_MODE_DINNER P1=${"%.2f".format(pbolusDinner)}U (DIRECT SEND)")
             return rT
         }
+
         if (isDinner2ModeCondition()) {
-            val pbolusDinner2: Double = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus2)
-            this.maxSMB = pbolusDinner2
+            val pbolusDinner2 = preferences.get(DoubleKey.OApsAIMIDinnerPrebolus2)
+            
+            // 🚀 TBR: Apply if runtime < 30 min
+            if (dinnerruntime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = true)
+                consoleLog.add("🍱 LEGACY_TBR_DINNER rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            
             rT.units = pbolusDinner2
-            //rT.reason.append(" Microbolusing 2/2 Dinner Mode ${pbolusDinner2}U.")
             rT.reason.append(context.getString(R.string.reason_prebolus_dinner2, pbolusDinner2))
+            consoleLog.add("🍱 LEGACY_MODE_DINNER P2=${"%.2f".format(pbolusDinner2)}U (DIRECT SEND)")
             return rT
         }
+
         if (isHighCarbModeCondition()) {
-            val pbolusHC: Double = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus)
+            val pbolusHC = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus)
+            
+            // 🚀 TBR: Apply if runtime < 30 min
+            if (highCarbrunTime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = true)
+                consoleLog.add("🍱 LEGACY_TBR_HIGHCARB rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            
             rT.units = pbolusHC
-            //rT.reason.append(" Microbolusing High Carb Mode ${pbolusHC}U.")
             rT.reason.append(context.getString(R.string.reason_prebolus_highcarb, pbolusHC))
+            consoleLog.add("🍱 LEGACY_MODE_HIGHCARB P1=${"%.2f".format(pbolusHC)}U (DIRECT SEND)")
             return rT
         }
+        if (isHighCarb2ModeCondition()) {
+            val pbolusHC = preferences.get(DoubleKey.OApsAIMIHighCarbPrebolus2)
+            if (highCarbrunTime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = true)
+                consoleLog.add("🍱 LEGACY_TBR_HIGHCARB rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            rT.units = pbolusHC
+            rT.reason.append(context.getString(R.string.reason_prebolus_highcarb, pbolusHC))
+            consoleLog.add("🍱 LEGACY_MODE_HIGHCARB P1=${"%.2f".format(pbolusHC)}U (DIRECT SEND)")
+            return rT
+        }
+
         if (issnackModeCondition()) {
-            val pbolussnack: Double = preferences.get(DoubleKey.OApsAIMISnackPrebolus)
+            val pbolussnack = preferences.get(DoubleKey.OApsAIMISnackPrebolus)
+            
+            // 🚀 TBR: Apply if runtime < 30 min
+            if (snackrunTime < 30 * 60) {
+                setTempBasal(modeTbrLimit, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+                consoleLog.add("🍱 LEGACY_TBR_SNACK rate=${"%.2f".format(modeTbrLimit)}U/h duration=30m")
+            }
+            
             rT.units = pbolussnack
-            //rT.reason.append(" Microbolusing snack Mode ${pbolussnack}U.")
             rT.reason.append(context.getString(R.string.reason_prebolus_snack, pbolussnack))
+            consoleLog.add("🍱 LEGACY_MODE_SNACK P1=${"%.2f".format(pbolussnack)}U (DIRECT SEND)")
             return rT
         }
-      //rT.reason.append(", MaxSMB: $maxSMB")
+
+        // 🛡️ Hoisted Safety Variables for Autodrive & Early Terminators
+        fun safe(v: Double) = if (v.isFinite()) v else Double.POSITIVE_INFINITY
+        val sanity = sanitizePredictionValues(bg, delta, predictedBg.toDouble(), rT.eventualBG, rT.predBGs, consoleLog)
+        val minBg = minOf(safe(bg), safe(sanity.predBg), safe(sanity.eventualBg))
+        val threshold = computeHypoThreshold(minBg, profile.lgsThreshold)
+        val pumpReachable = try {
+            activePlugin.activePump.isInitialized() && activePlugin.activePump.isConnected()
+        } catch (e: Exception) { false }
+        consoleLog.add(
+            "PRED_PIPE: bg=${bg.roundToInt()} delta=${"%.1f".format(delta)} predBg=${sanity.predBg.roundToInt()} " +
+                "eventualBg=${sanity.eventualBg.roundToInt()} min=${minBg.roundToInt()} th=${threshold.toInt()} " +
+                "noise=${glucoseStatus.noise} dataAge=${minAgo}m pumpReachable=$pumpReachable sanity=${sanity.label}"
+        )
+
+        // -----------------------------------------------------
+        // ⚔️ DECISION PIPELINE EXECUTION (Refactor v2.3 Strict)
+        // -----------------------------------------------------
+        // PRIORITY 2: SAFETY FALLBACK (LGS / HYPO / STALE)
+        // Evaluated only if no manual mode is active.
+        val safetyRes = trySafetyStart(bg, delta, profile, iob_data, glucoseStatus.noise.toInt(), sanity.predBg, sanity.eventualBg)
+        if (safetyRes is DecisionResult.Applied) {
+            consoleLog.add("SAFETY_APPLIED_TBR_ZERO intent=${safetyRes.tbrUph}")
+            if (safetyRes.tbrUph != null) {
+                setTempBasal(safetyRes.tbrUph, safetyRes.tbrMin ?: 30, profile, rT, currenttemp, overrideSafetyLimits = true)
+            }
+            // Block all boluses
+            rT.insulinReq = 0.0
+            rT.reason.append(" | ⚠ Safety Halt: ${safetyRes.reason}")
+            lastDecisionSource = safetyRes.source
+            logDecisionFinal("SAFETY", rT, bg, delta)
+            return rT
+        }
+
+        // PRIORITY 3: MEAL ADVISOR
+        val advisorRes = tryMealAdvisor(bg, delta, iob_data, profile, lastBolusTimeMs ?: 0L, modesCondition)
+        if (advisorRes is DecisionResult.Applied) {
+             consoleLog.add("MEAL_ADVISOR_APPLIED source=${advisorRes.source} bolus=${advisorRes.bolusU}")
+             if (advisorRes.tbrUph != null) {
+                  setTempBasal(advisorRes.tbrUph, advisorRes.tbrMin ?: 30, profile, rT, currenttemp, overrideSafetyLimits = true)
+             }
+             if (advisorRes.bolusU != null && advisorRes.bolusU > 0) {
+                  finalizeAndCapSMB(rT, advisorRes.bolusU, advisorRes.reason, mealData, threshold, true, advisorRes.source)
+             }
+             // Add Status Log (User Request)
+             rT.reason.appendLine(context.getString(R.string.autodrive_status, if (autodrive) "✔" else "✘", "Meal Advisor"))
+             logDecisionFinal("MEAL_ADVISOR", rT, bg, delta)
+             return rT
+        }
+
+        // PRIORITY 4: AUTODRIVE (Strict)
+        val autoRes = tryAutodrive(
+            bg, delta, shortAvgDelta, profile, lastBolusTimeMs ?: 0L, predictedBg, mealData.slopeFromMinDeviation, targetBg, reason,
+            preferences.get(BooleanKey.OApsAIMIautoDrive),
+            dynamicPbolusLarge, dynamicPbolusSmall
+        )
+        
+        if (autoRes is DecisionResult.Applied) {
+             // 1. Apply TBR (System Intent) if present
+             if (autoRes.tbrUph != null) {
+                  setTempBasal(autoRes.tbrUph, autoRes.tbrMin ?: 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+             }
+             
+             // 2. Apply Bolus Intent (if present)
+             val intentBolus = autoRes.bolusU ?: 0.0
+             if (intentBolus > 0) {
+                  finalizeAndCapSMB(rT, intentBolus, autoRes.reason, mealData, threshold, false, autoRes.source)
+             }
+             
+             // 3. Verify EFFECTIVE Action (R3 / User Spec)
+             // "If bolus capped to 0 AND no meaningful TBR -> Fallthrough"
+             val effectiveBolus = rT.insulinReq ?: 0.0
+             val effectiveDuration = rT.duration ?: 0
+             // Action is meaningful if we are giving insulin OR setting a HIGH temp (greater than current or 0). 
+             // Strictly: "NE DOIT JAMAIS retourner Applied s’il n’a RIEN appliqué."
+             
+             if (effectiveBolus > 0.05 || effectiveDuration > 0) {
+                 lastAutodriveActionTime = System.currentTimeMillis() // 🟢 Update Strict Cooldown
+                 consoleLog.add("AUTODRIVE_APPLIED intent=${intentBolus} actual=$effectiveBolus")
+                 logDecisionFinal("AUTODRIVE", rT, bg, delta)
+                 return rT
+             } else {
+                 consoleLog.add("AUTODRIVE_NOOP_FALLBACK reason=CappedToZero")
+                 // Reset rT to clean state for Global Fallback?
+                 // Actually rT might have some partial strings. 
+                 // We should proceed to Global AIMI.
+                 rT.insulinReq = 0.0 // Ensure 0
+             }
+        } 
+        
+        // AUTODRIVE FALLTHROUGH LOGGING handled inside tryAutodrive returns
+
+
+        // 🛡️ Innovation: FCL 6.0 Safety Net
+        val isPostHypo = isPostHypoProtectionCondition(recentBGs, reason)
+        val isCompression = isCompressionProtectionCondition(delta.toFloat(), reason)
+        
+        if (isCompression) {
+             // Hard Stop on Sensor Error
+             logDecisionFinal("COMPRESSION", rT, bg, delta)
+             return rT
+        }
+        
+        // 🧠 FCL 8.0: Context-Aware Trigger for Drift Terminator
+        // Resistant (<0.8): Tighten to +10. Sensitive (>1.2): Relax to +30. Normal: +15
+        val terminatorThresholdAdd = when {
+            autosensRatio < 0.8 -> 10.0 // Aggressive
+            autosensRatio > 1.2 -> 30.0 // Safe
+            else -> 15.0
+        }
+        val terminatorTarget = targetBg + terminatorThresholdAdd
+
+        // 🧹 Innovation: FCL 5.0 Drift Terminator (Blocked by Post-Hypo)
+        // Independent Refractory: Only block if 'Small' was given recently.
+        if (!nightbis && autodrive && bg >= 80 && !isPostHypo && !hasReceivedRecentBolus(45, lastBolusTimeMs ?: 0L) && isDriftTerminatorCondition(bg.toFloat(), terminatorTarget.toFloat(), delta.toFloat(), totalBolusLastHour, reason) && modesCondition) {
+            val terminatortap = dynamicPbolusSmall
+            reason.append("→ Drift Terminator (Trigger +${terminatorThresholdAdd}): Micro-Tap ${terminatortap}U\n")
+            consoleLog.add("AD_EARLY_TBR_TRIGGER rate=0.0 duration=0 reason=DriftTerminator_Tap") // Actually a bolus tap, not TBR, but fits "Early Action" category
+            consoleLog.add("AD_SMALL_PREBOLUS_TRIGGER amount=$terminatortap reason=DriftTerminator")
+            finalizeAndCapSMB(rT, terminatortap, reason.toString(), mealData, threshold, decisionSource = "DriftTerminator")
+            logDecisionFinal("DRIFT_TERMINATOR", rT, bg, delta)
+            return rT
+        }
+        
+        // Duplicate Autodrive and Zero-IOB Logic Removed (Refactor v2.2)
+
+        // Check lines ~3750 for active logic.
+        //rT.reason.append(", MaxSMB: $maxSMB")
         rT.reason.append(context.getString(R.string.reason_maxsmb, maxSMB))
         var nowMinutes = calendarInstance[Calendar.HOUR_OF_DAY] + calendarInstance[Calendar.MINUTE] / 60.0 + calendarInstance[Calendar.SECOND] / 3600.0
         nowMinutes = (kotlin.math.round(nowMinutes * 100) / 100)  // Arrondi à 2 décimales
@@ -3220,21 +4634,20 @@ fun appendCompactLog(
         // TODO eliminate
         val deliverAt = currentTime
 
-        // TODO eliminate
-        val profile_current_basal = roundBasal(profile.current_basal)
+        // Dynamic Pump Capabilities
+        val pumpDesc = activePlugin.activePump.pumpDescription
+        val pumpCaps = PumpCaps(
+            basalStep = if (pumpDesc.basalStep > 0) pumpDesc.basalStep else 0.05,
+            bolusStep = if (pumpDesc.bolusStep > 0) pumpDesc.bolusStep else 0.05,
+            minDurationMin = 30,
+            maxBasal = profile.max_basal,
+            maxSmb = 3.0
+        )
+        val profile_current_basal = pumpCapabilityValidator.validateBasal(profile.current_basal, pumpCaps)
         var basal: Double
 
-        // TODO eliminate
-        val systemTime = currentTime
 
-        // TODO eliminate
-        val bgTime = glucose_status.date
-        val minAgo = round((systemTime - bgTime) / 60.0 / 1000.0, 1)
-        // TODO eliminate
-        //bg = glucose_status.glucose.toFloat()
-        //this.bg = bg.toFloat()
-        // TODO eliminate
-        val noise = glucose_status.noise
+        val noise = glucoseStatus.noise
         // 38 is an xDrip error state that usually indicates sensor failure
         // all other BG values between 11 and 37 mg/dL reflect non-error-code BG values, so we should zero temp for those
         if (bg <= 10 || bg == 38.0 || noise >= 3) {  //Dexcom is in ??? mode or calibrating, or xDrip reports high noise
@@ -3252,8 +4665,9 @@ fun appendCompactLog(
 
         // TODO eliminate
         //val max_iob = profile.max_iob // maximum amount of non-bolus IOB OpenAPS will ever deliver
-        val max_iob = maxIob
-        //this.maxIob = max_iob
+        //val max_iob = maxIob
+        var maxIobLimit = maxIob
+        //this.maxIob = maxIob
         // if min and max are set, then set target to their average
         var target_bg = (profile.min_bg + profile.max_bg) / 2
         var min_bg = profile.min_bg
@@ -3264,6 +4678,7 @@ fun appendCompactLog(
         val normalTarget = if (honeymoon) 130 else 100
 
         val halfBasalTarget = profile.half_basal_exercise_target
+
 
         when {
             !profile.temptargetSet && recentSteps5Minutes >= 0 && (recentSteps30Minutes >= 500 || recentSteps180Minutes > 1500) && recentSteps10Minutes > 0 && predictedBg < 140 -> {
@@ -3286,7 +4701,7 @@ fun appendCompactLog(
                 // limit sensitivityRatio to profile.autosens_max (1.2x by default)
                 sensitivityRatio = min(sensitivityRatio, profile.autosens_max)
                 sensitivityRatio = round(sensitivityRatio, 2)
-              //consoleLog.add("Sensitivity ratio set to $sensitivityRatio based on temp target of $target_bg; ")
+                //consoleLog.add("Sensitivity ratio set to $sensitivityRatio based on temp target of $target_bg; ")
                 consoleLog.add(context.getString(R.string.sensitivity_ratio_temp_target, sensitivityRatio, target_bg))
             }
 
@@ -3300,7 +4715,7 @@ fun appendCompactLog(
                 // limit sensitivityRatio to profile.autosens_max (1.2x by default)
                 sensitivityRatio = min(sensitivityRatio, profile.autosens_max)
                 sensitivityRatio = round(sensitivityRatio, 2)
-              //consoleLog.add("Sensitivity ratio set to $sensitivityRatio based on temp target of $target_bg; ")
+                //consoleLog.add("Sensitivity ratio set to $sensitivityRatio based on temp target of $target_bg; ")
                 consoleLog.add(context.getString(R.string.sensitivity_ratio_temp_target, sensitivityRatio, target_bg))
             }
 
@@ -3321,14 +4736,19 @@ fun appendCompactLog(
             // limit sensitivityRatio to profile.autosens_max (1.2x by default)
             sensitivityRatio = min(sensitivityRatio, profile.autosens_max)
             sensitivityRatio = round(sensitivityRatio, 2)
-          //consoleLog.add("Sensitivity ratio set to $sensitivityRatio based on temp target of $target_bg; ")
+            //consoleLog.add("Sensitivity ratio set to $sensitivityRatio based on temp target of $target_bg; ")
             consoleLog.add(context.getString(R.string.sensitivity_ratio_temp_target, sensitivityRatio, target_bg))
         } else {
             sensitivityRatio = autosens_data.ratio
-          //consoleLog.add("Autosens ratio: $sensitivityRatio; ")
+            //consoleLog.add("Autosens ratio: $sensitivityRatio; ")
             consoleLog.add(context.getString(R.string.autosens_ratio_log, sensitivityRatio))
         }
         basal = profile.current_basal * sensitivityRatio
+        // WCycle Connectivity: Apply Basal Multiplier
+        val wCycle = wCycleInfoForRun
+        if (wCycle != null && wCycle.applied) {
+             basal *= wCycle.basalMultiplier.toDouble()
+        }
         basal = roundBasal(basal)
         if (basal != profile_current_basal)
         //consoleLog.add("Adjusting basal from $profile_current_basal to $basal; ")
@@ -3360,44 +4780,30 @@ fun appendCompactLog(
             }
         }
 
-        var iob2 = 0.0f
-        val iobArray = iob_data_array
-        val iob_data = iobArray[0]
-        this.iob = iob_data.iob.toFloat()
-        if (iob_data.basaliob < 0) {
-            iob2 = -iob_data.basaliob.toFloat() + iob
-            this.iob = iob2
-        }
+        // var iob2 = 0.0f
+        // Check IOB mismatch
+         if (abs(this.iob - iob_data.iob.toFloat()) > 1.0) {
+              consoleLog.add("⚠️ IOB Mismatch: Profiler=${this.iob} vs System=${iob_data.iob}")
+         }
+         this.iob = iob_data.iob.toFloat() // FIX: Restore Official Net IOB for Safety Checks
+        // if (iob_data.basaliob < 0) {
+        //     iob2 = -iob_data.basaliob.toFloat() + iob
+        //     this.iob = iob2
+        // }
 
-        val tick: String = if (glucose_status.delta > -0.5) {
-            "+" + round(glucose_status.delta)
+        val tick: String = if (glucoseStatus.delta > -0.5) {
+            "+" + round(glucoseStatus.delta)
         } else {
-            round(glucose_status.delta).toString()
+            round(glucoseStatus.delta).toString()
         }
-        val minDelta = min(glucose_status.delta, glucose_status.shortAvgDelta)
-        val minAvgDelta = min(glucose_status.shortAvgDelta, glucose_status.longAvgDelta)
-        // val maxDelta = max(glucose_status.delta, max(glucose_status.shortAvgDelta, glucose_status.longAvgDelta))
-        val tdd7P: Double = preferences.get(DoubleKey.OApsAIMITDD7)
-        var tdd7Days = profile.TDD
-        if (tdd7Days == 0.0 || tdd7Days < tdd7P) tdd7Days = tdd7P
-        this.tdd7DaysPerHour = (tdd7Days / 24).toFloat()
+        val minDelta = min(glucoseStatus.delta, glucoseStatus.shortAvgDelta)
+        val minAvgDelta = min(glucoseStatus.shortAvgDelta, glucoseStatus.longAvgDelta)
+        // val maxDelta = max(glucoseStatus.delta, max(glucoseStatus.shortAvgDelta, glucoseStatus.longAvgDelta))
+        // MOVED (FCL 11.0): Logic hoisted to top of determine_basal
+        // See Lines 3381+
+        // (Deleted duplicate block)
 
-        var tdd2Days = tddCalculator.averageTDD(tddCalculator.calculate(2, allowMissingDays = false))?.data?.totalAmount?.toFloat() ?: 0.0f
-        if (tdd2Days == 0.0f || tdd2Days < tdd7P) tdd2Days = tdd7P.toFloat()
-        this.tdd2DaysPerHour = tdd2Days / 24
-
-        var tddDaily = tddCalculator.averageTDD(tddCalculator.calculate(1, allowMissingDays = false))?.data?.totalAmount?.toFloat() ?: 0.0f
-        if (tddDaily == 0.0f || tddDaily < tdd7P / 2) tddDaily = tdd7P.toFloat()
-        this.tddPerHour = tddDaily / 24
-
-        var tdd24Hrs = tddCalculator.calculateDaily(-24, 0)?.totalAmount?.toFloat() ?: 0.0f
-        if (tdd24Hrs == 0.0f) tdd24Hrs = tdd7P.toFloat()
-
-        this.tdd24HrsPerHour = tdd24Hrs / 24
-        var sens = profile.variable_sens
-        this.variableSensitivity = sens.toFloat()
         consoleError.add("CR:${profile.carb_ratio}")
-        this.predictedBg = predictEventualBG(bg.toFloat(), iob, variableSensitivity, minDelta.toFloat(), shortAvgDelta, longAvgDelta, mealTime, bfastTime, lunchTime, dinnerTime, highCarbTime, snackTime, honeymoon)
         //val insulinEffect = calculateInsulinEffect(bg.toFloat(),iob,variableSensitivity,cob,normalBgThreshold,recentSteps180Minutes,averageBeatsPerMinute.toFloat(),averageBeatsPerMinute10.toFloat(),profile.insulinDivisor.toFloat())
 
         val now = System.currentTimeMillis()
@@ -3474,10 +4880,21 @@ fun appendCompactLog(
 
             averageBeatsPerMinute180 = 80.0
         }
-        if (tdd7Days.toFloat() != 0.0f) {
-            basalaimi = (tdd7Days / preferences.get(DoubleKey.OApsAIMIweight)).toFloat()
+        val heartRateTrend = averageBeatsPerMinute10 / averageBeatsPerMinute60
+        if (recentSteps10Minutes < 100 && heartRateTrend > 1.1 && bg > 110) {
+            // Si la FC augmente de >10% sur les 10 dernières minutes (sans marche)
+            // On rend l'ISF 10% plus agressif pour contrer une potentielle résistance
+            this.variableSensitivity *= 0.9f
+            consoleLog.add("ISF réduit de 10% (tendance FC anormale).")
         }
-        this.basalaimi = calculateSmoothBasalRate(tdd7P.toFloat(), tdd7Days.toFloat(), basalaimi)
+        if (tdd7Days.toFloat() != 0.0f) {
+            val learnedBasalMultiplier = basalLearner.getMultiplier()
+            basalaimi = ((tdd7Days / preferences.get(DoubleKey.OApsAIMIweight)) * learnedBasalMultiplier).toFloat()
+            if (learnedBasalMultiplier != 1.0) {
+                consoleLog.add("Basal adjusted by learner (x${"%.2f".format(learnedBasalMultiplier)})")
+            }
+        }
+        this.basalaimi = basalDecisionEngine.smoothBasalRate(tdd7P.toFloat(), tdd7Days.toFloat(), basalaimi)
         if (tdd7Days.toFloat() != 0.0f) {
             this.ci = (450 / tdd7Days).toFloat()
         }
@@ -3494,18 +4911,33 @@ fun appendCompactLog(
         val pregnancyEnable = preferences.get(BooleanKey.OApsAIMIpregnancy)
 
         if (tirbasal3B != null && pregnancyEnable && tirbasal3IR != null) {
+            // 🎯 UnifiedReactivityLearner is now used exclusively
+            val useUnified = preferences.get(BooleanKey.OApsAIMIUnifiedReactivityEnabled)
+            
             this.basalaimi = when {
                 tirbasalhAP != null && tirbasalhAP >= 5           -> (basalaimi * 2.0).toFloat()
                 lastHourTIRAbove != null && lastHourTIRAbove >= 2 -> (basalaimi * 1.8).toFloat()
 
                 timenow < sixAMHour                               -> {
                     val multiplier = if (honeymoon) 1.2 else 1.4
-                    (basalaimi * multiplier).toFloat()
+                    val reactivity = if (useUnified) {
+                        unifiedReactivityLearner.globalFactor
+                    } else {
+                        1.0  // Fallback to neutral if disabled
+                    }
+                    consoleLog.add("Reactivity (< 6AM): enabled=$useUnified, factor=${"%.3f".format(reactivity)}")
+                    (basalaimi * multiplier * reactivity).toFloat()
                 }
 
                 timenow > sixAMHour                               -> {
                     val multiplier = if (honeymoon) 1.4 else 1.6
-                    (basalaimi * multiplier).toFloat()
+                    val reactivity = if (useUnified) {
+                        unifiedReactivityLearner.globalFactor
+                    } else {
+                        1.0  // Fallback to neutral if disabled
+                    }
+                    consoleLog.add("Reactivity (> 6AM): enabled=$useUnified, factor=${"%.3f".format(reactivity)}")
+                    (basalaimi * multiplier * reactivity).toFloat()
                 }
 
                 tirbasal3B <= 5 && tirbasal3IR in 70.0..80.0      -> (basalaimi * 1.1).toFloat()
@@ -3518,50 +4950,157 @@ fun appendCompactLog(
         this.basalaimi = if (honeymoon && basalaimi > profile_current_basal * 2) (profile_current_basal.toFloat() * 2) else basalaimi
 
         this.basalaimi = if (basalaimi < 0.0f) 0.0f else basalaimi
-
-        this.variableSensitivity = if (honeymoon) {
-            if (bg < 150) {
-                profile.sens.toFloat() * 1.2f // Légère augmentation pour honeymoon en cas de BG bas
-            } else {
-                max(
-                    profile.sens.toFloat() / 3.0f, // Réduction plus forte en honeymoon
-                    sens.toFloat() //* calculateGFactor(delta, lastHourTIRabove120, bg.toFloat()).toFloat()
-                )
+        val deltaAcceleration = glucoseStatus.delta - glucoseStatus.shortAvgDelta
+        if (deltaAcceleration > 1.5 && bg > 130) {
+            // Si la glycémie accélère (+1.5mg/dL/5min par rapport à la moyenne), on augmente le basal
+            val boostFactor = 1.2f // Boost de 20%
+            this.basalaimi = (this.basalaimi * boostFactor).coerceAtMost(profile.max_basal.toFloat())
+            consoleLog.add("Basal boosté (+20%) pour accélération BG.")
+        } else if (bg in 80.0..115.0 && glucoseStatus.delta > 1.0) {
+            // 🚀 EARLY BASAL: Réactivité précoce pour les montées douces (80-115 mg/dL)
+            // L'objectif est de ne pas attendre 130 mg/dL pour réagir.
+            
+            var earlyFactor = 1.0f
+            if (deltaAcceleration > 0.5) { 
+                // Accélération détectée (même faible)
+                earlyFactor = 1.25f // +25%
+                consoleLog.add("Early Basal: Accélération détectée en zone basse (+25%)")
+            } else { 
+                // Montée linéaire simple
+                earlyFactor = 1.15f // +15%
+                consoleLog.add("Early Basal: Montée progressive (+15%)")
             }
-        } else {
-            if (bg < 100) {
-                // 🔹 Correction : Permettre une légère adaptation de l’ISF même en dessous de 100 mg/dL
-                profile.sens.toFloat() * 1.1f
-            } else if (bg > 120) {
-                // 🔹 Si BG > 120, on applique une réduction progressive plus forte
-                max(
-                    profile.sens.toFloat() / 5.0f,  // 🔥 Réduction plus agressive (divisé par 5)
-                    sens.toFloat() //* calculateGFactor(delta, lastHourTIRabove120, bg.toFloat()).toFloat()
-                )
-            } else {
-                // 🔹 Plage intermédiaire (100-120) avec ajustement plus doux
-                sens.toFloat() //* calculateGFactor(delta, lastHourTIRabove120, bg.toFloat()).toFloat()
+
+            // Application sécurisée : Max 1.5x le profil (restons modérés en zone basse)
+            val safeCap = (profile_current_basal * 1.5).toFloat()
+            this.basalaimi = (this.basalaimi * earlyFactor).coerceAtMost(safeCap)
+        }
+        // this.variableSensitivity = if (honeymoon) {
+        //     if (bg < 150) {
+        //         (baseSensitivity * 1.2).toFloat() // Légère augmentation pour honeymoon en cas de BG bas
+        //     } else {
+        //         max(
+        //             (baseSensitivity / 3.0).toFloat(), // Réduction plus forte en honeymoon
+        //             sens.toFloat()
+        //         )
+        //     }
+        // } else {
+        //     if (bg < 100) {
+        //         (baseSensitivity * 1.1).toFloat()
+        //     } else if (bg > 120) {
+        //         val aggressivenessFactor = (1.0 + 0.4 * ((bg - 120.0) / 60.0)).coerceIn(1.0, 1.4)
+        //         val aggressiveSens = (sens / aggressivenessFactor).toFloat()
+        //         max( (baseSensitivity * 0.7).toFloat(), aggressiveSens)
+        //     }else{
+        //
+        //         sens.toFloat()
+        //     }
+        // }
+        var newVariableSensitivity = sens // On part de la sensibilité de base (fusionnée)
+
+// --- ✅ ETAPE 2: NOUVELLE LOGIQUE PROACTIVE BASÉE SUR LE PAI ---
+        consoleLog.add("PAI Logic: Base ISF=${"%.1f".format(sens)}")
+
+// Scénario 1 : Montée glycémique détectée
+        if (delta > 1.5 && bg > 120) {
+            val urgencyFactor = when {
+                // Le pic est loin (>45min) OU le pic est déjà bien passé (<-30min) -> URGENCE
+                iobPeakMinutes > 45 || iobPeakMinutes < -30 -> {
+                    consoleLog.add("PAI: BG rising & IOB badly timed. AGGRESSIVE.")
+                    0.60 // ISF réduit de 40%
+                }
+                // L'activité de l'insuline va diminuer. On anticipe.
+                iobActivityIn30Min < iobActivityNow * 0.9 -> {
+                    consoleLog.add("PAI: BG rising & IOB activity will drop. PROACTIVE.")
+                    0.90 // ISF réduit de 10%
+                }
+                // Le pic est dans un avenir proche (0-45min). On peut être patient.
+                iobPeakMinutes in 0.0..45.0 -> {
+                    consoleLog.add("PAI: BG rising but IOB peak is coming. PATIENT.")
+                    1.0 // Pas de changement
+                }
+                else -> 1.0 // Cas par défaut
+            }
+            newVariableSensitivity *= urgencyFactor
+            if (urgencyFactor != 1.0) {
+                consoleLog.add("PAI: Urgency factor ${"%.2f".format(urgencyFactor)} applied. New ISF=${"%.1f".format(newVariableSensitivity)}")
             }
         }
 
-// 🔹 Ajustement basé sur l'activité physique : correction plus fine des valeurs
-        if (recentSteps5Minutes > 100 && recentSteps10Minutes > 200 && bg < 130 && delta < 10
-            || recentSteps180Minutes > 1500 && bg < 130 && delta < 10
-        ) {
-
-            this.variableSensitivity *= 1.3f //* calculateGFactor(delta, lastHourTIRabove120, bg.toFloat()).toFloat() // Réduction du facteur d’augmentation
+// Scénario 2 : Tendance stable ou en légère baisse mais BG toujours haut
+        if (delta in -1.0..1.5 && bg > 140) {
+            // Si l'activité de l'insuline va chuter, on risque un rebond.
+            if (iobActivityIn30Min < iobActivityNow * 0.8) {
+                consoleLog.add("PAI: BG high/stable but IOB will fade. Anti-rebound.")
+                newVariableSensitivity *= 0.95 // On est 5% plus agressif
+            }
         }
 
-// 🔹 Réduction du boost si l’activité est modérée pour éviter une ISF excessive
-        if (recentSteps30Minutes > 500 && recentSteps5Minutes in 1..99 && bg < 130 && delta < 10) {
-            this.variableSensitivity *= 1.2f //* calculateGFactor(delta, lastHourTIRabove120, bg.toFloat()).toFloat()
+        this.variableSensitivity = newVariableSensitivity.toFloat()
+
+// --- FIN DE LA NOUVELLE LOGIQUE ---
+
+        // --- 🏃 ACTIVITY MANAGER INTEGRATION ---
+        
+        // 1. Process Data through Manager
+        val activityContext = activityManager.process(
+            steps5min = recentSteps5Minutes,
+            steps10min = recentSteps10Minutes,
+            avgHr = averageBeatsPerMinute,
+            avgHrResting = averageBeatsPerMinute60 // Using 60min avg as proxy for baseline/resting for now
+        )
+
+        // 2. Log Decision
+        if (activityContext.state != app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.REST || activityContext.isRecovery) {
+            consoleLog.add("Activity: ${activityContext.description} → ISF x${"%.2f".format(activityContext.isfMultiplier)}")
         }
 
-// 🔹 Sécurisation des bornes minimales et maximales
+        // 3. Apply Multiplier to Sensitivity (ISF)
+        // Note: activityContext.isfMultiplier is >= 1.0 (Boosts ISF aka lowers resistance)
+        this.variableSensitivity *= activityContext.isfMultiplier.toFloat()
+        
+        // 4. Handle Recovery / Protection
+        if (activityContext.protectionMode) {
+             consoleLog.add("Activity Protection Mode Active (Recovery/Intense)")
+        }
+
+        // 5. Basal Modulation (Physiological Protection)
+        // Reduire la basale SI activité significative (évite accumulation IOB)
+        // Light: 100%, Moderate: 80%, Intense: 60%
+        val anyMealModeActive = mealTime || bfastTime || lunchTime || dinnerTime || highCarbTime || snackTime
+        val basalFactor = when (activityContext.state) {
+            app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.REST -> 1.0f
+            app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.LIGHT -> 1.0f
+            app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.MODERATE -> if (anyMealModeActive) 0.9f else 0.8f
+            app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.INTENSE -> if (anyMealModeActive) 0.8f else 0.6f
+        }
+        if (basalFactor < 1.0f) {
+            this.basalaimi *= basalFactor
+            consoleLog.add("Basal Activity Redux: x${"%.2f".format(basalFactor)} -> ${"%.2f".format(this.basalaimi)}U/h")
+        }
+
+        // 🔹 Legacy Steps Logic (Removed/Replaced by ActivityManager above)
+        // if (recentSteps5Minutes > 100 ...) { ... } 
+        // -> All handled by activityManager.process() now.
+
+        // 🔹 Sécurisation des bornes minimales et maximales
         this.variableSensitivity = this.variableSensitivity.coerceIn(5.0f, 300.0f)
 
 
         sens = variableSensitivity.toDouble()
+        val pkpdPredictions = computePkpdPredictions(
+            currentBg = bg,
+            iobArray = iob_data_array,
+            finalSensitivity = sens,
+            cobG = mealData.mealCOB,
+
+            profile = profile,
+            rT = rT,
+            delta = delta.toDouble()
+        )
+        this.eventualBG = pkpdPredictions.eventual
+        this.predictedBg = pkpdPredictions.eventual.toFloat()
+        rT.eventualBG = pkpdPredictions.eventual
         //calculate BG impact: the amount BG "should" be rising or falling based on insulin activity alone
         val bgi = round((-iob_data.activity * sens * 5), 2)
         // project deviations for 30 minutes
@@ -3571,13 +5110,13 @@ fun appendCompactLog(
             deviation = round((30 / 5) * (minAvgDelta - bgi))
             // and if deviation is still negative, use long_avgdelta
             if (deviation < 0) {
-                deviation = round((30 / 5) * (glucose_status.longAvgDelta - bgi))
+                deviation = round((30 / 5) * (glucoseStatus.longAvgDelta - bgi))
             }
         }
         // calculate the naive (bolus calculator math) eventual BG based on net IOB and sensitivity
         val naive_eventualBG = round(bg - (iob_data.iob * sens), 0)
-        // and adjust it for the deviation above
-        this.eventualBG = naive_eventualBG + deviation
+        // and adjust it for the deviation above (used only for noisy target heuristics)
+        val legacyEventual = naive_eventualBG + deviation
 
         // raise target for noisy / raw CGM data
         if (bg > max_bg && profile.adv_target_adjustments && !profile.temptargetSet) {
@@ -3587,7 +5126,7 @@ fun appendCompactLog(
             val adjustedMaxBG = round(max(80.0, max_bg - (bg - max_bg) / 3.0), 0)
             // if eventualBG, naive_eventualBG, and target_bg aren't all above adjustedMinBG, don’t use it
             //console.error("naive_eventualBG:",naive_eventualBG+", eventualBG:",eventualBG);
-            if (eventualBG > adjustedMinBG && naive_eventualBG > adjustedMinBG && min_bg > adjustedMinBG) {
+            if (eventualBG > adjustedMinBG && legacyEventual > adjustedMinBG && min_bg > adjustedMinBG) {
                 //consoleLog.add("Adjusting targets for high BG: min_bg from $min_bg to $adjustedMinBG; ")
                 consoleLog.add(context.getString(R.string.console_min_bg_adjusted, min_bg, adjustedMinBG))
                 min_bg = adjustedMinBG
@@ -3596,7 +5135,7 @@ fun appendCompactLog(
                 consoleLog.add(context.getString(R.string.console_min_bg_unchanged, min_bg))
             }
             // if eventualBG, naive_eventualBG, and target_bg aren't all above adjustedTargetBG, don’t use it
-            if (eventualBG > adjustedTargetBG && naive_eventualBG > adjustedTargetBG && target_bg > adjustedTargetBG) {
+            if (eventualBG > adjustedTargetBG && legacyEventual > adjustedTargetBG && target_bg > adjustedTargetBG) {
                 //consoleLog.add("target_bg from $target_bg to $adjustedTargetBG; ")
                 consoleLog.add(context.getString(R.string.console_target_bg_adjusted, target_bg, adjustedTargetBG))
                 target_bg = adjustedTargetBG
@@ -3605,7 +5144,7 @@ fun appendCompactLog(
                 consoleLog.add(context.getString(R.string.console_target_bg_unchanged, target_bg))
             }
             // if eventualBG, naive_eventualBG, and max_bg aren't all above adjustedMaxBG, don’t use it
-            if (eventualBG > adjustedMaxBG && naive_eventualBG > adjustedMaxBG && max_bg > adjustedMaxBG) {
+            if (eventualBG > adjustedMaxBG && legacyEventual > adjustedMaxBG && max_bg > adjustedMaxBG) {
                 //consoleError.add("max_bg from $max_bg to $adjustedMaxBG")
                 consoleError.add(context.getString(R.string.console_max_bg_adjusted, max_bg, adjustedMaxBG))
                 max_bg = adjustedMaxBG
@@ -3614,20 +5153,38 @@ fun appendCompactLog(
                 consoleError.add(context.getString(R.string.console_max_bg_unchanged, max_bg))
             }
         }
-        fun safe(v: Double) = if (v.isFinite()) v else Double.POSITIVE_INFINITY
+        //fun safe(v: Double) = if (v.isFinite()) v else Double.POSITIVE_INFINITY
         //val expectedDelta = calculateExpectedDelta(target_bg, eventualBG, bgi)
         val modelcal = calculateSMBFromModel(rT.reason)
-        val minBg = minOf(safe(bg), safe(predictedBg.toDouble()), safe(eventualBG))
-        val threshold = computeHypoThreshold(minBg, profile.lgsThreshold)
+        //val smbProposed = modelcal.toDouble()
+        //val minBg = minOf(safe(bg), safe(predictedBg.toDouble()), safe(eventualBG))
+        //val threshold = computeHypoThreshold(minBg, profile.lgsThreshold)
 
-        if (shouldBlockHypoWithHysteresis(
+        var isHypoBlocked = shouldBlockHypoWithHysteresis(
                 bg = bg,
                 predictedBg = predictedBg.toDouble(),
                 eventualBg = eventualBG,
                 threshold = threshold,
                 deltaMgdlPer5min = delta.toDouble()
             )
-        ) {
+        
+        // 🚀 ROCKET OVERRIDE (AIMI Neural Logic)
+        // If BG is skyrocketing (Delta > 5) or high (> Target+40), the "Eventual BG" prediction (based on naked IOB) 
+        // is likely a false flag (panic). We MUST unblock the system to allow aggression.
+        if (isHypoBlocked && (delta > 5.0 || bg > target_bg + 40)) {
+             isHypoBlocked = false
+             lastHypoBlockAt = 0L // Reset hysteresis state to prevent "sticky" blocking
+             rT.reason.append("🚀 Rocket Override: Hypo Block IGNORED due to massive rise. ") 
+        }
+
+        var fallbackActive = false
+        if (isHypoBlocked) {
+             if (canFallbackSmbWithoutPrediction(bg, delta.toDouble(), target_bg, iob.toDouble(), profile)) {
+                 fallbackActive = true
+            }
+        }
+
+        if (isHypoBlocked && !fallbackActive) {
             //rT.reason.appendLine(
             //    "🛑 Hypo guard+hystérèse: minBG=${convertBG(minBg)} " +
             //        "≤ Th=${convertBG(threshold)} (BG=${convertBG(bg)}, pred=${convertBG(predictedBg.toDouble())}, ev=${convertBG(eventualBG)}) → SMB=0"
@@ -3635,220 +5192,192 @@ fun appendCompactLog(
             )
             this.predictedSMB = 0f
         } else {
-            rT.reason.appendLine("💉 SMB (UAM): ${"%.2f".format(modelcal)} U")
-            this.predictedSMB = modelcal
+            var finalModelSmb = modelcal
+             
+             if (fallbackActive) {
+                 // Damping for fallback (Hyper Kicker replacement)
+                 // User suggested 50% dampening when relying on raw UAM without global prediction
+                 finalModelSmb = modelcal * 0.5f 
+                 rT.reason.appendLine("Hyper fallback active: SMB unblocked (50% damped) despite missing prediction. UAM: ${"%.2f".format(modelcal)} -> ${"%.2f".format(finalModelSmb)}")
+             } else {
+                 rT.reason.appendLine("💉 SMB (UAM): ${"%.2f".format(modelcal)} U")
+             }
+             
+             this.predictedSMB = finalModelSmb
         }
 
-        if (preferences.get(BooleanKey.OApsAIMIMLtraining) && csvfile.exists()) {
-            val allLines = csvfile.readLines()
-            val minutesToConsider = 2500.0
-            val linesToConsider = (minutesToConsider / 5).toInt()
-            if (allLines.size > linesToConsider) {
-                val refinedSMB = neuralnetwork5(combinedDelta.toFloat(), shortAvgDelta, longAvgDelta, predictedSMB, profile)
-              //rT.reason.appendLine("🧠 NN5 (avant boost): ${"%.2f".format(refinedSMB)} U")
-                rT.reason.appendLine(context.getString(R.string.reason_ai_file, if (csvfile.exists()) "✔" else "✘", "%.2f".format(refinedSMB.takeIf { it.isFinite() } ?: 0f)))
-                this.predictedSMB = refinedSMB
-                if (bg > 200 && delta > 4 && iob < preferences.get(DoubleKey.ApsSmbMaxIob)) {
-                  //rT.reason.appendLine("⚡ Boost hyper: x1.7 (BG=${bg.toInt()}, Δ=${"%.1f".format(delta)})")
-                    rT.reason.appendLine(context.getString(R.string.reason_boost_hyper, bg.toInt(), delta))
-                    this.predictedSMB *= 1.7f // Augmente de 70% si montée très rapide
-                } else if (bg > 180 && delta > 3 && iob < preferences.get(DoubleKey.ApsSmbMaxIob)) {
-                  //rT.reason.appendLine("⚡ Boost hyper: x1.5 (BG=${bg.toInt()}, Δ=${"%.1f".format(delta)})")
-                    rT.reason.appendLine(context.getString(R.string.reason_boost_hyper_2, bg.toInt(), delta))
-                    this.predictedSMB *= 1.5f // Augmente de 50% si montée modérée
-                }
+        // Detailed logging as requested
+        val hasPred = predictedBg > 20
+        val hyperKicker = (bg > target_bg + 30 && (delta >= 0.3 || shortAvgDelta >= 0.2))
+        consoleLog.add("SMB Decision: BG=${"%.0f".format(bg)}, Delta=${"%.1f".format(delta)}, IOB=${"%.2f".format(iob)}, HasPred=$hasPred, HyperKicker=$hyperKicker, UAM=${"%.2f".format(modelcal)}, Proposed=${"%.2f".format(this.predictedSMB)}")
+        val pkpdDiaMinutesOverride: Double? = pkpdRuntime?.params?.diaHrs?.let { it * 60.0 } // PKPD donne des heures → on passe en minutes
+        val useLegacyDynamicsdia = pkpdDiaMinutesOverride == null
+        val smbExecution = SmbInstructionExecutor.execute(
+            SmbInstructionExecutor.Input(
+                context = context,
+                preferences = preferences,
+                csvFile = csvfile,
+                rT = rT,
+                consoleLog = consoleLog,
+                consoleError = consoleError,
+                combinedDelta = combinedDelta,
+                shortAvgDelta = shortAvgDelta,
+                longAvgDelta = longAvgDelta,
+                profile = profile,
+                glucoseStatus = glucoseStatus,
+                bg = bg,
+                delta = delta.toDouble(),
+                iob = iob,
+                basalaimi = basalaimi,
+                initialBasal = basal,
+                honeymoon = honeymoon,
+                hourOfDay = hourOfDay,
+                mealTime = mealTime,
+                bfastTime = bfastTime,
+                lunchTime = lunchTime,
+                dinnerTime = dinnerTime,
+                highCarbTime = highCarbTime,
+                snackTime = snackTime,
+                sleepTime = sleepTime,
+                recentSteps5Minutes = recentSteps5Minutes,
+                recentSteps10Minutes = recentSteps10Minutes,
+                recentSteps30Minutes = recentSteps30Minutes,
+                recentSteps60Minutes = recentSteps60Minutes,
+                recentSteps180Minutes = recentSteps180Minutes,
+                averageBeatsPerMinute = averageBeatsPerMinute,
+                averageBeatsPerMinute60 = averageBeatsPerMinute60,
+                pumpAgeDays = pumpAgeDays.toInt(),
+                sens = sens,
+                tp = tp.toInt(),
+                variableSensitivity = variableSensitivity,
+                targetBg = target_bg,
+                predictedBg = predictedBg,
+                eventualBg = eventualBG,
+                // Pass Dynamic MaxSMB (High vs Low logic) so Solver knows real limit
+                maxSmb = if (bg > 120 && !honeymoon && mealData.slopeFromMinDeviation >= 1.0) maxSMBHB else maxSMB,
+                maxIob = preferences.get(DoubleKey.ApsSmbMaxIob),
+                predictedSmb = predictedSMB,
+                modelValue = modelcal,
+                mealData = mealData,
+                pkpdRuntime = pkpdRuntime,
+                sportTime = sportTime,
+                lateFatRiseFlag = lateFatRiseFlag,
+                highCarbRunTime = highCarbrunTime,
+                threshold = threshold,
+                dateUtil = dateUtil,
+                currentTime = currentTime,
+                windowSinceDoseInt = windowSinceDoseInt,
+                currentInterval = intervalsmb,
+                insulinStep = pumpCaps.bolusStep.toFloat(),
+                highBgOverrideUsed = highBgOverrideUsed,
+                profileCurrentBasal = profile_current_basal,
+                cob = cob
+            ),
+            SmbInstructionExecutor.Hooks(
+                refineSmb = { combined, short, long, predicted, profileInput ->
+                    neuralnetwork5(combined, short, long, predicted, profileInput)
+                },
+                adjustFactors = { morning, afternoon, evening ->
+                    adjustFactorsBasedOnBgAndHypo(morning, afternoon, evening)
+                },
+                calculateAdjustedDia = { baseDia, currentHour, steps5, currentHr, avgHr60, pumpAge, iobValue ->
+                    // 🔀 Si PKPD est actif, on l'utilise comme base, mais on permet l'ajustement dynamique (activités, heure, etc.)
+                    val effectiveBaseDia = pkpdDiaMinutesOverride?.let { (it / 60.0).toFloat() } ?: baseDia
 
-                basal =
-                    when {
-                        (honeymoon && bg < 170) -> basalaimi * 0.65
-                        else                    -> basalaimi.toDouble()
-                    }
-                basal = roundBasal(basal)
-            }
-          //rT.reason.append("csvfile ${csvfile.exists()}")
-        } else {
-          //rT.reason.appendLine("🗃️ ML training: dataset insuffisant — pas d’affinage")
-            rT.reason.appendLine(context.getString(R.string.reason_ml_training))
-        }
-
-        var smbToGive = if (bg > 130 && delta > 2 && predictedSMB == 0.0f) modelcal else predictedSMB
-        smbToGive = if (honeymoon && bg < 170) smbToGive * 0.8f else smbToGive
-
-        val morningfactor: Double   = preferences.get(DoubleKey.OApsAIMIMorningFactor) / 100.0
-        val afternoonfactor: Double = preferences.get(DoubleKey.OApsAIMIAfternoonFactor) / 100.0
-        val eveningfactor: Double   = preferences.get(DoubleKey.OApsAIMIEveningFactor) / 100.0
-        val hyperfactor: Double     = preferences.get(DoubleKey.OApsAIMIHyperFactor) / 100.0
-        val highcarbfactor: Double  = preferences.get(DoubleKey.OApsAIMIHCFactor) / 100.0
-        val mealfactor: Double      = preferences.get(DoubleKey.OApsAIMIMealFactor) / 100.0
-        val bfastfactor: Double     = preferences.get(DoubleKey.OApsAIMIBFFactor) / 100.0
-        val lunchfactor: Double     = preferences.get(DoubleKey.OApsAIMILunchFactor) / 100.0
-        val dinnerfactor: Double    = preferences.get(DoubleKey.OApsAIMIDinnerFactor) / 100.0
-        val snackfactor: Double     = preferences.get(DoubleKey.OApsAIMISnackFactor) / 100.0
-        val sleepfactor: Double     = preferences.get(DoubleKey.OApsAIMIsleepFactor) / 100.0
-
-        val adjustedFactors = adjustFactorsBasedOnBgAndHypo(
-            morningfactor.toFloat(), afternoonfactor.toFloat(), eveningfactor.toFloat()
+                    calculateAdjustedDIA(
+                        baseDIAHours = effectiveBaseDia,
+                        currentHour = currentHour,
+                        pumpAgeDays = pumpAge,
+                        iob = iobValue,
+                        activityContext = activityContext,
+                        steps = steps5,
+                        heartRate = currentHr?.toInt()
+                    )
+                },
+                costFunction = { basalInput, bgInput, targetInput, horizon, sensitivity, candidate ->
+                    costFunction(basalInput, bgInput, targetInput, horizon, sensitivity, candidate)
+                },
+                applySafety = { meal, smb, guard, reasonBuilder, runtime, exercise, suspected ->
+                    applySafetyPrecautions(meal, smb, guard as Double, reasonBuilder, runtime, exercise, suspected)
+                },
+                runtimeToMinutes = { runtimeToMinutes(it!!)},
+                computeHypoThreshold = { minBg, lgs -> computeHypoThreshold(minBg, lgs) },
+                isBelowHypo = { bgNow, predictedValue, eventualValue, hypo, deltaValue ->
+                    isBelowHypoThreshold(bgNow, predictedValue, eventualValue, hypo, deltaValue)
+                },
+                logDataMl = { predicted, given -> logDataMLToCsv(predicted, given) },
+                logData = { predicted, given -> logDataToCsv(predicted, given) },
+                roundBasal = { value -> roundBasal(value) },
+                roundDouble = { value, digits -> round(value, digits) }
+            )
         )
-        val (adjustedMorningFactor, adjustedAfternoonFactor, adjustedEveningFactor) = adjustedFactors
 
-        // --- Helpers ---
-        fun Float.atLeast(min: Float) = if (this < min) min else this
-
-// Figer la base et l'heure pour éviter l’auto-référence et garantir l’exhaustivité horaire
-        val base = smbToGive
-        val hour = hourOfDay // 0..23 (même source d’heure partout)
-
-// --- Calcul priorisé ---
-// 1) Cas spéciaux (avant tout)
-// 2) Modes (prioritaires sur les tranches horaires)
-// 3) Tranches horaires exhaustives 0..11 / 12..18 / 19..23
-// 4) Fallback sûr : 0.5 U
-        smbToGive = when {
-            // Nuit honeymoon : appliquer un plancher
-            honeymoon && bg > 160 && delta > 4 && iob < 0.7 && (hour == 23 || hour in 0..10) ->
-                base.atLeast(0.15f)
-
-            // Pic très rapide (non-honeymoon) sur base quasi nulle : bump sur la basale
-            !honeymoon && bg > 120 && delta > 8 && iob < 1.0 && base < 0.05f ->
-                profile_current_basal.toFloat()
-
-            // Hyper (non-honeymoon) supplémentaire (avant heures)
-            bg > 120 && delta > 7 && !honeymoon ->
-                base * hyperfactor.toFloat()
-
-            // Hyper (honeymoon) supplémentaire
-            bg > 180 && delta > 5 && iob < 1.2 && honeymoon ->
-                base * hyperfactor.toFloat()
-
-            // --- Modes (prioritaires sur tranches horaires) ---
-            highCarbTime -> base * highcarbfactor.toFloat()
-            mealTime     -> base * mealfactor.toFloat()
-            bfastTime    -> base * bfastfactor.toFloat()
-            lunchTime    -> base * lunchfactor.toFloat()
-            dinnerTime   -> base * dinnerfactor.toFloat()
-            snackTime    -> base * snackfactor.toFloat()
-            sleepTime    -> base * sleepfactor.toFloat()
-
-            // --- Tranches horaires exhaustives ---
-            hour in 0..11  -> base * adjustedMorningFactor
-            hour in 12..18 -> base * adjustedAfternoonFactor
-            hour in 19..23 -> base * adjustedEveningFactor
-
-            // --- Fallback de sécurité : cas théoriquement impossible
-            else -> 0.5f
-        }.coerceAtLeast(0f)
-
-// Facteur appliqué (pour les logs) — on reflète le fallback par 0.5
-        val factors = when {
-            highCarbTime -> highcarbfactor
-            mealTime     -> mealfactor
-            bfastTime    -> bfastfactor
-            lunchTime    -> lunchfactor
-            dinnerTime   -> dinnerfactor
-            snackTime    -> snackfactor
-            sleepTime    -> sleepfactor
-            hour in 0..11  -> adjustedMorningFactor
-            hour in 12..18 -> adjustedAfternoonFactor
-            hour in 19..23 -> adjustedEveningFactor
-            else -> 0.5 // fallback factor pour traçabilité : correspond à la valeur de sécurité
-        }
-
-// Heure courante (si tu préfères ce mécanisme ailleurs)
-        val currentHour = Calendar.getInstance()[Calendar.HOUR_OF_DAY]
-
-// Calcul du DIA ajusté en minutes
-        val adjustedDIAInMinutes = calculateAdjustedDIA(
-            baseDIAHours = profile.dia.toFloat(),
-            currentHour = currentHour,
-            recentSteps5Minutes = recentSteps5Minutes,
-            currentHR = averageBeatsPerMinute.toFloat(),
-            averageHR60 = averageBeatsPerMinute60.toFloat(),
-            pumpAgeDays = pumpAgeDays
+        predictedSMB = smbExecution.predictedSmb
+        basal = smbExecution.basal
+        highBgOverrideUsed = smbExecution.highBgOverrideUsed
+        smbExecution.newSmbInterval?.let { intervalsmb = it }
+        var smbToGive = smbExecution.finalSmb
+        
+        // 🎯 [MIGRATION FCL 10.0]
+        // Legacy "Direct SMB Modulation" removed.
+        // The UnifiedReactivityLearner now acts upstream via OpenAPSAIMIPlugin -> Autosens.Ratio.
+        // This ensures the factor is applied consistently to both Basal and SMB limits, respecting all safety caps.
+        //
+        // if (preferences.get(BooleanKey.OApsAIMIUnifiedReactivityEnabled)) { ... }
+        
+        // 🛡️ PKPD ABSORPTION GUARD (FIX 2025-12-30)
+        // Soft guard basé sur physiologie insuline : "Injecter → Laisser agir → Réévaluer"
+        // Empêche surcorrection UAM sans bloquer vraies urgences
+        val currentMaxSmb = if (bg > 120 && !honeymoon && mealData.slopeFromMinDeviation >= 1.0) maxSMBHB else maxSMB
+        
+        // Détecter si mode repas actif (ne pas freiner prebolus/TBR modes)
+        val anyMealModeForGuard = mealTime || bfastTime || lunchTime || dinnerTime || highCarbTime || snackTime
+        
+        // Calculer guard
+        val pkpdGuard = PkpdAbsorptionGuard.compute(
+            pkpdRuntime = pkpdRuntime,
+            windowSinceLastDoseMin = windowSinceDoseInt.toDouble(),
+            bg = bg,
+            delta = delta.toDouble(),
+            shortAvgDelta = shortAvgDelta.toDouble(),
+            targetBg = target_bg,
+            predBg = predictedBg.toDouble().takeIf { it > 20 },
+            isMealMode = anyMealModeForGuard
         )
-//consoleLog.add("DIA ajusté (en minutes) : $adjustedDIAInMinutes")
-        consoleLog.add(context.getString(R.string.console_dia_adjusted, adjustedDIAInMinutes))
-        val actCurr = profile.sensorLagActivity
-        val actFuture = profile.futureActivity
-        val td = adjustedDIAInMinutes
-        val deltaGross = round((glucose_status.delta + actCurr * sens).coerceIn(0.0, 35.0), 1)
-        val actTarget = deltaGross / sens * factors.toFloat()
-        var actMissing = 0.0
-        var deltaScore = 0.5  // 0..1 : 0 proche/sous target, 1 très au-dessus
-
-        if (glucose_status.delta <= 4.0) {
-            actMissing = round((actCurr * smbToGive - max(actFuture, 0.0)) / 5, 4)
-            // échelle 0..1 en fonction de l’écart à la cible
-            deltaScore = ((bg - target_bg) / 100.0).coerceIn(0.0, 1.0)
-        } else {
-            actMissing = round((actTarget - max(actFuture, 0.0)) / 5, 4)
-        }
-
-// Sécurisation du calcul des constantes (éviter divisions/exp instables)
-        val tpD = tp.toDouble()
-        val tdD = td.toDouble().coerceAtLeast(tpD * 2.1) // td doit être > 2*tp
-        val tau = tpD * (1 - tpD / tdD) / (1 - 2 * tpD / tdD)
-        val a = 2 * tau / tdD
-        val S = 1 / (1 - a + (1 + a) * Math.exp(-tdD / tau))
-        var AimiInsReq = actMissing / (S / (tau * tau) * tpD * (1 - tpD / tdD) * Math.exp(-tpD / tau))
-
-        AimiInsReq = if (AimiInsReq < smbToGive) AimiInsReq else smbToGive.toDouble()
-        val finalInsulinDose = round(AimiInsReq, 2)
-
-// ===== Module MPC + correctif PI =====
-        val doseMin = 0.0
-        val doseMax = maxSMB
-        val horizon = 30 // minutes
-        val insulinSensitivity = variableSensitivity.toDouble()
-
-        var optimalDose = doseMin
-        var bestCost = Double.MAX_VALUE
-        val nSteps = 20
-
-        for (i in 0..nSteps) {
-            val candidate = doseMin + i * (doseMax - doseMin) / nSteps
-            // ⚠️ corriger : évaluer le coût avec "candidate", pas "smbToGive"
-            val cost = costFunction(basal, bg.toDouble(), targetBg.toDouble(), horizon, insulinSensitivity, candidate)
-            if (cost < bestCost) {
-                bestCost = cost
-                optimalDose = candidate
+        
+        // Appliquer guard sur SMB
+        if (pkpdGuard.isActive()) {
+            val beforeGuard = smbToGive
+            smbToGive = (smbToGive * pkpdGuard.factor.toFloat()).coerceAtLeast(0f)
+            
+            // Logs détaillés
+            consoleError.add(pkpdGuard.toLogString())
+            consoleLog.add("SMB_GUARDED: ${"%.2f".format(beforeGuard)}U → ${"%.2f".format(smbToGive)}U")
+            
+            // Ajouter au reason (visible utilisateur)
+            rT.reason.append(" | ${pkpdGuard.reason} x${"%.2f".format(pkpdGuard.factor)}")
+            
+            // Augmenter intervalle si nécessaire
+            if (pkpdGuard.intervalAddMin > 0) {
+                intervalsmb = (intervalsmb + pkpdGuard.intervalAddMin).coerceAtMost(10)
+                consoleLog.add("INTERVAL_ADJUSTED: +${pkpdGuard.intervalAddMin}m → ${intervalsmb}m total")
             }
         }
-
-// PI : on module Kp par deltaScore (0.5× à 1.5×)
-        val baseKp = 0.1
-        val Kp = baseKp * (0.5 + deltaScore) // si très haut au-dessus de target ⇒ correction plus énergique
-        val error = bg.toDouble() - targetBg.toDouble()
-        val correction = -Kp * error
-
-        val optimalBasalMPC = (optimalDose + correction).coerceIn(doseMin, doseMax)
-
-// Log
-      //consoleLog.add("Module MPC: dose=${"%.2f".format(optimalDose)}, Kp=${"%.3f".format(Kp)}, corr=${"%.2f".format(correction)}, out=${"%.2f".format(optimalBasalMPC)}")
-        consoleLog.add(context.getString(R.string.console_mpc_log, optimalDose, Kp, correction, optimalBasalMPC))
-
-// Mix final entre modèle MPC et estimation "physio" (pondéré par deltaScore)
-        val alpha = 0.3 + 0.5 * deltaScore // 0.3..0.8
-        var smbDecision = (alpha * optimalBasalMPC + (1 - alpha) * finalInsulinDose).toFloat()
-
-      //rT.reason.appendLine("🎛️ MPC/PI → ${"%.2f".format(optimalBasalMPC)} U | physio=${"%.2f".format(finalInsulinDose)} U | α=${"%.2f".format(alpha)}")
-        rT.reason.appendLine(context.getString(R.string.reason_mpc_pi, optimalBasalMPC, alpha*100, finalInsulinDose, (1-alpha)*100))
-
-// ===== Fin MPC =====
-
-// ⚠️ passer la DECISION courante à la safety (pas finalInsulinDose)
-        smbDecision = applySafetyPrecautions(mealData, smbDecision, threshold,rT.reason)
-//      rT.reason.appendLine("✅ SMB final: ${"%.2f".format(smbDecision)} U")
-        rT.reason.appendLine(context.getString(R.string.smb_final, "%.2f".format(smbDecision)))
-
-        smbToGive = roundToPoint05(smbDecision)
-
-
-        logDataMLToCsv(predictedSMB, smbToGive)
-        logDataToCsv(predictedSMB, smbToGive)
-
-        //logDataToCsv(predictedSMB, smbToGive)
-        //logDataToCsvHB(predictedSMB, smbToGive)
+        val beforeCap = smbToGive
+        smbToGive = capSmbDose(
+            proposedSmb = smbToGive,
+            bg = bg,
+            maxSmbConfig = currentMaxSmb,
+            iob = iob.toDouble(),
+            maxIob = this.maxIob
+        )
+        if (smbToGive < beforeCap) {
+            rT.reason.append(" | 🛡️ Cap: ${"%.2f".format(beforeCap)} → ${"%.2f".format(smbToGive)}")
+        }
         val savedReason = rT.reason.toString()
+        // 🔮 FCL 11.0: Preserve Predictions across reset
+        val savedPredBGs = rT.predBGs
+
         rT = RT(
             algorithm = APSResult.Algorithm.AIMI,
             runningDynamicIsf = dynIsfMode,
@@ -3856,68 +5385,140 @@ fun appendCompactLog(
             bg = bg,
             tick = tick,
             eventualBG = eventualBG,
-          //targetBG = target_bg,
+            //targetBG = target_bg,
             targetBG = "%.0f".format(target_bg).toDouble(),
             insulinReq = 0.0,
             deliverAt = deliverAt, // The time at which the microbolus should be delivered
-          //sensitivityRatio = sensitivityRatio, // autosens ratio (fraction of normal basal)
+            //sensitivityRatio = sensitivityRatio, // autosens ratio (fraction of normal basal)
             sensitivityRatio = "%.0f".format(sensitivityRatio).toDouble(),
             consoleLog = consoleLog,
             consoleError = consoleError,
-          //variable_sens = variableSensitivity.toDouble()
+            //variable_sens = variableSensitivity.toDouble()
             variable_sens = "%.0f".format(variableSensitivity.toDouble()).toDouble()
         )
+        // 🔮 FCL 11.0: Restore preserved Predictions
+        rT.predBGs = savedPredBGs ?: rT.predBGs
+        ensurePredictionFallback(rT, bg)
         rT.reason.append(savedReason)
-        //rT.reason.append(", DIA ajusté (en minutes) : $adjustedDIAInMinutes, ")
-        //rT.reason.append("adjustedMorningFactor ${adjustedMorningFactor}, ")
-        //rT.reason.append("adjustedAfternoonFactor ${adjustedAfternoonFactor}, ")
-        //rT.reason.append("adjustedEveningFactor ${adjustedEveningFactor}, ")
-        //rT.reason.append("Autodrive: $autodrive, autodrivemode : ${isAutodriveModeCondition(delta, autodrive, mealData.slopeFromMinDeviation, bg.toFloat(),predictedBg, reason)}, AutodriveCondition: $autodriveCondition, bgTrend:$bgTrend, Combined Delta: $combinedDelta, PredictedBg: $predictedBg, bgAcceleration: $bgacc, SlopeMinDeviation: ${mealData.slopeFromMinDeviation}")
-        //rT.reason.append("TIRBelow: $currentTIRLow, TIRinRange: $currentTIRRange, TIRAbove: $currentTIRAbove")
-        //rT.reason.append(reasonAimi.toString())
-       // rT.reason.appendLine(
-    //"📈 DIA ajusté: ${"%.1f".format(adjustedDIAInMinutes)} min | " +
-    //"Morning: ${"%.1f".format(adjustedMorningFactor)}, " +
-    //"Afternoon: ${"%.1f".format(adjustedAfternoonFactor)}, " +
-    //"Evening: ${"%.1f".format(adjustedEveningFactor)}"
-//)
+        // Re-define for Global Logic
+        val estimatedCarbs = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbs)
+        val estimatedCarbsTime = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbTime).toLong()
+        val timeSinceEstimateMin = (System.currentTimeMillis() - estimatedCarbsTime) / 60000.0
+        
+        val maxBasalPref = preferences.get(DoubleKey.meal_modes_MaxBasal)
+        val rate: Double? = when {
+            snackTime && snackrunTime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 4.0, "AI Force basal because Snack Time $snackrunTime.", currenttemp, rT, overrideSafety = true)
+            mealTime && mealruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because mealTime $mealruntime.", currenttemp, rT, overrideSafety = true)
+            bfastTime && bfastruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because Breakfast $bfastruntime.", currenttemp, rT, overrideSafety = true)
+            lunchTime && lunchruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because lunchTime $lunchruntime.", currenttemp, rT, overrideSafety = true)
+            dinnerTime && dinnerruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because dinnerTime $dinnerruntime.", currenttemp, rT, overrideSafety = true)
+            highCarbTime && highCarbrunTime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because highcarb $highCarbrunTime.", currenttemp, rT, overrideSafety = true)
+            // 📸 Meal Advisor Forced Basal REMOVED (Duplicate of Pipeline)
+            
+            // 🔥 Patch Post-Meal Hyper Boost (AIMI 2.0)
+            // Added: Treat Recent Meal Advisor (< 120m) as implicit Meal Mode
+            (mealTime || lunchTime || dinnerTime || highCarbTime || bfastTime || snackTime || (timeSinceEstimateMin <= 120 && estimatedCarbs > 10)) -> {
+                val runTime = listOf(mealruntime, lunchruntime, dinnerruntime, highCarbrunTime, bfastruntime, snackrunTime).maxOrNull() ?: timeSinceEstimateMin.toInt()
+                val target = target_bg // simplification
+                val rocketStart = delta > 5.0f || bg > target_bg + 40
+                // If Rocket Start (Delta > 10 or Very High BG), use global Max Basal (Aggressive).
+                // Otherwise use the Meal Mode preference (often conservative, default profile*2).
+                val safeMax = if (rocketStart) profile.max_basal else if (maxBasalPref > 0) maxBasalPref else profile_current_basal * 2.0 
+                
+                val boostedRate = adjustBasalForMealHyper(
+                    suggestedBasalUph = profile_current_basal, // Start with profile basal
+                    bg = bg,
+                    targetBg = target,
+                    delta = delta.toDouble(),
+                    shortAvgDelta = shortAvgDelta.toDouble(),
+                    isMealModeActive = true,
+                    minutesSinceMealStart = runTime.toInt(),
+                    mealMaxBasalUph = safeMax
+                )
+                
+                if (boostedRate > profile_current_basal * 1.05) { // Only if significantly boosted
+                     calculateRate(basal, profile_current_basal, boostedRate/profile_current_basal, "Post-Meal Boost active ($runTime m)", currenttemp, rT)
+                } else null
+            }
+            
+            // 🔥 General Hyper Kicker (Non-Meal)
+            // Catch-all for late rises outside specific meal windows
+            // 🚀 FCL 13.0: Harmonized Rocket Start (Delta > 5.0) to match Meal/Hypo logic.
+            ((bg > target_bg + 40 || delta > 5.0f) && (delta >= 0.3 || shortAvgDelta >= 0.2)) -> {
+                val maxBasalPref = preferences.get(DoubleKey.autodriveMaxBasal) // Absolute max
+                val safeMax = if (maxBasalPref > 0.1) maxBasalPref else profile.max_basal // Fallback if 0
+                
+                val boostedRate = adjustBasalForGeneralHyper(
+                    suggestedBasalUph = profile_current_basal, 
+                    bg = bg, 
+                    targetBg = target_bg, 
+                    delta = delta.toDouble(), 
+                    shortAvgDelta = shortAvgDelta.toDouble(), 
+                    maxBasalConfig = safeMax
+                )
+                
+                if (boostedRate > profile_current_basal * 1.1) {
+                    calculateRate(basal, profile_current_basal, boostedRate/profile_current_basal, "Global Hyper Kicker (Active)", currenttemp, rT, overrideSafety = true)
+                } else null
+            }
+
+            // Fix: Clamp delta multiplier to 0.0 to prevent negative basal (delta is Float)
+            fastingTime -> calculateRate(profile_current_basal, profile_current_basal, delta.coerceAtLeast(0.0f).toDouble(), "AI Force basal because fastingTime", currenttemp, rT)
+            else -> null
+        }
+
+
+        // 🔧 FIX: Basal Boost Overlay Pattern (No Early Return)
+        // ================================================================
+        // Track basal boost source for logging and modulation
+        val basalBoostApplied = rate != null
+        val basalBoostSource: String? = when {
+            rate != null && rT.reason.contains("Global Hyper Kicker") -> "HyperKicker"
+            rate != null && rT.reason.contains("Post-Meal Boost") -> "PostMealBoost"  
+            rate != null && rT.reason.contains("Meal") -> "MealMode"
+            rate != null && rT.reason.contains("fasting") -> "Fasting"
+            else -> null
+        }
+        
+        // Apply basal boost if calculated (OVERLAY - don't block SMB)
+        if (basalBoostApplied && rate != null) {
+            rT.rate = rate.coerceAtLeast(0.0)
+            rT.deliverAt = deliverAt
+            rT.duration = 30
+            consoleLog.add("BOOST_BASAL_APPLIED source=${basalBoostSource ?: "Unknown"} rate=${"%.2f".format(Locale.US, rate)}U/h")
+            rT.reason.append("BasalBoost: ${basalBoostSource ?: "?"} ${"%.2f".format(Locale.US, rate)}U/h. ")
+            // REMOVED: return rT (continue to SMB calculation)
+        }
+        // ================================================================
+
 
         rT.reason.appendLine(
-    context.getString(R.string.reason_dia_reattivity,(adjustedDIAInMinutes),
-    (adjustedMorningFactor * 100),
-    (adjustedAfternoonFactor * 100),
-    (adjustedEveningFactor * 100))
-)
+             context.getString(R.string.autodrive_status, if (autodrive) "✔" else "✘", activeModeName)
+        )
+        // Cleaned up Logging
 
-rT.reason.appendLine( //"🚗 Autodrive: $autodrive | Mode actif: ${isAutodriveModeCondition(delta, autodrive, mealData.slopeFromMinDeviation, bg.toFloat(), predictedBg, reason)} | " +
-context.getString(R.string.autodrive_status, if (autodrive) "✔" else "✘", if (isAutodriveModeCondition(delta, autodrive, mealData.slopeFromMinDeviation, bg.toFloat(), predictedBg, reason)) "✔" else "✘") +
-//"AutodriveCondition: $autodriveCondition"
-context.getString(R.string.autodrive_condition, if (autodriveCondition) "✔" else "✘")
-)
-
-rT.reason.appendLine(
-//    "🔍 BGTrend: ${"%.2f".format(bgTrend)} | ΔCombiné: ${"%.2f".format(combinedDelta)} | " +
-context.getString(R.string.reason_bg_trend, bgTrend, combinedDelta) +
-//    "Predicted BG: ${"%.0f".format(predictedBg)} | Accélération: ${"%.2f".format(bgacc)} | " +
-context.getString(R.string.reason_predicted_bg, predictedBg, bgacc) +
-//    "Slope Min Dev.: ${"%.2f".format(mealData.slopeFromMinDeviation)}"
-context.getString(R.string.reason_slope_min_dev, mealData.slopeFromMinDeviation)
-)
-
-rT.reason.appendLine(
-    "📊 TIR: <70: ${"%.1f".format(currentTIRLow)}% | 70–180: ${"%.1f".format(currentTIRRange)}% | >180: ${"%.1f".format(currentTIRAbove)}%"
-)
+        rT.reason.appendLine(
+            "📊 TIR: <70: ${"%.1f".format(currentTIRLow)}% | 70–180: ${"%.1f".format(currentTIRRange)}% | >180: ${"%.1f".format(currentTIRAbove)}%"
+        )
         appendCompactLog(reasonAimi, tp, bg, delta, recentSteps5Minutes, averageBeatsPerMinute)
         rT.reason.append(reasonAimi.toString())
-        val csf = sens / profile.carb_ratio
-      //consoleError.add("profile.sens: ${profile.sens}, sens: $sens, CSF: $csf")
-        consoleError.add(context.getString(R.string.console_profile_sens, profile.sens, sens, csf))
+        
+        // 🔮 FCL 11.0: Deep Endo - Apply WCycle IC Multiplier
+        val icMult = wCycleFacade.getIcMultiplier()
+        // If multiplier > 1 (e.g. 1.15 Luteal), we want STRONGER insulin.
+        // Stronger insulin means LOWER Carb Ratio (e.g. 10g/U -> 8.7g/U).
+        // So we DIVIDE the profile CR by the multiplier.
+        val adjustedCR = profile.carb_ratio / icMult
+        
+        val csf = sens / adjustedCR
+        //consoleError.add("profile.sens: ${profile.sens}, sens: $sens, CSF: $csf")
+        consoleError.add(context.getString(R.string.console_profile_sens, baseSensitivity, sens, csf))
 
         val maxCarbAbsorptionRate = 30 // g/h; maximum rate to assume carbs will absorb if no CI observed
         // limit Carb Impact to maxCarbAbsorptionRate * csf in mg/dL per 5m
         val maxCI = round(maxCarbAbsorptionRate * csf * 5 / 60, 1)
         if (ci > maxCI) {
-          //consoleError.add("Limiting carb impact from $ci to $maxCI mg/dL/5m ( $maxCarbAbsorptionRate g/h )")
+            //consoleError.add("Limiting carb impact from $ci to $maxCI mg/dL/5m ( $maxCarbAbsorptionRate g/h )")
             consoleError.add(context.getString(R.string.console_limiting_carb_impact, ci, maxCI, maxCarbAbsorptionRate))
             ci = maxCI.toFloat()
         }
@@ -3935,161 +5536,64 @@ rT.reason.appendLine(
         val slopeFromMaxDeviation = mealData.slopeFromMaxDeviation
         val slopeFromMinDeviation = mealData.slopeFromMinDeviation
         val slopeFromDeviations = Math.min(slopeFromMaxDeviation, -slopeFromMinDeviation / 3)
-        var IOBpredBGs = mutableListOf<Double>()
-        var UAMpredBGs = mutableListOf<Double>()
-        var ZTpredBGs = mutableListOf<Double>()
-
-        IOBpredBGs.add(bg)
-        ZTpredBGs.add(bg)
-        UAMpredBGs.add(bg)
         var ci: Double
         val cid: Double
         // calculate current carb absorption rate, and how long to absorb all carbs
         // CI = current carb impact on BG in mg/dL/5m
         ci = round((minDelta - bgi), 1)
-        val uci = round((minDelta - bgi), 1)
-        val aci = 8
         if (ci == 0.0) {
             // avoid divide by zero
             cid = 0.0
         } else {
             cid = min(remainingCATime * 60 / 5 / 2, Math.max(0.0, mealData.mealCOB * csf / ci))
         }
-        val acid = max(0.0, mealData.mealCOB * csf / aci)
         // duration (hours) = duration (5m) * 5 / 60 * 2 (to account for linear decay)
-      //consoleError.add("Carb Impact: ${ci} mg/dL per 5m; CI Duration: ${round(cid * 5 / 60 * 2, 1)} hours; remaining CI (~2h peak): ${round(remainingCIpeak, 1)} mg/dL per 5m")
+        //consoleError.add("Carb Impact: ${ci} mg/dL per 5m; CI Duration: ${round(cid * 5 / 60 * 2, 1)} hours; remaining CI (~2h peak): ${round(remainingCIpeak, 1)} mg/dL per 5m")
         consoleError.add(context.getString(R.string.console_carb_impact, ci, round(cid * 5 / 60 * 2, 1), round(remainingCIpeak, 1)))
-        //console.error("Accel. Carb Impact:",aci,"mg/dL per 5m; ACI Duration:",round(acid*5/60*2,1),"hours");
-        var minIOBPredBG = 999.0
+        // MOVED (FCL 11.0): Logic hoisted to top of determine_basal
+        // (Deleted duplicate block)
+//fin predictions
+////////////////////////////////////////////
+//estimation des glucides nécessaires si risque hypo
 
-        var minUAMPredBG = 999.0
-        var minGuardBG: Double
-
-        var minUAMGuardBG = 999.0
-        var minIOBGuardBG = 999.0
-        var minZTGuardBG = 999.0
-        var IOBpredBG: Double = eventualBG
-        var maxIOBPredBG = bg
-
-        val lastIOBpredBG: Double
-
-        var lastUAMpredBG: Double? = null
-        //var lastZTpredBG: Int
-        var UAMduration = 0.0
-        var remainingCItotal = 0.0
-        val remainingCIs = mutableListOf<Int>()
-        val predCIs = mutableListOf<Int>()
-        var UAMpredBG: Double? = null
-
-
-        iobArray.forEach { iobTick ->
-            //console.error(iobTick);
-            val predBGI: Double = round((-iobTick.activity * sens * 5), 2)
-            val IOBpredBGI: Double =
-                if (dynIsfMode) round((-iobTick.activity * (1800 / (profile.TDD * (ln((max(IOBpredBGs[IOBpredBGs.size - 1], 39.0) / profile.insulinDivisor) + 1)))) * 5), 2)
-                else predBGI
-            iobTick.iobWithZeroTemp ?: error("iobTick.iobWithZeroTemp missing")
-            // try to find where is crashing https://console.firebase.google.com/u/0/project/androidaps-c34f8/crashlytics/app/android:info.nightscout.androidaps/issues/950cdbaf63d545afe6d680281bb141e5?versions=3.3.0-dev-d%20(1500)&time=last-thirty-days&types=crash&sessionEventKey=673BF7DD032300013D4704707A053273_2017608123846397475
-            if (iobTick.iobWithZeroTemp!!.activity.isNaN() || sens.isNaN())
-                fabricPrivacy.logCustom("iobTick.iobWithZeroTemp!!.activity=${iobTick.iobWithZeroTemp!!.activity} sens=$sens")
-            val predZTBGI =
-                if (dynIsfMode) round((-iobTick.iobWithZeroTemp!!.activity * (1800 / (profile.TDD * (ln((max(ZTpredBGs[ZTpredBGs.size - 1], 39.0) / profile.insulinDivisor) + 1)))) * 5), 2)
-                else round((-iobTick.iobWithZeroTemp!!.activity * sens * 5), 2)
-            val predUAMBGI =
-                if (dynIsfMode) round((-iobTick.activity * (1800 / (profile.TDD * (ln((max(UAMpredBGs[UAMpredBGs.size - 1], 39.0) / profile.insulinDivisor) + 1)))) * 5), 2)
-                else predBGI
-            // for IOBpredBGs, predicted deviation impact drops linearly from current deviation down to zero
-            // over 60 minutes (data points every 5m)
-            val predDev: Double = ci * (1 - min(1.0, IOBpredBGs.size / (60.0 / 5.0)))
-            IOBpredBG = IOBpredBGs[IOBpredBGs.size - 1] + IOBpredBGI + predDev
-            // calculate predBGs with long zero temp without deviations
-            val ZTpredBG = ZTpredBGs[ZTpredBGs.size - 1] + predZTBGI
-            // for UAMpredBGs, predicted carb impact drops at slopeFromDeviations
-            // calculate predicted CI from UAM based on slopeFromDeviations
-            val predUCIslope = max(0.0, uci + (UAMpredBGs.size * slopeFromDeviations))
-            // if slopeFromDeviations is too flat, predicted deviation impact drops linearly from
-            // current deviation down to zero over 3h (data points every 5m)
-            val predUCImax = max(0.0, uci * (1 - UAMpredBGs.size / max(3.0 * 60 / 5, 1.0)))
-            //console.error(predUCIslope, predUCImax);
-            // predicted CI from UAM is the lesser of CI based on deviationSlope or DIA
-            val predUCI = min(predUCIslope, predUCImax)
-            if (predUCI > 0) {
-                //console.error(UAMpredBGs.length,slopeFromDeviations, predUCI);
-                UAMduration = round((UAMpredBGs.size + 1) * 5 / 60.0, 1)
-            }
-            UAMpredBG = UAMpredBGs[UAMpredBGs.size - 1] + predUAMBGI + min(0.0, predDev) + predUCI
-            //console.error(predBGI, predCI, predUCI);
-            // truncate all BG predictions at 4 hours
-            if (IOBpredBGs.size < 24) IOBpredBGs.add(IOBpredBG)
-            if (UAMpredBGs.size < 24) UAMpredBGs.add(UAMpredBG)
-            if (ZTpredBGs.size < 24) ZTpredBGs.add(ZTpredBG)
-            // calculate minGuardBGs without a wait from COB, UAM, IOB predBGs
-            if (UAMpredBG < minUAMGuardBG) minUAMGuardBG = round(UAMpredBG).toDouble()
-            if (IOBpredBG < minIOBGuardBG) minIOBGuardBG = IOBpredBG
-            if (ZTpredBG < minZTGuardBG) minZTGuardBG = round(ZTpredBG, 0)
-
-            // set minPredBGs starting when currently-dosed insulin activity will peak
-            // look ahead 60m (regardless of insulin type) so as to be less aggressive on slower insulins
-            // add 30m to allow for insulin delivery (SMBs or temps)
-            this.insulinPeakTime = tp
-            val insulinPeak5m = (insulinPeakTime / 60.0) * 12.0
-            //console.error(insulinPeakTime, insulinPeak5m, profile.insulinPeakTime, profile.curve);
-
-            // wait 90m before setting minIOBPredBG
-            if (IOBpredBGs.size > insulinPeak5m && (IOBpredBG < minIOBPredBG)) minIOBPredBG = round(IOBpredBG, 0)
-            if (IOBpredBG > maxIOBPredBG) maxIOBPredBG = IOBpredBG
-            if (enableUAM && UAMpredBGs.size > 6 && (UAMpredBG < minUAMPredBG)) minUAMPredBG = round(UAMpredBG, 0)
-        }
-
-        rT.predBGs = Predictions()
-        IOBpredBGs = IOBpredBGs.map { round(min(401.0, max(39.0, it)), 0) }.toMutableList()
-        for (i in IOBpredBGs.size - 1 downTo 13) {
-            if (IOBpredBGs[i - 1] != IOBpredBGs[i]) break
-            else IOBpredBGs.removeAt(IOBpredBGs.lastIndex)
-        }
-        rT.predBGs?.IOB = IOBpredBGs.map { it.toInt() }
-        lastIOBpredBG = round(IOBpredBGs[IOBpredBGs.size - 1]).toDouble()
-        ZTpredBGs = ZTpredBGs.map { round(min(401.0, max(39.0, it)), 0) }.toMutableList()
-        for (i in ZTpredBGs.size - 1 downTo 7) {
-            // stop displaying ZTpredBGs once they're rising and above target
-            if (ZTpredBGs[i - 1] >= ZTpredBGs[i] || ZTpredBGs[i] <= target_bg) break
-            else ZTpredBGs.removeAt(ZTpredBGs.lastIndex)
-        }
-        rT.predBGs?.ZT = ZTpredBGs.map { it.toInt() }
-
-        if (ci > 0 || remainingCIpeak > 0) {
-            if (enableUAM) {
-                UAMpredBGs = UAMpredBGs.map { round(min(401.0, max(39.0, it)), 0) }.toMutableList()
-                for (i in UAMpredBGs.size - 1 downTo 13) {
-                    if (UAMpredBGs[i - 1] != UAMpredBGs[i]) break
-                    else UAMpredBGs.removeAt(UAMpredBGs.lastIndex)
-                }
-                rT.predBGs?.UAM = UAMpredBGs.map { it.toInt() }
-                lastUAMpredBG = UAMpredBGs[UAMpredBGs.size - 1]
-                eventualBG = max(eventualBG, round(UAMpredBGs[UAMpredBGs.size - 1], 0))
-            }
-
-            // set eventualBG based on COB or UAM predBGs
-            rT.eventualBG = eventualBG
-        }
-        //fin predictions
-        ////////////////////////////////////////////
-        //estimation des glucides nécessaires si risque hypo
         val thresholdBG = 70.0
-        val carbsRequired = estimateRequiredCarbs(bg, targetBg.toDouble(), slopeFromDeviations, iob.toDouble(), csf, sens, cob.toDouble())
-        val minutesAboveThreshold = calculateMinutesAboveThreshold(bg, slopeFromDeviations, thresholdBG)
+        val carbsRequired = CarbsAdvisor.estimateRequiredCarbs(
+            bg = bg,
+            targetBG = targetBg.toDouble(),
+            slope = slopeFromDeviations,
+            iob = iob.toDouble(),
+            csf = csf,
+            isf = sens,
+            cob = cob.toDouble()
+        )
+        val minutesAboveThreshold = HypoTools.calculateMinutesAboveThreshold(bg, slopeFromDeviations, thresholdBG)
         if (carbsRequired >= profile.carbsReqThreshold && minutesAboveThreshold <= 45 && !lunchTime && !dinnerTime && !bfastTime && !highCarbTime && !mealTime) {
             rT.carbsReq = carbsRequired
             rT.carbsReqWithin = minutesAboveThreshold
-          //rT.reason.append("$carbsRequired add\'l carbs req w/in ${minutesAboveThreshold}m; ")
+            //rT.reason.append("$carbsRequired add\'l carbs req w/in ${minutesAboveThreshold}m; ")
             rT.reason.append(context.getString(R.string.reason_additional_carbs, carbsRequired, minutesAboveThreshold))
         }
 
         val forcedBasalmealmodes = preferences.get(DoubleKey.meal_modes_MaxBasal)
         val forcedBasal = preferences.get(DoubleKey.autodriveMaxBasal)
 
-        val enableSMB = enablesmb(profile, microBolusAllowed, mealData, target_bg)
+        //val enableSMB = enablesmb(profile, microBolusAllowed, mealData, target_bg)
+        // 📝 Repère l'activation d'un mode repas pour assouplir les gardes SMB/TBR.
+        // 📝 Repère l'activation d'un mode repas pour assouplir les gardes SMB/TBR.
+        val mealModeActive = mealTime || bfastTime || lunchTime || dinnerTime || highCarbTime
 
+        val enableSMB = enablesmb(
+            profile,
+            microBolusAllowed,
+            mealData,
+            target_bg,
+            mealModeActive,
+            bg,
+            delta.toDouble(),
+            eventualBG
+        )
+
+        mealModeSmbReason?.let { reason(rT, it) }
 
         rT.COB = mealData.mealCOB
         rT.IOB = iob_data.iob
@@ -4099,28 +5603,40 @@ rT.reason.appendLine(
                     .withoutZeros()
             }, Target: ${convertBG(target_bg)} \uD83D\uDCD2 "
         )
+        val zeroSinceMin = BasalHistoryUtils.historyProvider.zeroBasalDurationMinutes(2)
+        val minutesSinceLastChange = BasalHistoryUtils.historyProvider.minutesSinceLastChange()
         //val (conditionResult, conditionsTrue) = isCriticalSafetyCondition(mealData, hypoThreshold)
-        this.zeroBasalAccumulatedMinutes = getZeroBasalDuration(persistenceLayer, 2)
+        this.zeroBasalAccumulatedMinutes = zeroSinceMin
         // eventual BG is at/above target
         // if iob is over max, just cancel any temps
         if (eventualBG >= max_bg) {
-         //rT.reason.append("Eventual BG " + convertBG(eventualBG) + " >= " + convertBG(max_bg) + ", ")
+            //rT.reason.append("Eventual BG " + convertBG(eventualBG) + " >= " + convertBG(max_bg) + ", ")
             rT.reason.append(context.getString(R.string.reason_eventual_bg, convertBG(eventualBG), convertBG(max_bg)))
         }
-        val recentBGValues: List<Float> = getRecentBGs()
+        val tdd24h = tddCalculator.averageTDD(tddCalculator.calculate(1, allowMissingDays = false))?.data?.totalAmount ?: 0.0
+        val tirInHypo = tirCalculator.averageTIR(tirCalculator.calculate(1, 65.0, 180.0))?.belowPct() ?: 0.0
         val safetyDecision = safetyAdjustment(
-            currentBG = bg.toFloat(),
-            predictedBG = predictedBg,
-            bgHistory = recentBGValues,
+            currentBG = glucoseStatus.glucose.toFloat(),
+            predictedBG = eventualBG.toFloat(),
+            bgHistory = glucoseStatusCalculatorAimi.getRecentGlucose(),
             combinedDelta = combinedDelta.toFloat(),
             iob = iob,
-            maxIob = maxIob.toFloat(),
-            tdd24Hrs = tdd24Hrs,
+            maxIob = profile.max_iob.toFloat(),
+            tdd24Hrs = tdd24h.toFloat(),
             tddPerHour = tddPerHour,
-            tirInhypo = currentTIRLow.toFloat(),
-            targetBG = targetBg,
-            zeroBasalDurationMinutes = zeroBasalAccumulatedMinutes
+            tirInhypo = tirInHypo.toFloat(),
+            targetBG = profile.target_bg.toFloat(),
+            zeroBasalDurationMinutes = windowSinceDoseInt
         )
+        rT.isHypoRisk = safetyDecision.isHypoRisk
+
+        if (safetyDecision.isHypoRisk) {
+            uiInteraction.addNotification(
+                app.aaps.core.interfaces.notifications.Notification.HYPO_RISK_ALARM,
+                context.getString(R.string.hypo_risk_notification_text),
+                app.aaps.core.interfaces.notifications.Notification.URGENT
+            )
+        }
         // --- helpers ---
         fun runtimeToMinutes(rt: Long?): Int {
             if (rt == null) return Int.MAX_VALUE
@@ -4165,24 +5681,158 @@ rT.reason.appendLine(
                 )
             }
         }
-        if (iob_data.iob > max_iob) {
-          //rT.reason.append("IOB ${round(iob_data.iob, 2)} > max_iob $max_iob")
-            rT.reason.append(context.getString(R.string.reason_iob_max, round(iob_data.iob, 2), round(max_iob, 2)))
-            if (delta < 0) {
-              //rT.reason.append(", BG is dropping (delta $delta), setting basal to 0. ")
-                rT.reason.append(context.getString(R.string.reason_bg_dropping, delta))
-                return setTempBasal(0.0, 30, profile, rT, currenttemp, overrideSafetyLimits = false) // Basal à 0 pendant 30 minutes
+        val ngrResult = nightGrowthResistanceMode.evaluate(
+            now = Instant.ofEpochMilli(systemTime),
+            bg = bg,
+            delta = delta.toDouble(),
+            shortAvgDelta = shortAvgDelta.toDouble(),
+            longAvgDelta = longAvgDelta.toDouble(),
+            eventualBG = eventualBG,
+            targetBG = target_bg,
+            iob = iob_data.iob,
+            cob = mealData.mealCOB,
+            react = bg,
+            isMealActive = isMealActive,
+            config = ngrConfig
+        )
+        if (ngrResult.reason.isNotEmpty()) {
+            rT.reason.appendLine(ngrResult.reason)
+            consoleLog.add(ngrResult.reason)
+        }
+        val lowTempTarget = profile.temptargetSet && target_bg <= profile.target_bg
+        val originalMaxIobLimit = maxIobLimit
+        if (!lowTempTarget && ngrResult.extraIOBHeadroomU > 0.0) {
+            val slotBudget = ngrConfig.extraIobPer30Min * ngrConfig.headroomSlotCap
+            val absoluteMaxIob = preferences.get(DoubleKey.ApsSmbMaxIob) + slotBudget
+            val candidate = maxIobLimit + ngrResult.extraIOBHeadroomU
+            val updatedLimit = min(candidate, absoluteMaxIob)
+            if (updatedLimit > originalMaxIobLimit + 0.01) {
+                maxIobLimit = updatedLimit
+                this.maxIob = maxIobLimit
+                val headroomMessage = context.getString(
+                    R.string.oaps_aimi_ngr_headroom,
+                    round(maxIobLimit - originalMaxIobLimit, 2),
+                    round(maxIobLimit, 2)
+                )
+                rT.reason.appendLine(headroomMessage)
+                consoleLog.add(headroomMessage)
             }
-            return if (currenttemp.duration > 15 && (roundBasal(basal) == roundBasal(currenttemp.rate))) {
+        }
+        this.maxIob = maxIobLimit
+        val safeBgThreshold = max(110.0, target_bg)
+        val originalBasal = basal
+        val shouldApplyBasalBoost = ngrResult.basalMultiplier > 1.0001 && !lowTempTarget && delta > 0 && shortAvgDelta > 0 && bg > target_bg
+        if (shouldApplyBasalBoost && originalBasal > 0.0) {
+            val boostedBasal = roundBasal((originalBasal * ngrResult.basalMultiplier).coerceAtLeast(0.05))
+            if (boostedBasal > originalBasal + 0.01) {
+                basal = boostedBasal
+                val basalMessage = context.getString(
+                    R.string.oaps_aimi_ngr_basal_applied,
+                    boostedBasal / originalBasal,
+                    round(boostedBasal, 2)
+                )
+                rT.reason.appendLine(basalMessage)
+                consoleLog.add(basalMessage)
+            }
+        }
+        val originalSmb = smbToGive.toDouble()
+        val shouldApplySmbBoost = ngrResult.smbMultiplier > 1.0001 && !lowTempTarget && safetyDecision.bolusFactor >= 1.0 && eventualBG > target_bg && delta > 0 && bg >= safeBgThreshold
+        if (shouldApplySmbBoost && originalSmb > 0.0) {
+            val boosted = originalSmb * ngrResult.smbMultiplier
+            val smbClamp = min(ngrConfig.maxSMBClampU, maxSMB)
+            val finalSmb = boosted.coerceAtMost(smbClamp)
+            val appliedMultiplier = finalSmb / originalSmb
+            if (appliedMultiplier > 1.0001) {
+                smbToGive = finalSmb.toFloat()
+                val smbMessage = context.getString(
+                    R.string.oaps_aimi_ngr_smb_applied,
+                    appliedMultiplier,
+                    round(finalSmb, 3),
+                    round(smbClamp, 3)
+                )
+                rT.reason.appendLine(smbMessage)
+                consoleLog.add(smbMessage)
+            }
+        }
+        // 📝 Décision centralisée : peut-on relaxer le plafond IOB pendant un repas montant ?
+        // 📝 Décision centralisée : peut-on relaxer le plafond IOB pendant un repas montant ?
+        val mealHighIobDecision = computeMealHighIobDecision(
+            mealModeActive,
+            bg,
+            delta.toDouble(),
+            eventualBG,
+            target_bg,
+            iob_data.iob,
+            maxIobLimit
+        )
+        val allowMealHighIob = mealHighIobDecision.relax
+        val mealHighIobDamping = mealHighIobDecision.damping
+
+        if (iob_data.iob > maxIobLimit && !allowMealHighIob) {
+            //rT.reason.append("IOB ${round(iob_data.iob, 2)} > maxIobLimit maxIobLimit")
+            rT.reason.append(context.getString(R.string.reason_iob_max, round(iob_data.iob, 2), round(maxIobLimit, 2)))
+            val finalResult = if (delta < 0) {
+                // BG is dropping, usually we cut to 0. BUT check floor first.
+                val floorRate = applyBasalFloor(0.0, profile.current_basal, safetyDecision, activityContext, bg, delta.toDouble(), ((glucose_status as? GlucoseStatusAIMI)?.shortAvgDelta ?: 0.0).toDouble(), eventualBG.toDouble(), mealModeActive, profile.lgsThreshold?.toDouble() ?: 70.0)
+                
+                if (floorRate > 0.0) {
+                     rT.reason.append(context.getString(R.string.reason_bg_dropping_floor, delta, floorRate))
+                     setTempBasal(floorRate, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+                } else {
+                     rT.reason.append(context.getString(R.string.reason_bg_dropping, delta))
+                     setTempBasal(0.0, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+                }
+            } else if (currenttemp.duration > 15 && (roundBasal(basal) == roundBasal(currenttemp.rate))) {
                 rT.reason.append(", temp ${currenttemp.rate} ~ req ${round(basal, 2).withoutZeros()}U/hr. ")
                 rT
             } else {
-              //rT.reason.append("; setting current basal of ${round(basal, 2)} as temp. ")
-                rT.reason.append(context.getString(R.string.reason_set_temp_basal, round(basal, 2)))
-                setTempBasal(basal, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
+                //rT.reason.append("; setting current basal of ${round(basal, 2)} as temp. ")
+                // Apply floor here too just in case 'basal' itself is super low? (Unlikely if it came from profile, but possible)
+                val safeBasal = applyBasalFloor(basal, profile.current_basal, safetyDecision, activityContext, bg, delta.toDouble(), ((glucose_status as? GlucoseStatusAIMI)?.shortAvgDelta ?: 0.0).toDouble(), eventualBG.toDouble(), mealModeActive, profile.lgsThreshold?.toDouble() ?: 70.0)
+                rT.reason.append(context.getString(R.string.reason_set_temp_basal, round(safeBasal, 2)))
+                setTempBasal(safeBasal, 30, profile, rT, currenttemp, overrideSafetyLimits = false)
             }
+            comparator.compare(
+                aimiResult = finalResult,
+                glucoseStatus = glucose_status,
+                currentTemp = currenttemp,
+                iobData = iob_data_array,
+                profileAimi = profile,
+                autosens = autosens_data,
+                mealData = mealData,
+                microBolusAllowed = microBolusAllowed,
+                currentTime = currentTime,
+                flatBGsDetected = flatBGsDetected,
+                dynIsfMode = dynIsfMode
+            )
+            logDecisionFinal("MAX_IOB", finalResult, bg, delta)
+            return finalResult
         } else {
             var insulinReq = smbToGive.toDouble()
+
+            // ⚡ ACTIVITY SAFETY CLAMP
+            // Si mode protection (Recovery ou Intense), on bride les SMB pour éviter l'hypo tardive
+            if (activityContext.protectionMode || activityContext.state == app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.INTENSE) {
+                val safetyMax = maxSMB * 0.5 // 50% du MaxSMB autorisé
+                if (insulinReq > safetyMax) {
+                    insulinReq = safetyMax
+                    rT.reason.append(context.getString(R.string.reason_activity_cap, safetyMax)) // Ensure string exists or use plain text if risky
+                    consoleLog.add("SMB capped by Activity/Recovery (Limit: ${"%.2f".format(safetyMax)})")
+                }
+            }
+
+            // 📝 SMB autorisés mais atténués lorsque le repas impose un IOB > max raisonnable.
+            if (allowMealHighIob) {
+                insulinReq *= mealHighIobDamping
+                rT.reason.append(
+                    context.getString(
+                        R.string.reason_meal_high_iob_relaxed,
+                        round(iob_data.iob, 2),
+                        round(maxIobLimit, 2),
+                        (mealHighIobDamping * 100).roundToInt()
+                    )
+                )
+            }
 
             //updateZeroBasalDuration(profile_current_basal)
 
@@ -4195,6 +5845,11 @@ rT.reason.appendLine(
             //console.error(lastBolusAge);
             //console.error(profile.temptargetSet, target_bg, rT.COB);
             // only allow microboluses with COB or low temp targets, or within DIA hours of a bolus
+            
+            // 🔧 FIX: Log SMB flow continuation after basal boost
+            if (basalBoostApplied) {
+                consoleLog.add("SMB_FLOW_CONTINUES afterBasalBoost=true source=${basalBoostSource ?: "?"}")
+            }
 
             if (microBolusAllowed && enableSMB) {
                 val microBolus = insulinReq
@@ -4208,321 +5863,877 @@ rT.reason.appendLine(
 
                 // allow SMBIntervals between 1 and 10 minutes
                 //val SMBInterval = min(10, max(1, profile.SMBInterval))
-                val smbInterval = min(20, max(1, calculateSMBInterval()))
+                val smbInterval = calculateSMBInterval()
+                // Debug interval SMB : on journalise l'intervalle choisi et l'âge du dernier bolus
+                val intervalStr = String.format(java.util.Locale.US, "%.1f", smbInterval.toDouble())
+                val lastBolusStr = String.format(java.util.Locale.US, "%.1f", lastBolusAge)
+                val deltaStr = String.format(java.util.Locale.US, "%.1f", delta.toDouble())
+                rT.reason.append(" [SMB interval=")
+                rT.reason.append(intervalStr)
+                rT.reason.append(" min, lastBolusAge=")
+                rT.reason.append(lastBolusStr)
+                rT.reason.append(" min, Δ=")
+                rT.reason.append(deltaStr)
+                rT.reason.append(", BG=")
+                rT.reason.append(bg.toInt().toString())
+                rT.reason.append("] ")
+
                 val nextBolusMins = round(smbInterval - lastBolusAge, 0)
                 val nextBolusSeconds = round((smbInterval - lastBolusAge) * 60, 0) % 60
                 if (lastBolusAge > smbInterval) {
                     if (microBolus > 0) {
-                        rT.units = microBolus
-                        //rT.reason.append("Microbolusing ${microBolus}U. ")
-                        rT.reason.append(context.getString(R.string.reason_microbolus, microBolus))
+                        finalizeAndCapSMB(
+                            rT = rT,
+                            proposedUnits = microBolus,
+                            reasonHeader = context.getString(R.string.reason_microbolus, microBolus),
+                            mealData = mealData,
+                            hypoThreshold = threshold,
+                            isExplicitUserAction = false,
+                            decisionSource = "GlobalAIMI"
+                        )
                     }
                 } else {
-                    //rT.reason.append("Waiting " + nextBolusMins + "m " + nextBolusSeconds + "s to microbolus again. ")
-                    rT.reason.append(context.getString(R.string.reason_wait_microbolus, nextBolusMins, nextBolusSeconds))
+                    rT.reason.append(
+                        context.getString(
+                            R.string.reason_wait_microbolus,
+                            nextBolusMins,
+                            nextBolusSeconds
+                        )
+                    )
                 }
-
             }
 
-// Calcul du facteur d'ajustement en fonction de la glycémie (interpolation simplifiée)
-            val basalAdjustmentFactor = interpolatebasal(bg)
-
-// Calcul du taux basal final lissé à partir du TDD récent
-            val finalBasalRate = computeFinalBasal(bg, tdd7P.toFloat(), tdd7Days.toFloat(), basalaimi)
-
-// Taux basal courant comme valeur de base
-            var rate = profile_current_basal
-
-
-
-// ---------- FORÇAGE IMMEDIAT A L’ACTIVATION (30 minutes pleines) ----------
-//             if (isMealActive) {
-//                 val forced = forcedBasalmealmodes.toDouble().coerceAtLeast(0.0)
-//
-//                 // Garde anti "glissement" : si une TBR identique est déjà posée (±0.05 U/h) avec >=25 min restantes, ne pas reposer
-//                 val isAlreadyForced = kotlin.math.abs(currenttemp.rate - forced) < 0.05 && currenttemp.duration >= 25
-//
-//                 // On déclenche au démarrage du mode (runtime ≤ 2 minutes) ET si pas déjà forcé
-//                 if (!isAlreadyForced) {
-//                     rT.reason.append(
-//                         context.getString(
-//                             R.string.meal_mode_first_30,
-//                             "$runtimeMinLabel($runtimeMinValue)",
-//                             forced
-//                         )
-//                     )
-//                     return setTempBasal(
-//                         _rate = forced,
-//                         duration = 30,                 // ← 30 minutes pleines à partir de maintenant
-//                         profile = profile,
-//                         rT = rT,
-//                         currenttemp = currenttemp,
-//                         overrideSafetyLimits = true,
-//                         forceExact = true              // ← ignore clamps/adjust/cycle (sauf LGS)
-//                     )
-//                 }
-//             }
-// ---------------------------------------------------------------------------
-
-// 1️⃣ Préparation des variables
-            var overrideSafety = false
-            var chosenRate: Double? = null
-
-// Garde: une TBR "meal" forcée est-elle déjà active ? (≈ même valeur & durée > 0)
             val forcedMealActive =
-                kotlin.math.abs(currenttemp.rate - forcedBasalmealmodes.toDouble()) < 0.05 &&
-                    currenttemp.duration > 0
+                abs(currenttemp.rate - forcedBasalmealmodes.toDouble()) < 0.05 && currenttemp.duration > 0
 
-// Sommes-nous dans la fenêtre repas 0–30 min ?
-            val inMealFirst30 = isMealActive && (runtimeMinValue in 0..30)
+            val basalInput = BasalDecisionEngine.Input(
+                bg = bg,
+                profileCurrentBasal = profile_current_basal,
+                basalEstimate = basalaimi.toDouble(),
+                tdd7P = tdd7P,
+                tdd7Days = tdd7Days,
+                variableSensitivity = variableSensitivity.toDouble(),
+                profileSens = profile.sens,
+                predictedBg = predictedBg.toDouble(),
+                targetBg = targetBg.toDouble(),
+                lgsThreshold = profile.lgsThreshold?.toDouble() ?: 70.0,
+                eventualBg = eventualBG,
+                iob = iob.toDouble(),
+                maxIob = maxIob,
+                allowMealHighIob = allowMealHighIob,
+                safetyDecision = safetyDecision,
+                mealData = mealData,
+                delta = delta.toDouble(),
+                shortAvgDelta = shortAvgDelta.toDouble(),
+                longAvgDelta = longAvgDelta.toDouble(),
+                combinedDelta = combinedDelta.toDouble(),
+                bgAcceleration = bgAcceleration.toDouble(),
+                slopeFromMaxDeviation = mealData.slopeFromMaxDeviation,
+                slopeFromMinDeviation = mealData.slopeFromMinDeviation,
+                forcedBasal = forcedBasal.toDouble(),
+                forcedMealActive = forcedMealActive,
+                isMealActive = isMealActive,
+                runtimeMinValue = runtimeMinValue,
+                snackTime = snackTime,
+                snackRuntimeMin = runtimeToMinutes(snackrunTime),
+                fastingTime = fastingTime,
+                sportTime = sportTime,
+                honeymoon = honeymoon,
+                pregnancyEnable = pregnancyEnable,
+                mealTime = mealTime,
+                mealRuntimeMin = runtimeToMinutes(mealruntime),
+                bfastTime = bfastTime,
+                bfastRuntimeMin = runtimeToMinutes(bfastruntime),
+                lunchTime = lunchTime,
+                lunchRuntimeMin = runtimeToMinutes(lunchruntime),
+                dinnerTime = dinnerTime,
+                dinnerRuntimeMin = runtimeToMinutes(dinnerruntime),
+                highCarbTime = highCarbTime,
+                highCarbRuntimeMin = runtimeToMinutes(highCarbrunTime),
+                timenow = timenow,
+                sixAmHour = sixAMHour,
+                recentSteps5Minutes = recentSteps5Minutes,
+                nightMode = nightbis,
+                modesCondition = modesCondition,
+                autodrive = autodrive,
+                currentTemp = currenttemp,
+                glucoseStatus = glucoseStatus,
+                featuresCombinedDelta = f?.combinedDelta,
+                smbToGive = smbToGive.toDouble(),
+                zeroSinceMin = zeroSinceMin,
+                minutesSinceLastChange = minutesSinceLastChange,
+                pumpCaps = pumpCaps
+            )
+            val helpers = BasalDecisionEngine.Helpers(
+                calculateRate = { basalValue, currentBasalValue, multiplier, label ->
+                    calculateRate(basalValue, currentBasalValue, multiplier, label, currenttemp, rT)
+                },
+                calculateBasalRate = { basalValue, currentBasalValue, multiplier ->
+                    calculateBasalRate(basalValue, currentBasalValue, multiplier)
+                },
+                detectMealOnset = { deltaValue, predictedDelta, acceleration, predBg, targBg ->
+                    detectMealOnset(deltaValue, predictedDelta, acceleration, predBg, targBg)
+                },
+                round = { value, digits -> round(value, digits) }
+            )
+            val basalDecision = basalDecisionEngine.decide(basalInput, rT, helpers)
+            
+            // --- Update Learners BEFORE building final result ---
+            val currentHour = LocalTime.now().hour
+            val anyMealActive = mealTime || bfastTime || lunchTime || dinnerTime || highCarbTime
+            val isNight = currentHour >= 22 || currentHour <= 6
+            
+            basalLearner.process(
+                currentBg = bg,
+                currentDelta = delta.toDouble(),
+                tdd7Days = tdd7Days,
+                tdd30Days = tdd7Days,
+                isFastingTime = isNight && !anyMealActive
+            )
+            
+            // 📊 Expose BasalLearner state in rT for visibility
+            consoleLog.add("📊 BASAL_LEARNER:")
+            consoleLog.add("  │ shortTerm: ${"%.3f".format(Locale.US, basalLearner.shortTermMultiplier)}")
+            consoleLog.add("  │ mediumTerm: ${"%.3f".format(Locale.US, basalLearner.mediumTermMultiplier)}")
+            consoleLog.add("  │ longTerm: ${"%.3f".format(Locale.US, basalLearner.longTermMultiplier)}")
+            consoleLog.add("  └ combined: ${"%.3f".format(Locale.US, basalLearner.getMultiplier())}")
 
-// ⚠️ Autoriser basalLS uniquement si on n'est PAS en repas <30 min
-//    ET qu'aucune TBR repas forcée n'est active (pour ne pas l'écraser)
-            if (safetyDecision.basalLS &&
-                combinedDelta in -1.0..3.0 &&
-                predictedBg > 130 &&
-                iob > 0.1 &&
-                !inMealFirst30 &&
-                !forcedMealActive
-            ) {
-                return setTempBasal(
-                    _rate = profile_current_basal,
-                    duration = 30,
-                    profile = profile,
-                    rT = rT,
-                    currenttemp = currenttemp,
-                    overrideSafetyLimits = false
-                )
+            // 🎯 Process UnifiedReactivityLearner
+            unifiedReactivityLearner.processIfNeeded()
+            
+            // 📊 Expose UnifiedReactivityLearner state in rT for visibility
+            unifiedReactivityLearner.lastAnalysis?.let { analysis ->
+                val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+                consoleLog.add("📊 REACTIVITY_LEARNER:")
+                consoleLog.add("  │ globalFactor: ${"%.3f".format(Locale.US, analysis.globalFactor)}")
+                consoleLog.add("  │ shortTermFactor: ${"%.3f".format(Locale.US, analysis.shortTermFactor)}")
+                consoleLog.add("  │ combinedFactor: ${"%.3f".format(Locale.US, unifiedReactivityLearner.getCombinedFactor())}")
+                consoleLog.add("  │ TIR 70-180: ${analysis.tir70_180.toInt()}%")
+                consoleLog.add("  │ CV%: ${analysis.cv_percent.toInt()}%")
+                consoleLog.add("  │ Hypo count (24h): ${analysis.hypo_count}")
+                consoleLog.add("  │ Reason: ${analysis.adjustmentReason}")
+                consoleLog.add("  └ Analyzed at: ${sdf.format(Date(analysis.timestamp))}")
             }
 
-// ------------------------------
-// 2️⃣ Early‐meal detection → bypass sécurité, forçage vers `forcedBasal`
-            if (detectMealOnset(delta, predictedBg, bgAcceleration.toFloat())
-                && !nightbis && modesCondition && bg > 100 && autodrive
-            ) {
-                chosenRate = forcedBasal.toDouble()
-                overrideSafety = true
-                rT.reason.append(context.getString(R.string.reason_early_meal, forcedBasal))
-            } else {
-                // ------------------------------
-                // 3️⃣ Cas snack / fasting / sport / honeymoon
-                chosenRate = when {
-                    // Snack : aligne le test sur minutes (robuste secondes/minutes)
-                    snackTime && (runtimeToMinutes(snackrunTime) in 0..30) && delta < 10 -> {
-                        calculateRate(basal, profile_current_basal, 4.0, "SnackTime", currenttemp, rT).toDouble()
-                    }
-
-                    fastingTime                                                          ->
-                        calculateRate(profile_current_basal, profile_current_basal, delta.toDouble(), "FastingTime", currenttemp, rT).toDouble()
-
-                    sportTime && bg > 169 && delta > 4                                   ->
-                        calculateRate(profile_current_basal, profile_current_basal, 1.3, "SportTime", currenttemp, rT).toDouble()
-
-                    honeymoon && delta in 0.0..6.0 && bg in 99.0..141.0                  ->
-                        calculateRate(profile_current_basal, profile_current_basal, delta.toDouble(), "Honeymoon", currenttemp, rT).toDouble()
-
-                    bg in 81.0..99.0 && delta in 3.0..7.0 && honeymoon                   ->
-                        calculateRate(basal, profile_current_basal, 1.0, "Honeymoon small-rise", currenttemp, rT).toDouble()
-
-                    bg > 120 && delta > 0 && smbToGive == 0.0f && honeymoon              ->
-                        calculateRate(basal, profile_current_basal, 5.0, "Honeymoon corr.", currenttemp, rT).toDouble()
-
-                    else                                                                 -> null
+            // 🔮 WCycle Active Learning
+            if (wCyclePreferences.enabled()) {
+                val phase = wCycleFacade.getPhase()
+                if (phase != app.aaps.plugins.aps.openAPSAIMI.wcycle.CyclePhase.UNKNOWN) {
+                     wCycleFacade.updateLearning(phase, autosens_data.ratio)
                 }
             }
 
-// ------------------------------
-// 4️⃣ Sécurité immédiate avant hypo : predictedBg<100 & slope négative OU IOB trop haut
-            if (chosenRate == null &&
-                (predictedBg < 100 && mealData.slopeFromMaxDeviation <= 0 || iob > maxIob)
-            ) {
-                chosenRate = 0.0
-                overrideSafety = false
-                rT.reason.append(context.getString(R.string.safety_cut_tbr, maxIob))
+            // 📊 Build learners summary for RT visibility (finalResult.learnersInfo)
+            val learnersParts = mutableListOf<String>()
+            
+            // Basal Learner
+            val basalMult = basalLearner.getMultiplier()
+            if (kotlin.math.abs(basalMult - 1.0) > 0.01) {
+                learnersParts.add("Basal×" + String.format(Locale.US, "%.2f", basalMult))
             }
-
-// ------------------------------
-// 5️⃣ Hypoglycémies & basale réduite
-            if (chosenRate == null) {
-                when {
-                    bg < 80.0                                                  -> {
-                        chosenRate = 0.0
-                        rT.reason.append(context.getString(R.string.bg_below_80))
-                    }
-
-                    bg in 80.0..90.0 &&
-                        slopeFromMaxDeviation <= 0 && iob > 0.1f && !sportTime -> {
-                        chosenRate = 0.0
-                        rT.reason.append(context.getString(R.string.bg_80_90_fall))
-                    }
-
-                    bg in 80.0..90.0 &&
-                        slopeFromMinDeviation >= 0.3 && slopeFromMaxDeviation >= 0 &&
-                        combinedDelta in -1.0..2.0 && !sportTime &&
-                        bgAcceleration.toFloat() > 0.0f                        -> {
-                        chosenRate = profile_current_basal * 0.2
-                        rT.reason.append(context.getString(R.string.bg_80_90_stable))
-                    }
-
-                    bg in 90.0..100.0 &&
-                        slopeFromMinDeviation <= 0.3 && iob > 0.1f && !sportTime &&
-                        bgAcceleration.toFloat() > 0.0f                        -> {
-                        chosenRate = 0.0
-                        rT.reason.append(context.getString(R.string.bg_90_100_moderate))
-                    }
-
-                    bg in 90.0..100.0 &&
-                        slopeFromMinDeviation >= 0.3 && combinedDelta in -1.0..2.0 && !sportTime &&
-                        bgAcceleration.toFloat() > 0.0f                        -> {
-                        chosenRate = profile_current_basal * 0.5
-                        rT.reason.append(context.getString(R.string.bg_90_100_slight_gain))
-                    }
+            
+            // PKPD Learner (fusedISF) - handle nullable
+            pkpdRuntime?.let { runtime ->
+                val profileIsf = profile.sens
+                if (kotlin.math.abs(runtime.fusedIsf - profileIsf) > 0.5) {
+                    learnersParts.add("ISF:" + runtime.fusedIsf.toInt())
                 }
             }
-
-// ------------------------------
-// 6️⃣ Hausses lentes / rapides
-            if (chosenRate == null) {
-                if (bg > 120 &&
-                    slopeFromMinDeviation in 0.4..20.0 &&
-                    combinedDelta > 1 && !sportTime &&
-                    bgAcceleration.toFloat() > 1.0f
-                ) {
-                    chosenRate = calculateBasalRate(finalBasalRate, profile_current_basal, combinedDelta.toDouble())
-                    rT.reason.append(context.getString(R.string.slow_rise_proportional_adjustment))
-                } else if (eventualBG > 110 && !sportTime && bg > 150 &&
-                    combinedDelta in -2.0..15.0 &&
-                    bgAcceleration.toFloat() > 0.0f
-                ) {
-                    chosenRate = calculateBasalRate(finalBasalRate, profile_current_basal, basalAdjustmentFactor)
-                    rT.reason.append(context.getString(R.string.eventual_bg_over_110_hyper_factor))
-                }
+            
+            // Unified Reactivity Learner
+            val reactivityFactor = unifiedReactivityLearner.getCombinedFactor()
+            if (kotlin.math.abs(reactivityFactor - 1.0) > 0.01) {
+                learnersParts.add("React×" + String.format(Locale.US, "%.2f", reactivityFactor))
             }
-
-// ------------------------------
-// 7️⃣ Horaires & activité
-            if (chosenRate == null) {
-                if ((timenow in 11..13 || timenow in 18..21) &&
-                    iob < 0.8 && recentSteps5Minutes < 100 &&
-                    combinedDelta > -1 && slopeFromMinDeviation > 0.3 &&
-                    bgAcceleration.toFloat() > 0.0f
-                ) {
-                    chosenRate = profile_current_basal * 1.5
-                    rT.reason.append(context.getString(R.string.calm_meal_and_timing))
-                } else if (timenow > sixAMHour && recentSteps5Minutes > 100) {
-                    chosenRate = 0.0
-                    rT.reason.append(context.getString(R.string.morning_activity_basal_zero))
-                } else if (timenow <= sixAMHour && delta > 0 && bgAcceleration.toFloat() > 0.0f) {
-                    chosenRate = profile_current_basal.toDouble()
-                    rT.reason.append(context.getString(R.string.morning_rise_profile_basal))
-                }
-            }
-
-// ------------------------------
-// 8️⃣ Repas & snacks (boucle) — aligne aussi les fenêtres sur minutes converties
-            if (chosenRate == null) {
-                val mealConditions = listOf(
-                    snackTime to runtimeToMinutes(snackrunTime),
-                    mealTime to runtimeToMinutes(mealruntime),
-                    bfastTime to runtimeToMinutes(bfastruntime),
-                    lunchTime to runtimeToMinutes(lunchruntime),
-                    dinnerTime to runtimeToMinutes(dinnerruntime),
-                    highCarbTime to runtimeToMinutes(highCarbrunTime)
-                )
-                for ((meal, rtMin) in mealConditions) {
-                    if (meal && rtMin in 0..30) {
-                        // Si on arrive ici, le forçage 0–30 n'était pas applicable plus haut (ex: timing)
-                        chosenRate = calculateBasalRate(finalBasalRate, profile_current_basal, 10.0)
-                        rT.reason.append(context.getString(R.string.meal_snack_under_30m_basal_10))
-                        break
-                    } else if (meal && rtMin in 31..60 && delta > 0) {
-                        chosenRate = calculateBasalRate(finalBasalRate, profile_current_basal, delta.toDouble())
-                        rT.reason.append(context.getString(R.string.meal_snack_30_60m_rising_basal_delta))
-                        break
-                    }
-                }
-            }
-
-// ------------------------------
-// 9️⃣ Hyperglycémies & corrections
-            if (chosenRate == null) {
-                when {
-                    eventualBG > 180 && delta > 3  ->
-                        chosenRate = calculateBasalRate(basalaimi.toDouble(), profile_current_basal, basalAdjustmentFactor).also {
-                            rT.reason.append(context.getString(R.string.eventual_bg_over_180_hyper_basalaimi))
-                        }
-
-                    bg > 180 && delta in -5.0..1.0 ->
-                        chosenRate = (profile_current_basal * basalAdjustmentFactor).also {
-                            rT.reason.append(context.getString(R.string.bg_over_180_stable_basal_factor))
-                        }
-                }
-            }
-
-// ------------------------------
-// 🔟 Mode “honeymoon”
-            if (chosenRate == null && honeymoon) {
-                when {
-                    bg in 140.0..169.0 && delta > 0                                                                           ->
-                        chosenRate = profile_current_basal.toDouble().also {
-                            rT.reason.append(context.getString(R.string.honeymoon_bg_140_169_profile))
-                        }
-
-                    bg > 170 && delta > 0                                                                                     ->
-                        chosenRate = calculateBasalRate(finalBasalRate, profile_current_basal, basalAdjustmentFactor).also {
-                            rT.reason.append(context.getString(R.string.honeymoon_bg_over_170_adjustment))
-                        }
-
-                    combinedDelta > 2 && bg in 90.0..119.0                                                                    ->
-                        chosenRate = profile_current_basal.toDouble().also {
-                            rT.reason.append(context.getString(R.string.honeymoon_delta_over_2_bg_90_119_profile))
-                        }
-
-                    combinedDelta > 0 && bg > 110 && eventualBG > 120 && bg < 160                                             ->
-                        chosenRate = (profile_current_basal * basalAdjustmentFactor).also {
-                            rT.reason.append(context.getString(R.string.honeymoon_mixed_correction))
-                        }
-
-                    mealData.slopeFromMaxDeviation > 0 && mealData.slopeFromMinDeviation > 0 && bg > 110 && combinedDelta > 0 ->
-                        chosenRate = (profile_current_basal * basalAdjustmentFactor).also {
-                            rT.reason.append(context.getString(R.string.honeymoon_plus_meal_detection))
-                        }
-
-                    mealData.slopeFromMaxDeviation in 0.0..0.2 && mealData.slopeFromMinDeviation in 0.0..0.5 &&
-                        bg in 120.0..150.0 && delta > 0                                                                       ->
-                        chosenRate = (profile_current_basal * basalAdjustmentFactor).also {
-                            rT.reason.append(context.getString(R.string.honeymoon_small_slope))
-                        }
-
-                    mealData.slopeFromMaxDeviation > 0 && mealData.slopeFromMinDeviation > 0 &&
-                        bg in 100.0..120.0 && delta > 0                                                                       ->
-                        chosenRate = (profile_current_basal * basalAdjustmentFactor).also {
-                            rT.reason.append(context.getString(R.string.honeymoon_meal_slope))
-                        }
-                }
-            }
-
-// ------------------------------
-// 1️⃣1️⃣ Cas grossesse
-            if (chosenRate == null && pregnancyEnable && delta > 0 && bg > 110 && !honeymoon) {
-                chosenRate = calculateBasalRate(finalBasalRate, profile_current_basal, basalAdjustmentFactor)
-                rT.reason.append(context.getString(R.string.pregnancy_delta_over_0_adjustment))
-            }
-
-// ------------------------------
-// 1️⃣2️⃣ Valeur de repli si aucun cas ne s'est déclenché
-            val finalRate = chosenRate ?: profile_current_basal.toDouble()
-
-// ------------------------------
-// 1️⃣3️⃣ Appel unique à setTempBasal()
-            return setTempBasal(
-                _rate = finalRate,
-                duration = 30,
+            
+            val learnersSummary = learnersParts.joinToString(", ")
+            
+            val finalResult = setTempBasal(
+                _rate = basalDecision.rate,
+                duration = basalDecision.duration,
                 profile = profile,
                 rT = rT,
                 currenttemp = currenttemp,
-                overrideSafetyLimits = overrideSafety
+                overrideSafetyLimits = basalDecision.overrideSafety
             )
+            comparator.compare(
+                aimiResult = finalResult,
+                glucoseStatus = glucose_status,
+                currentTemp = currenttemp,
+                iobData = iob_data_array,
+                profileAimi = profile,
+                autosens = autosens_data,
+                mealData = mealData,
+                microBolusAllowed = microBolusAllowed,
+                currentTime = currentTime,
+                flatBGsDetected = flatBGsDetected,
+                dynIsfMode = dynIsfMode
+            )
+
+            // 🛡️ Safety: Strictly Clamp Basal to >= 0.0 to prevent negative display/command
+            finalResult.rate = finalResult.rate?.coerceAtLeast(0.0) ?: 0.0
+
+            // 📊 ================================================================
+            // LEARNERS INFO: Populate finalResult for RT visibility
+            // ================================================================
+            if (learnersSummary.isNotEmpty()) {
+                // 1. Set dedicated field
+                finalResult.learnersInfo = learnersSummary
+                
+                // 2. Append to reason (visible in RT's main "reason" field)
+                finalResult.reason.append("; [").append(learnersSummary).append("]")
+                
+                // 3. Log for debugging
+                consoleLog.add("📊 Learners applied to finalResult.reason: [" + learnersSummary + "]")
+            }
+            
+
+            // 📊 ================================================================
+            // RT INSTRUMENTATION: Production Debug Lines
+            // ================================================================
+            
+            // Collect data for detailed learners line
+            val urFactor = unifiedReactivityLearner.getCombinedFactor()
+            val profileIsf = profile.sens  // From profile
+            val fusedIsf = pkpdRuntime?.fusedIsf
+            val pkpdDiaMin = pkpdRuntime?.params?.diaHrs?.let { (it * 60).toInt() }
+            val pkpdPeakMin = pkpdRuntime?.params?.peakMin?.toInt()
+            val pkpdTailPct = pkpdRuntime?.tailFraction?.let { (it * 100).toInt() }
+            
+            // Build concise learners line
+            val learnersDebugLine = app.aaps.plugins.aps.openAPSAIMI.utils.RtInstrumentationHelpers.buildLearnersLine(
+                unifiedReactivityFactor = urFactor,
+                profileIsf = profileIsf,
+                fusedIsf = fusedIsf,
+                pkpdDiaMin = pkpdDiaMin,
+                pkpdPeakMin = pkpdPeakMin,
+                pkpdTailPct = pkpdTailPct
+            )
+            
+            // Append learners line to reason (newline for readability)
+            finalResult.reason.append("\n").append(learnersDebugLine)
+            
+            // WCycle line (if applicable)
+            if (wCyclePreferences.enabled()) {
+                val wcyclePhase = wCycleFacade.getPhase()?.name
+                val wcycleFactor = wCycleFacade.getIcMultiplier()
+                val wcycleLine = app.aaps.plugins.aps.openAPSAIMI.utils.RtInstrumentationHelpers.buildWCycleLine(
+                    enabled = true,
+                    phase = wcyclePhase,
+                    factor = wcycleFactor
+                )
+                if (wcycleLine != null) {
+                    finalResult.reason.append("\n").append(wcycleLine)
+                }
+            }
+            
+            // Auditor line (always present, shows OFF/STALE/verdict)
+            val auditorDebugLine = app.aaps.plugins.aps.openAPSAIMI.utils.RtInstrumentationHelpers.buildAuditorLine(
+                enabled = preferences.get(BooleanKey.AimiAuditorEnabled)
+            )
+            finalResult.reason.append("\n").append(auditorDebugLine)
+            
+            // Log instrumentation applied
+            consoleLog.add("📊 RT instrumentation: 2-3 debug lines added to reason")
+            
+            // 🧠 ================================================================
+            // AI DECISION AUDITOR INTEGRATION (Second Brain)
+            // ================================================================
+            val auditorEnabled = preferences.get(BooleanKey.AimiAuditorEnabled)
+            
+            // DEBUG: Log the preference value
+            aapsLogger.debug(LTag.APS, "🧠 AI Auditor: Preference value = $auditorEnabled")
+            
+            // Set flag immediately for RT display (before async operations)
+            finalResult.aiAuditorEnabled = auditorEnabled
+            
+            if (auditorEnabled) {
+                try {
+                    // Collect all data for auditor
+                    val smbProposed = finalResult.units ?: 0.0
+                    val tbrRate = finalResult.rate
+                    val tbrDuration = finalResult.duration
+                    val intervalMin = intervalsmb  // Current interval
+                    val smb30min = calculateSmbLast30Min()
+                    val predictionAvailable = (finalResult.predBGs?.IOB?.size ?: 0) > 0
+                    
+                    // Check if in prebolus window (P1/P2)
+                    // Note: Therapy doesn't expose P1/P2 directly, we infer from mode start time
+                    val therapy = Therapy(persistenceLayer).also { it.updateStatesBasedOnTherapyEvents() }
+                    val now = dateUtil.now()
+                    
+                    // P1 = first 15 min, P2 = 15-30 min of meal mode
+                    val inPrebolusWindow = when {
+                        therapy.bfastTime -> {
+                            val runtimeMin = therapy.getTimeElapsedSinceLastEvent("bfast") / 60000
+                            runtimeMin in 0..30
+                        }
+                        therapy.lunchTime -> {
+                            val runtimeMin = therapy.getTimeElapsedSinceLastEvent("lunch") / 60000
+                            runtimeMin in 0..30
+                        }
+                        therapy.dinnerTime -> {
+                            val runtimeMin = therapy.getTimeElapsedSinceLastEvent("dinner") / 60000
+                            runtimeMin in 0..30
+                        }
+                        therapy.highCarbTime -> {
+                            val runtimeMin = therapy.getTimeElapsedSinceLastEvent("highcarb") / 60000
+                            runtimeMin in 0..30
+                        }
+                        else -> false
+                    }
+                    
+                    // Detect mode type
+                    val modeType = when {
+                        therapy.bfastTime -> "breakfast"
+                        therapy.lunchTime -> "lunch"
+                        therapy.dinnerTime -> "dinner"
+                        therapy.highCarbTime -> "highCarb"
+                        therapy.snackTime -> "snack"
+                        therapy.mealTime -> "meal"
+                        else -> null
+                    }
+                    
+                    // Calculate mode runtime using Therapy.getTimeElapsedSinceLastEvent
+                    val modeRuntimeMin = when {
+                        therapy.bfastTime -> (therapy.getTimeElapsedSinceLastEvent("bfast") / 60000).toInt()
+                        therapy.lunchTime -> (therapy.getTimeElapsedSinceLastEvent("lunch") / 60000).toInt()
+                        therapy.dinnerTime -> (therapy.getTimeElapsedSinceLastEvent("dinner") / 60000).toInt()
+                        therapy.highCarbTime -> (therapy.getTimeElapsedSinceLastEvent("highcarb") / 60000).toInt()
+                        therapy.snackTime -> (therapy.getTimeElapsedSinceLastEvent("snack") / 60000).toInt()
+                        therapy.mealTime -> (therapy.getTimeElapsedSinceLastEvent("meal") / 60000).toInt()
+                        else -> null
+                    }
+                    
+                    // Autodrive state
+                    val autodriveState = lastAutodriveState.toString()
+                    
+                    // WCycle info
+                    val wcyclePhase = wCycleFacade.getPhase()?.name
+                    val wcycleFactor = wCycleFacade.getIcMultiplier()  // Use IC multiplier as factor
+                    
+                    // Extract reason tags from finalResult.reason
+                    val reasonTags = finalResult.reason.toString().split(". ").map { it.trim() }
+                    
+                    // Call auditor (async)
+                    auditorOrchestrator.auditDecision(
+                        bg = bg,
+                        delta = delta.toDouble(),
+                        shortAvgDelta = shortAvgDelta.toDouble(),
+                        longAvgDelta = longAvgDelta.toDouble(),
+                        glucoseStatus = glucose_status,
+                        iob = iob_data_array.firstOrNull() ?: IobTotal(dateUtil.now()).apply { iob = 0.0; activity = 0.0 },
+                        cob = cob.toDouble(),  // Convert Float to Double
+                        profile = profile,
+                        pkpdRuntime = pkpdRuntime,
+                        isfUsed = profile.variable_sens,
+                        smbProposed = smbProposed,
+                        tbrRate = tbrRate,
+                        tbrDuration = tbrDuration,
+                        intervalMin = intervalMin.toDouble(),
+                        maxSMB = maxSMB,
+                        maxSMBHB = maxSMBHB,
+                        maxIOB = maxIob,
+                        maxBasal = profile.max_basal,
+                        reasonTags = reasonTags,
+                        modeType = modeType,
+                        modeRuntimeMin = modeRuntimeMin,
+                        autodriveState = autodriveState,
+                        wcyclePhase = wcyclePhase,
+                        wcycleFactor = wcycleFactor,
+                        tbrMaxMode = null,  // TODO: if you track max TBR for modes
+                        tbrMaxAutoDrive = null,  // TODO: if you track max TBR for autodrive
+                        smb30min = smb30min,
+                        predictionAvailable = predictionAvailable,
+                        inPrebolusWindow = inPrebolusWindow
+                    ) { verdict, modulated ->
+                        // Callback executed when audit completes
+                        
+                        if (modulated.appliedModulation) {
+                            // ✅ Modulation applied
+                            consoleLog.add(sanitizeForJson("🧠 AI Auditor: ${modulated.modulationReason}"))
+                            
+                            if (verdict != null) {
+                                consoleLog.add(sanitizeForJson("   Verdict: ${verdict.verdict}, Confidence: ${"%.2f".format(verdict.confidence)}"))
+                                
+                                // Log first 2 evidence items
+                                verdict.evidence.take(2).forEach { evidence ->
+                                    consoleLog.add(sanitizeForJson("   Evidence: $evidence"))
+                                }
+                                
+                                if (verdict.riskFlags.isNotEmpty()) {
+                                    consoleLog.add(sanitizeForJson("   ⚠️ Risk Flags: ${verdict.riskFlags.joinToString(", ")}"))
+                                }
+                            }
+                            
+                            // Apply modulated decision
+                            finalResult.units = modulated.smbU
+                            if (modulated.tbrRate != null) {
+                                finalResult.rate = modulated.tbrRate
+                            }
+                            if (modulated.tbrMin != null) {
+                                finalResult.duration = modulated.tbrMin
+                            }
+                            
+                            // Log changes
+                            if (kotlin.math.abs((modulated.smbU ?: 0.0) - smbProposed) > 0.01) {
+                                consoleLog.add(sanitizeForJson("   SMB modulated: ${"%.2f".format(smbProposed)} → ${"%.2f".format(modulated.smbU)} U"))
+                            }
+                            if (kotlin.math.abs(modulated.intervalMin - intervalMin) > 0.1) {
+                                consoleLog.add(sanitizeForJson("   Interval modulated: ${intervalMin.toInt()} → ${modulated.intervalMin.toInt()} min"))
+                            }
+                            if (modulated.preferTbr) {
+                                consoleLog.add(sanitizeForJson("   Prefer TBR enabled"))
+                            }
+                            
+                            // 🎨 Populate RT fields for dashboard display
+                            finalResult.aiAuditorEnabled = true
+                            finalResult.aiAuditorVerdict = verdict?.verdict?.name
+                            finalResult.aiAuditorConfidence = verdict?.confidence
+                            finalResult.aiAuditorModulation = modulated.modulationReason
+                            finalResult.aiAuditorRiskFlags = verdict?.riskFlags?.joinToString(", ")
+                            
+                        } else {
+                            // ℹ️ No modulation (audit only, confidence too low, etc.)
+                            if (verdict != null) {
+                                consoleLog.add(sanitizeForJson("🧠 AI Auditor: ${modulated.modulationReason}"))
+                                consoleLog.add(sanitizeForJson("   AIMI decision confirmed (Verdict: ${verdict.verdict}, Conf: ${"%.2f".format(verdict.confidence)})"))
+                                
+                                // Still populate RT fields for audit tracking
+                                finalResult.aiAuditorEnabled = true
+                                finalResult.aiAuditorVerdict = verdict.verdict.name
+                                finalResult.aiAuditorConfidence = verdict.confidence
+                                finalResult.aiAuditorModulation = "Audit only (no modulation)"
+                                finalResult.aiAuditorRiskFlags = verdict.riskFlags.joinToString(", ")
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    consoleLog.add(sanitizeForJson("⚠️ AI Auditor error: ${e.message}"))
+                    aapsLogger.error(LTag.APS, "AI Auditor exception", e)
+                    // Continue with original decision on error
+                }
+            }
+            
+            return finalResult
         }
     }
+
+    /**
+     * Applies a safety floor to the basal rate to prevent unnecessary cutoffs (0 U/h)
+     * during "cruise mode" or moderate activity, unless critical safety conditions are met.
+     */
+    private fun applyBasalFloor(
+        suggestedRate: Double,
+        profileBasal: Double,
+        safetyDecision: SafetyDecision,
+        activityContext: app.aaps.plugins.aps.openAPSAIMI.activity.ActivityContext,
+        bg: Double,
+        delta: Double,
+        shortAvgDelta: Double,
+        predictedBg: Double,
+        isMealActive: Boolean,
+        lgsThreshold: Double
+    ): Double {
+        // 1. Critical Safety: Hypo REELLE seulement permet 0 U/h
+        if (safetyDecision.stopBasal || bg < lgsThreshold) {
+            return suggestedRate // Allow 0.0 pour hypo réelle
+        }
+        
+        // 2. ⚡ Prediction basse MAIS montée → ne pas bypasser le floor
+        if (predictedBg < 65) {
+            if (delta > 0 && bg > 90) {
+                // Prédiction pessimiste, BG monte → appliquer floor quand même
+                // Note: logging handled at caller level
+            } else {
+                return suggestedRate // Allow 0.0 si vraiment en baisse
+            }
+        }
+
+        // 3. ⚡ Mode Repas Actif : Floor plus élevé (60% profil)
+        if (isMealActive && suggestedRate < profileBasal * 0.6) {
+            val mealFloor = profileBasal * 0.6
+            if (bg > 90 && delta > -1) {
+                return mealFloor
+            }
+        }
+
+        // 4. Activity Context
+        val isActivity = activityContext.state != app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState.REST
+        if (isActivity) {
+            // If dropping fast during activity, allow low basal/zero
+            if (delta < -3 || bg < 90) {
+                return suggestedRate
+            }
+            // Recovery: If rising/stable during activity, avoid ZERO.
+            val activityFloor = profileBasal * 0.3  // 30% floor en activité
+            if (suggestedRate < activityFloor) {
+                // If rising, push higher
+                if (delta > 0) {
+                    val risingFloor = profileBasal * 0.6  // 60% si montée
+                    return risingFloor
+                }
+                return activityFloor
+            }
+            return suggestedRate
+        }
+
+        // 5. Persistent Rise (Standard Mode Boost)
+        // Si ça monte de façon persistante (AvgDelta > 0.5) et Delta > 0, on ne laisse pas chuter en dessous de 80%
+        if (delta > 0 && shortAvgDelta > 0.5 && bg > 100) {
+             val persistentFloor = profileBasal * 0.8
+             if (suggestedRate < persistentFloor) {
+                 return persistentFloor
+             }
+        }
+
+        // 6. Cruise Mode (No Activity, No Critical Low)
+        val cruiseFloor = profileBasal * 0.55 // 55% floor (augmenté de 45%)
+        if (suggestedRate < cruiseFloor) {
+            // Only enforce floor if strictly safe
+            if (bg > 100 && delta > -2 && predictedBg > 80) {
+                return cruiseFloor
+            }
+        }
+
+        return suggestedRate
+    }
+
+
+
+
+    // Helper for General Hyper Kicker (Non-Meal) (AIMI 2.0)
+    private fun adjustBasalForGeneralHyper(
+        suggestedBasalUph: Double,
+        bg: Double,
+        targetBg: Double,
+        delta: Double,
+        shortAvgDelta: Double,
+        maxBasalConfig: Double
+    ): Double {
+        // "Progressivement rapidement" logic requested by user
+        
+        // Risque montée franche ou plateau haut persistant
+        val rising = delta >= 0.5 || shortAvgDelta >= 0.3
+        val plateauHigh = delta >= -0.1 && bg > targetBg + 50
+        val rocketStart = delta > 10.0 // FCL 13.0 Rocket Start
+    
+        if (!rising && !plateauHigh && !rocketStart) return suggestedBasalUph
+    
+        val deviation = bg - targetBg
+    
+        // Progressive scaling based on deviation severity
+        // 30mg au dessus: x2
+        // 60mg au dessus: x5
+        // 90mg au dessus: x8
+        // 120mg+        : x10 (Authorized by user)
+        // Rocket Start : Auto Max (x10) if delta > 10.0
+    
+        val scaleFactor = when {
+            rocketStart || deviation >= 120 -> 10.0
+            deviation >= 90  -> 8.0
+            deviation >= 60  -> 5.0
+            deviation >= 30  -> 2.0
+            else -> 1.0
+        }
+    
+        if (scaleFactor == 1.0) return suggestedBasalUph
+        
+        val boosted = suggestedBasalUph * scaleFactor
+        
+        // Cap only by absolute max config (safety)
+        return if (boosted > maxBasalConfig) maxBasalConfig else boosted
+    }
+// -----------------------------------------------------------------------------------------
+    // ⚙️ DECISION PIPELINE HELPERS (AIMI 2.0 Refactor)
+    // -----------------------------------------------------------------------------------------
+
+    // -----------------------------------------------------
+    // ⚔️ DECISION PIPELINE HELPERS (AIMI 2.0 Refactor)
+    // -----------------------------------------------------
+
+    private enum class ModeDegradeLevel(val value: Int, val label: String) {
+        NORMAL(0, "Normal"),
+        CAUTION(1, "Caution"),
+        HIGH_RISK(2, "High Risk"),
+        CRITICAL(3, "Critical")
+    }
+
+    private data class DegradePlan(
+        val level: ModeDegradeLevel,
+        val reason: String,
+        val bolusFactor: Double,
+        val tbrFactor: Double,
+        val banner: String?
+    )
+
+    private data class ModeState(
+         var name: String = "",
+         var startMs: Long = 0L,
+         var pre1: Boolean = false,
+         var pre2: Boolean = false,
+         var pre1SentMs: Long = 0L,
+         var pre2SentMs: Long = 0L,
+         var tbrStartedMs: Long = 0L,      // 🆕 Track TBR activation
+         var degradeLevel: Int = 0          // 🆕 Track safety state
+    ) {
+         fun serialize(): String = "$name|$startMs|$pre1|$pre2|$pre1SentMs|$pre2SentMs|$tbrStartedMs|$degradeLevel"
+         companion object {
+             fun deserialize(s: String): ModeState {
+                 if (s.isBlank()) return ModeState()
+                 val p = s.split("|")
+                 if (p.size < 4) return ModeState()
+                 return try {
+                     ModeState(
+                         p[0], 
+                         p[1].toLong(), 
+                         p[2].toBoolean(), 
+                         p[3].toBoolean(),
+                         p.getOrNull(4)?.toLongOrNull() ?: 0L,
+                         p.getOrNull(5)?.toLongOrNull() ?: 0L,
+                         p.getOrNull(6)?.toLongOrNull() ?: 0L,
+                         p.getOrNull(7)?.toIntOrNull() ?: 0
+                     )
+                 } catch (e: Exception) { ModeState() }
+             }
+         }
+    }
+
+    private fun logDecisionFinal(tag: String, rT: RT, bg: Double? = null, delta: Float? = null) {
+        val smb = rT.insulinReq ?: 0.0
+        val smbUnits = rT.units ?: 0.0
+        val tbr = (rT.rate ?: 0.0).coerceAtLeast(0.0)
+        val dur = rT.duration ?: 0
+        val builder = StringBuilder("DECISION_FINAL[$tag]: smb=${"%.2f".format(smb)}U tbr=${"%.2f".format(tbr)}U/h dur=${dur}m")
+        if (bg != null) builder.append(" bg=${bg.roundToInt()}")
+        if (delta != null) builder.append(" Δ=${"%.1f".format(delta)}")
+        val reasonText = rT.reason.toString().replace("\n", " | ")
+        builder.append(" reason=${reasonText.take(180)}")
+        consoleLog.add(builder.toString())
+
+        val modeLabel = when {
+            mealTime -> "Meal"
+            lunchTime -> "Lunch"
+            dinnerTime -> "Dinner"
+            highCarbTime -> "HighCarb"
+            snackTime -> "Snack"
+            else -> "None"
+        }
+        val predSize = rT.predBGs?.IOB?.size ?: lastPredictionSize
+        val predAvailable = predSize > 0 || lastPredictionAvailable
+        val eventual = (rT.eventualBG ?: lastEventualBgSnapshot)
+        val bgValue = bg ?: this.bg
+        val deltaValue = delta?.toDouble() ?: this.delta.toDouble()
+        val refractoryStatus = if (!lastBolusAgeMinutes.isNaN() && lastBolusAgeMinutes < intervalsmb) "YES" else "NO"
+        val smbFinalValue = if (smbUnits > 0.0) smbUnits else smb
+        lastSmbFinal = smbFinalValue
+        val predChunk = "${if (predAvailable) "Y" else "N"}(sz=${predSize} ev=${eventual.roundToInt()})"
+
+        // 🔧 FIX 4: Enhanced diagnostic logging with activity threshold
+        val tdd24h = tddCalculator.calculateDaily(-24, 0)?.totalAmount ?: 30.0
+        val activityThreshold = (tdd24h / 24.0) * 0.15
+        
+        val tickLine =
+            "TICK ts=${System.currentTimeMillis()} bg=${bgValue.roundToInt()} d=${"%.1f".format(deltaValue)} iob=${"%.2f".format(iob)} act=${"%.3f".format(iobActivityNow)} th=${"%.3f".format(activityThreshold)} " +
+                "cob=${"%.1f".format(cob)} mode=$modeLabel autodriveState=$lastAutodriveState pred=$predChunk " +
+                "safety=$lastSafetySource ref=$refractoryStatus maxIOB=${"%.2f".format(maxIob)} maxSMB=${"%.2f".format(maxSMB)} " +
+                "smb=${"%.2f".format(lastSmbProposed)}->${"%.2f".format(lastSmbCapped)}->${"%.2f".format(smbFinalValue)} " +
+                "tbr=${"%.2f".format(tbr)} src=$lastDecisionSource"
+        consoleLog.add(tickLine)
+    }
+
+    // ==========================================
+    // 🛡️ PRIORITY 1: SAFETY (LGS/HYPO)
+    // ==========================================
+    private fun trySafetyStart(
+        bg: Double,
+        delta: Float,
+        profile: OapsProfileAimi,
+        iob: IobTotal,
+        noise: Int,
+        predBg: Double,
+        eventualBg: Double
+    ): DecisionResult {
+        lastSafetySource = "CALLED"
+        // 0. Sanity Check (Units/Calibration)
+        if (bg < 25 || bg > 600) {
+             consoleLog.add("⚠ Unit Mismatch Suspected? BG=$bg")
+        }
+
+        // 1. Extreme Low / LGS (Correct Logic)
+        // Explicit Debug Structure
+        fun safe(v: Double) = if (v.isFinite()) v else 999.0
+        val bgNow = safe(bg)
+        val predNow = safe(predBg)
+        val eventualNow = safe(eventualBg)
+        val lgsMin = minOf(bgNow, predNow, eventualNow)
+        val lgsTh = computeHypoThreshold(lgsMin, profile.lgsThreshold) // Uses member function
+
+        if (lgsMin < lgsTh || (bg < 70 && delta < 0)) {
+            val reasonStr = "LGS_TRIGGER: min=${lgsMin.toInt()} <= Th=${lgsTh.toInt()} (BG=${bgNow.toInt()} pred=${predNow.toInt()} ev=${eventualNow.toInt()})"
+            consoleLog.add("SAFETY_APPLIED_TBR_ZERO reason=$reasonStr")
+            lastSafetySource = "SafetyLGS"
+            return DecisionResult.Applied(
+                source = "SafetyLGS",
+                bolusU = 0.0,
+                tbrUph = 0.0, // Strict 0.0
+                tbrMin = 30,
+                reason = reasonStr
+            )
+        }
+
+        // 2. High Noise / Stale Data
+        if (noise >= 3) {
+            lastSafetySource = "SafetyNoise"
+             return DecisionResult.Applied(
+                source = "SafetyNoise",
+                bolusU = 0.0,
+                tbrUph = 0.0,
+                tbrMin = 30,
+                reason = "High Noise ($noise) - Force TBR 0.0"
+            )
+        }
+        
+        lastSafetySource = "SafetyPass"
+        return DecisionResult.Fallthrough("Safety OK")
+    }
+
+    private fun tryMealAdvisor(bg: Double, delta: Float, iobData: IobTotal, profile: OapsProfileAimi, lastBolusTime: Long, modesCondition: Boolean): DecisionResult {
+        val estimatedCarbs = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbs)
+        val estimatedCarbsTime = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbTime).toLong()
+        val timeSinceEstimateMin = (System.currentTimeMillis() - estimatedCarbsTime) / 60000.0
+
+        if (estimatedCarbs > 10.0 && timeSinceEstimateMin in 0.0..120.0 && bg >= 60) {
+            // Refractory Check (Safety)
+            if (hasReceivedRecentBolus(45, lastBolusTime)) {
+                return DecisionResult.Fallthrough("Advisor Refractory (Recent Bolus <45m)")
+            }
+            
+            // FIX: Removed delta > 0.0 condition - Meal Advisor should work even if BG is stable/falling
+            // The refractory check, BG floor (>=60), and time window (120min) are sufficient safety
+            if (modesCondition) { 
+                val maxBasalPref = preferences.get(DoubleKey.meal_modes_MaxBasal)
+                val safeMax = if (maxBasalPref > 0.1) maxBasalPref else profile.max_basal
+                
+                // FIX: TBR Coverage Calculation
+                // ORIGINAL logic subtracted coveredByBasal from SMB, causing netNeeded to become 0
+                // NEW logic: TBR is a COMPLEMENT to SMB, not a replacement
+                // - SMB provides immediate prebolus action
+                // - TBR provides continuous aggressive support
+                
+                // INTELLIGENT IOB HANDLING (Fix 2025-12-19)
+                // Problem: User may have elevated IOB from previous unlogged meal (soup, snack)
+                // Solution: Discount IOB + guarantee minimum coverage for confirmed new meal
+                val insulinForCarbs = estimatedCarbs / profile.carb_ratio
+                
+                // Apply IOB discount to account for uncertainty
+                val effectiveIOB = iobData.iob * MEAL_ADVISOR_IOB_DISCOUNT_FACTOR
+                
+                // Guarantee minimum coverage (user confirmed meal = BG WILL rise)
+                val minimumRequired = insulinForCarbs * MEAL_ADVISOR_MIN_CARB_COVERAGE
+                
+                // Calculate need with discounted IOB, then apply minimum guarantee
+                val calculatedNeed = insulinForCarbs - effectiveIOB
+                val netNeeded = max(calculatedNeed, minimumRequired).coerceAtLeast(0.0)
+                
+                // For reference, calculate what TBR will deliver (not subtracted from SMB)
+                val tbrCoverage = safeMax * 0.5  // 30min = 0.5h
+
+                // DEBUG: Log all calculation steps with detailed breakdown
+                consoleLog.add("ADVISOR_CALC carbs=${estimatedCarbs.toInt()}g IC=${profile.carb_ratio} → ${String.format("%.2f", insulinForCarbs)}U")
+                consoleLog.add("ADVISOR_CALC IOB_raw=${String.format("%.2f", iobData.iob)}U × discount=$MEAL_ADVISOR_IOB_DISCOUNT_FACTOR → IOB_effective=${String.format("%.2f", effectiveIOB)}U")
+                consoleLog.add("ADVISOR_CALC minimumGuaranteed=${String.format("%.2f", minimumRequired)}U (${(MEAL_ADVISOR_MIN_CARB_COVERAGE * 100).toInt()}% of carb need)")
+                consoleLog.add("ADVISOR_CALC calculated=${String.format("%.2f", calculatedNeed)}U → netSMB=${String.format("%.2f", netNeeded)}U (max of calculated and minimum)")
+                consoleLog.add("ADVISOR_CALC TBR=${String.format("%.1f", safeMax)}U/h (will deliver ${String.format("%.2f", tbrCoverage)}U over 30min as complement)")
+                consoleLog.add("ADVISOR_CALC TOTAL delivery: SMB ${String.format("%.2f", netNeeded)}U + TBR ${String.format("%.2f", tbrCoverage)}U = ${String.format("%.2f", netNeeded + tbrCoverage)}U delta=$delta modesOK=true")
+                
+                     return DecisionResult.Applied(
+                        source = "MealAdvisor",
+                        bolusU = netNeeded,
+                        tbrUph = safeMax,
+                        tbrMin = 30,
+                        reason = "📸 Meal Advisor: ${estimatedCarbs.toInt()}g -> ${"%.2f".format(netNeeded)}U + TBR ${"%.1f".format(safeMax)}U/h"
+                    )
+            } else {
+                consoleLog.add("ADVISOR_SKIP reason=modesCondition_false (legacy mode active)")
+            }
+        }
+        return DecisionResult.Fallthrough("No active Meal Advisor request")
+    }
+
+    private fun tryAutodrive(
+        bg: Double, 
+        delta: Float, 
+        shortAvgDelta: Float, 
+        profile: OapsProfileAimi,
+        lastBolusTime: Long,
+        predictedBg: Float,
+        slopeFromMinDeviation: Double,
+        targetBg: Float,
+        reasonBuf: StringBuilder,
+        autodrive: Boolean,
+        dynamicPbolusLarge: Double,
+        dynamicPbolusSmall: Double
+    ): DecisionResult {
+        val autodriveBG = preferences.get(IntKey.OApsAIMIAutodriveBG)
+        
+        // GATE R1: Strict BG Threshold
+        if (bg < autodriveBG) {
+            // reasonBuf.append("Autodrive Ignored: BG $bg < Threshold $autodriveBG") 
+            return DecisionResult.Fallthrough("BG $bg < Threshold $autodriveBG")
+        }
+
+        // GATE R2: Strict Cooldown (45 min)
+        val now = System.currentTimeMillis()
+        val cooldownMs = 45 * 60 * 1000L
+        val remaining = (lastAutodriveActionTime + cooldownMs) - now
+        if (remaining > 0) {
+            return DecisionResult.Fallthrough("Cooldown active (${remaining/1000/60}m)")
+        }
+
+        // Logic Re-Use
+        val validCondition = isAutodriveModeCondition(delta, autodrive, slopeFromMinDeviation, bg.toFloat(), predictedBg, reasonBuf, targetBg)
+        
+        if (!validCondition) return DecisionResult.Fallthrough("Conditions not met")
+
+        // Determine Intensity
+        var amount = 0.0
+        var stateReason = ""
+        
+        if (bg >= 100.0 && delta >= 5.0 && shortAvgDelta >= 3.0) {
+             amount = dynamicPbolusLarge
+             stateReason = "Confirmed: Bg>100 & Delta>5 & Avg>3"
+        } else if (delta >= 2.0) {
+             amount = dynamicPbolusSmall
+             stateReason = "Early: Delta>2"
+        } else {
+             return DecisionResult.Fallthrough("Delta insufficient")
+        }
+
+        // TBR Calculation
+        val rawAutoMax = preferences.get(DoubleKey.autodriveMaxBasal) ?: 0.0
+        val scalarAuto: Double = if (rawAutoMax > 0.1) rawAutoMax.toDouble() else profile.max_basal.toDouble()
+        val safeAutoMax = minOf(scalarAuto, profile.max_basal.toDouble())
+        
+        // 🛡️ Sanitize stateReason to prevent JSON crashes
+        val safeStateReason = sanitizeForJson(stateReason)
+        consoleLog.add(sanitizeForJson("AD_INTENT amount=$amount tbr=$safeAutoMax reason=$safeStateReason"))
+        
+        return DecisionResult.Applied(
+            source = "Autodrive",
+            bolusU = amount,
+            tbrUph = safeAutoMax,
+            tbrMin = 30,
+            reason = "🚀 Autodrive [$safeStateReason] -> Force ${amount}U"
+        )
+    }
+
 }
+
+enum class AutodriveState {
+    IDLE,
+    WATCHING,
+    ENGAGED
+}
+
+

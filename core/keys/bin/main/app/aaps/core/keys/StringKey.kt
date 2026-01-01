@@ -1,5 +1,8 @@
 package app.aaps.core.keys
 
+import app.aaps.core.keys.interfaces.BooleanPreferenceKey
+import app.aaps.core.keys.interfaces.StringPreferenceKey
+
 enum class StringKey(
     override val key: String,
     override val defaultValue: String,
@@ -11,7 +14,8 @@ enum class StringKey(
     override val negativeDependency: BooleanPreferenceKey? = null,
     override val hideParentScreenIfHidden: Boolean = false,
     override val isPassword: Boolean = false,
-    override val isPin: Boolean = false
+    override val isPin: Boolean = false,
+    override val exportable: Boolean = true
 ) : StringPreferenceKey {
 
     GeneralUnits("units", "mg/dl"),
@@ -33,23 +37,33 @@ enum class StringKey(
     OverviewCopySettingsFromNs(key = "statuslights_copy_ns", "", dependency = BooleanKey.OverviewShowStatusLights),
 
     SafetyAge("age", "adult"),
-    LoopApsMode("aps_mode", "OPEN" /* ApsMode.OPEN.name */),
     MaintenanceEmail("maintenance_logs_email", "logs@aaps.app", defaultedBySM = true),
     MaintenanceIdentification("email_for_crash_report", ""),
     AutomationLocation("location", "PASSIVE", hideParentScreenIfHidden = true),
 
     SmsAllowedNumbers("smscommunicator_allowednumbers", ""),
     SmsOtpPassword("smscommunicator_otp_password", "", dependency = BooleanKey.SmsAllowRemoteCommands, isPassword = true),
-    SmsOtpSecret("smscommunicator_otp_secret", ""), // Move to StringNonKey
-
     VirtualPumpType("virtualpump_type", "Generic AAPS"),
 
     NsClientUrl("nsclientinternal_url", ""),
     NsClientApiSecret("nsclientinternal_api_secret", "", isPassword = true),
     NsClientWifiSsids("ns_wifi_ssids", "", dependency = BooleanKey.NsClientUseWifi),
     NsClientAccessToken("nsclient_token", "", isPassword = true),
-    TidepoolUsername("tidepool_username", ""),
-    TidepoolPassword("tidepool_password", "", isPassword = true),
-    TidepoolTestLogin(key = "tidepool_test_login", ""),
+
+    PumpCommonBolusStorage("pump_sync_storage_bolus", ""),
+    PumpCommonTbrStorage("pump_sync_storage_tbr", ""),
     GarminRequestKey(key = "garmin_aaps_key", defaultValue = ""),
+    OApsAIMIWCycleTrackingMode("key_oaps_aimi_wcycle_tracking_mode", "FIXED_28"),
+    OApsAIMIWCycleContraceptive("key_oaps_aimi_wcycle_contraceptive", "NONE"),
+    OApsAIMIWCycleThyroid("key_oaps_aimi_wcycle_thyroid", "EUTHYROID"),
+    OApsAIMIWCycleVerneuil("key_oaps_aimi_wcycle_verneuil", "NONE"),
+    OApsAIMINightGrowthStart("key_oaps_aimi_ngr_night_start", "22:00"),
+    OApsAIMINightGrowthEnd("key_oaps_aimi_ngr_night_end", "06:00"),
+    AimiAdvisorOpenAIKey("aimi_advisor_openai_key", "", isPassword = true),
+    AimiAdvisorGeminiKey("aimi_advisor_gemini_key", "", isPassword = true),
+    AimiAdvisorDeepSeekKey("aimi_advisor_deepseek_key", "", isPassword = true),
+    AimiAdvisorClaudeKey("aimi_advisor_claude_key", "", isPassword = true),
+    AimiAdvisorProvider("aimi_advisor_provider", "OPENAI"),
+    AimiAuditorMode("aimi_auditor_mode", "AUDIT_ONLY"),  // 🧠 AI Auditor mode: AUDIT_ONLY, SOFT_MODULATION, HIGH_RISK_ONLY
+    OApsAIMIUnstableModeState("key_oaps_aimi_mode_state", "")
 }

@@ -1,5 +1,7 @@
 package app.aaps.core.keys
 
+import app.aaps.core.keys.interfaces.BooleanPreferenceKey
+
 enum class BooleanKey(
     override val key: String,
     override val defaultValue: Boolean,
@@ -11,7 +13,8 @@ enum class BooleanKey(
     override val dependency: BooleanPreferenceKey? = null,
     override val negativeDependency: BooleanPreferenceKey? = null,
     override val hideParentScreenIfHidden: Boolean = false,
-    override val engineeringModeOnly: Boolean = false
+    override val engineeringModeOnly: Boolean = false,
+    override val exportable: Boolean = true
 ) : BooleanPreferenceKey {
 
     GeneralSimpleMode("simple_mode", true),
@@ -24,6 +27,7 @@ enum class BooleanKey(
     OverviewShowCgmButton("show_cgm_button", false, defaultedBySM = true, showInNsClientMode = false),
     OverviewShowCalibrationButton("show_calibration_button", false, defaultedBySM = true, showInNsClientMode = false),
     OverviewShortTabTitles("short_tabtitles", false, defaultedBySM = true),
+    OverviewUseDashboardLayout("overview_use_dashboard", true, defaultedBySM = true),
     OverviewShowNotesInDialogs("show_notes_entry_dialogs", false, defaultedBySM = true),
     OverviewShowStatusLights("show_statuslights", true, defaultedBySM = true, hideParentScreenIfHidden = true),
     OverviewUseBolusAdvisor("use_bolus_advisor", true, defaultedBySM = true),
@@ -74,7 +78,6 @@ enum class BooleanKey(
     SmsReportPumpUnreachable("smscommunicator_report_pump_unreachable", true),
 
     VirtualPumpStatusUpload("virtualpump_uploadstatus", false, showInNsClientMode = false),
-    GarminLocalHttpServer("communication_http", false, defaultedBySM = true, hideParentScreenIfHidden = true),
     NsClientUploadData("ns_upload", true, showInNsClientMode = false, hideParentScreenIfHidden = true),
     NsClientAcceptCgmData("ns_receive_cgm", false, showInNsClientMode = false, hideParentScreenIfHidden = true),
     NsClientAcceptProfileStore("ns_receive_profile_store", true, showInNsClientMode = false, hideParentScreenIfHidden = true),
@@ -83,7 +86,7 @@ enum class BooleanKey(
     NsClientAcceptInsulin("ns_receive_insulin", false, showInNsClientMode = false, hideParentScreenIfHidden = true),
     NsClientAcceptCarbs("ns_receive_carbs", false, showInNsClientMode = false, hideParentScreenIfHidden = true),
     NsClientAcceptTherapyEvent("ns_receive_therapy_events", false, showInNsClientMode = false, hideParentScreenIfHidden = true),
-    NsClientAcceptOfflineEvent("ns_receive_offline_event", false, showInNsClientMode = false, hideParentScreenIfHidden = true),
+    NsClientAcceptRunningMode("ns_receive_running_mode", false, showInNsClientMode = false, hideParentScreenIfHidden = true),
     NsClientAcceptTbrEb("ns_receive_tbr_eb", false, showInNsClientMode = false, engineeringModeOnly = true),
     NsClientNotificationsFromAlarms("ns_alarms", false, calculatedDefaultValue = true),
     NsClientNotificationsFromAnnouncements("ns_announcements", false, calculatedDefaultValue = true),
@@ -97,7 +100,6 @@ enum class BooleanKey(
     NsClientCreateAnnouncementsFromCarbsReq("ns_create_announcements_from_carbs_req", false, calculatedDefaultValue = true, showInNsClientMode = false),
     NsClientSlowSync("ns_sync_slow", false),
     NsClient3UseWs("ns_use_ws", true),
-    TidepoolUseTestServers("tidepool_dev_servers", false),
     OpenHumansWifiOnly("oh_wifi_only", true),
     OpenHumansChargingOnly("oh_charging_only", false),
     XdripSendStatus("xdrip_send_status", false),
@@ -112,6 +114,13 @@ enum class BooleanKey(
     WearCustomWatchfaceAuthorization(key = "wear_custom_watchface_autorization", defaultValue = false),
     WearNotifyOnSmb(key = "wear_notifySMB", defaultValue = true),
     WearBroadcastData(key = "wear_broadcast_data", defaultValue = false),
+    WizardCalculationVisible("wizard_calculation_visible", defaultValue = false),
+    WizardCorrectionPercent("wizard_correction_percent", defaultValue = false),
+    WizardIncludeCob("wizard_include_cob", defaultValue = false),
+    WizardIncludeTrend("wizard_include_trend_bg", defaultValue = false),
+    SiteRotationManagePump("site_rotation_manage_pump", defaultValue = false),
+    SiteRotationManageCgm("site_rotation_manage_cgm", defaultValue = false),
+
     OApsAIMIMLtraining("key_enable_ML_training", false),
     OApsAIMIEnableBasal("key_enable_basal", false),
     OApsAIMIEnableStepsFromWatch("count_steps_watch", false),
@@ -121,5 +130,11 @@ enum class BooleanKey(
     OApsAIMIhoneymoon("key_use_Aimi_honeymoon",false),
     OApsxdriponeminute(key = "key_use_Aimi_xdripOM",defaultValue = false),
     OApsAIMIautoDrive(key = "key_use_Aimi_autoDrive",defaultValue = false),
-    OApsAIMIwcycle(key = "key_use_Aimi_wcycle",defaultValue = false)
+    OApsAIMIwcycle(key = "key_use_Aimi_wcycle",defaultValue = false),
+    OApsAIMIWCycleShadow("key_use_Aimi_wcycle_shadow", false),
+    OApsAIMIWCycleRequireConfirm("key_use_Aimi_wcycle_require_confirm", false),
+    OApsAIMINightGrowthEnabled("key_oaps_aimi_ngr_enabled", true),
+    OApsAIMIPkpdEnabled("key_aimi_pkpd_enabled", false),
+    OApsAIMIUnifiedReactivityEnabled("key_use_unified_reactivity", true),  // 🎯 NEW: Enable UnifiedReactivityLearner
+    AimiAuditorEnabled("aimi_auditor_enabled", false),  // 🧠 AI Decision Auditor
 }

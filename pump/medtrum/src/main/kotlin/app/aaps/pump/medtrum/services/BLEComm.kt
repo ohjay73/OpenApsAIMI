@@ -17,14 +17,13 @@ import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
 import androidx.core.app.ActivityCompat
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
-import app.aaps.core.keys.Preferences
+import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.ui.toast.ToastUtils
 import app.aaps.pump.medtrum.comm.ManufacturerData
 import app.aaps.pump.medtrum.comm.ReadDataPacket
@@ -68,6 +67,7 @@ class BLEComm @Inject internal constructor(
 
     private val handler =
         Handler(HandlerThread(this::class.simpleName + "Handler").also { it.start() }.looper)
+    private val pendingRunnables = mutableListOf<Runnable>()
     private val mBluetoothAdapter: BluetoothAdapter? get() = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager?)?.adapter
     private var mBluetoothGatt: BluetoothGatt? = null
 
@@ -94,9 +94,7 @@ class BLEComm @Inject internal constructor(
     @SuppressLint("MissingPermission")
     @Synchronized
     fun startScan(): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
-        ) {
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
             ToastUtils.errorToast(context, context.getString(app.aaps.core.ui.R.string.need_connect_permission))
             aapsLogger.error(LTag.PUMPBTCOMM, "missing permissions")
             return false
@@ -123,10 +121,8 @@ class BLEComm @Inject internal constructor(
 
     @Synchronized
     fun connect(from: String, deviceSN: Long): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED ||
-                ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED ||
-                ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED)
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED ||
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED
         ) {
             ToastUtils.errorToast(context, context.getString(app.aaps.core.ui.R.string.need_connect_permission))
             aapsLogger.error(LTag.PUMPBTCOMM, "missing permission: $from")
@@ -138,10 +134,10 @@ class BLEComm @Inject internal constructor(
             return false
         }
 
+        resetConnection("initialize")
+
         isConnected = false
         isConnecting = true
-        mWritePackets = null
-        mReadPacket = null
 
         if (mDeviceAddress != null && mDeviceSN == deviceSN) {
             // Skip scanning and directly connect to gatt
@@ -164,36 +160,51 @@ class BLEComm @Inject internal constructor(
     private fun connectGatt(device: BluetoothDevice) {
         // Reset sequence counter
         mWriteSequenceNumber = 0
-        if (mBluetoothGatt == null) {
-            mBluetoothGatt = device.connectGatt(context, false, mGattCallback, BluetoothDevice.TRANSPORT_LE)
-        } else {
-            // Already connected?, this should not happen force disconnect
-            aapsLogger.error(LTag.PUMPBTCOMM, "connectGatt, mBluetoothGatt is not null")
-            disconnect("connectGatt, mBluetoothGatt is not null")
+        if (mBluetoothGatt != null) {
+            aapsLogger.warn(LTag.PUMPBTCOMM, "connectGatt: mBluetoothGatt is not null, closing previous connection")
+            resetConnection("connectGatt")
         }
+        mBluetoothGatt = device.connectGatt(context, false, mGattCallback, BluetoothDevice.TRANSPORT_LE)
     }
 
     @SuppressLint("MissingPermission")
     @Synchronized
     fun disconnect(from: String) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
-        ) {
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
             aapsLogger.error(LTag.PUMPBTCOMM, "missing permission: $from")
             return
         }
         aapsLogger.debug(LTag.PUMPBTCOMM, "disconnect from: $from")
+        
+        // Stop scanning if we were connecting
         if (isConnecting) {
             isConnecting = false
             stopScan()
-            SystemClock.sleep(100)
         }
-        if (isConnected) {
-            aapsLogger.debug(LTag.PUMPBTCOMM, "Connected, disconnecting")
+
+        pendingRunnables.forEach { handler.removeCallbacks(it) }
+        pendingRunnables.clear()
+
+        if (mBluetoothGatt != null) {
+            aapsLogger.debug(LTag.PUMPBTCOMM, "Connected/Connecting, disconnecting gatt")
             mBluetoothGatt?.disconnect()
+
+            // Post a timeout to force close if onConnectionStateChange doesn't fire
+            val timeoutRunnable = Runnable {
+                synchronized(this) {
+                    if (mBluetoothGatt != null) {
+                        aapsLogger.warn(LTag.PUMPBTCOMM, "Disconnect timeout reached, forcing close")
+                        resetConnection("disconnect timeout")
+                        isConnected = false
+                        mCallback?.onBLEDisconnected()
+                    }
+                }
+            }
+            pendingRunnables.add(timeoutRunnable)
+            handler.postDelayed(timeoutRunnable, 2000) // 2 seconds timeout
         } else {
-            aapsLogger.debug(LTag.PUMPBTCOMM, "Not connected, closing gatt")
-            close()
+            aapsLogger.debug(LTag.PUMPBTCOMM, "Gatt is null, ensuring closed state")
+            resetConnection("disconnect null gatt")
             isConnected = false
             mCallback?.onBLEDisconnected()
         }
@@ -202,9 +213,37 @@ class BLEComm @Inject internal constructor(
     @SuppressLint("MissingPermission")
     @Synchronized fun close() {
         aapsLogger.debug(LTag.PUMPBTCOMM, "BluetoothAdapter close")
-        mBluetoothGatt?.close()
-        SystemClock.sleep(100)
+        try {
+            mBluetoothGatt?.close()
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.PUMPBTCOMM, "Error closing gatt: " + e.message)
+        }
         mBluetoothGatt = null
+    }
+
+    /**
+     * Forcefully tear down any ongoing BLE activity and clear internal state so a fresh
+     * connection attempt cannot reuse stale Bluetooth resources.
+     */
+    @SuppressLint("MissingPermission")
+    @Synchronized
+    fun resetConnection(reason: String) {
+        aapsLogger.warn(LTag.PUMPBTCOMM, "Resetting BLE connection: $reason")
+        pendingRunnables.forEach { handler.removeCallbacks(it) }
+        pendingRunnables.clear()
+        stopScan()
+        try {
+            mBluetoothGatt?.disconnect()
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.PUMPBTCOMM, "Error disconnecting gatt: ${e.message}")
+        }
+        close()
+        mWritePackets = null
+        mReadPacket = null
+        uartWrite = null
+        uartRead = null
+        isConnected = false
+        isConnecting = false
     }
 
     /** Scan callback  */
@@ -379,6 +418,14 @@ class BLEComm @Inject internal constructor(
     @Synchronized
     private fun onConnectionStateChangeSynchronized(gatt: BluetoothGatt, status: Int, newState: Int) {
         aapsLogger.debug(LTag.PUMPBTCOMM, "onConnectionStateChange newState: $newState status: $status")
+
+        if (status != BluetoothGatt.GATT_SUCCESS) {
+            aapsLogger.warn(LTag.PUMPBTCOMM, "onConnectionStateChange error status: $status")
+            resetConnection("stateChange error $status")
+            mCallback?.onBLEDisconnected()
+            return
+        }
+
         if (newState == BluetoothProfile.STATE_CONNECTED) {
             isConnected = true
             isConnecting = false
@@ -391,14 +438,10 @@ class BLEComm @Inject internal constructor(
                     aapsLogger.warn(LTag.PUMPBTCOMM, "Disconnected while connecting! Reset device address")
                     mDeviceAddress = null
                 }
-                // Wait a bit before retrying
-                SystemClock.sleep(2000)
             }
-            close()
-            isConnected = false
-            isConnecting = false
+            resetConnection("stateChange disconnected")
             mCallback?.onBLEDisconnected()
-            aapsLogger.debug(LTag.PUMPBTCOMM, "Device was disconnected " + gatt.device.name) //Device was disconnected
+            aapsLogger.debug(LTag.PUMPBTCOMM, "Device was disconnected " + gatt.device.name)
         }
     }
 

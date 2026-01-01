@@ -10,22 +10,21 @@ import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.data.plugin.PluginType
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
-import app.aaps.core.interfaces.plugin.PluginBase
+import app.aaps.core.interfaces.plugin.PluginBaseWithPreferences
 import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventNewBG
 import app.aaps.core.interfaces.rx.events.EventPreferenceChange
-import app.aaps.core.interfaces.sharedPreferences.SP
-import app.aaps.core.keys.BooleanKey
-import app.aaps.core.keys.IntKey
-import app.aaps.core.keys.Preferences
-import app.aaps.core.keys.StringKey
+import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.validators.DefaultEditTextValidator
 import app.aaps.core.validators.preferences.AdaptiveIntPreference
 import app.aaps.core.validators.preferences.AdaptiveStringPreference
 import app.aaps.core.validators.preferences.AdaptiveSwitchPreference
 import app.aaps.plugins.sync.R
+import app.aaps.plugins.sync.garmin.keys.GarminBooleanKey
+import app.aaps.plugins.sync.garmin.keys.GarminIntKey
+import app.aaps.plugins.sync.garmin.keys.GarminStringKey
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import io.reactivex.rxjava3.disposables.CompositeDisposable
@@ -57,24 +56,25 @@ import kotlin.math.roundToInt
 class GarminPlugin @Inject constructor(
     aapsLogger: AAPSLogger,
     resourceHelper: ResourceHelper,
+    preferences: Preferences,
     private val context: Context,
     private val loopHub: LoopHub,
-    private val rxBus: RxBus,
-    private val sp: SP,
-    private val preferences: Preferences
-) : PluginBase(
-    PluginDescription()
+    private val rxBus: RxBus
+) : PluginBaseWithPreferences(
+    pluginDescription = PluginDescription()
         .mainType(PluginType.SYNC)
         .pluginIcon(app.aaps.core.objects.R.drawable.ic_watch)
         .pluginName(R.string.garmin)
         .shortName(R.string.garmin)
         .description(R.string.garmin_description)
         .preferencesId(PluginDescription.PREFERENCE_SCREEN),
-    aapsLogger, resourceHelper
+    ownPreferences = listOf(GarminStringKey::class.java, GarminBooleanKey::class.java, GarminIntKey::class.java),
+    aapsLogger, resourceHelper, preferences
 ) {
 
     /** HTTP Server for local HTTP server communication (device app requests values) .*/
     private var server: HttpServer? = null
+
     @VisibleForTesting
     var garminMessengerField: GarminMessenger? = null
     val garminMessenger: GarminMessenger
@@ -113,13 +113,13 @@ class GarminPlugin @Inject constructor(
     var newValue: Condition = valueLock.newCondition()
     private var lastGlucoseValueTimestamp: Long? = null
     private val glucoseUnitStr get() = if (loopHub.glucoseUnit == GlucoseUnit.MGDL) "mgdl" else "mmoll"
-    private val garminAapsKey get() = preferences.get(StringKey.GarminRequestKey) ?: ""
+    private val garminAapsKey get() = preferences.get(GarminStringKey.RequestKey)
 
     private fun onPreferenceChange(event: EventPreferenceChange) {
         when (event.changedKey) {
-            "communication_debug_mode"                                           -> setupGarminMessenger()
-            BooleanKey.GarminLocalHttpServer.key, IntKey.GarminLocalHttpPort.key -> setupHttpServer()
-            StringKey.GarminRequestKey.key                                       -> sendPhoneAppMessage()
+            "communication_ciq_debug_mode"                                       -> setupGarminMessenger()
+            GarminBooleanKey.LocalHttpServer.key, GarminIntKey.LocalHttpPort.key -> setupHttpServer()
+            GarminStringKey.RequestKey.key                                       -> sendPhoneAppMessage()
         }
     }
 
@@ -129,7 +129,7 @@ class GarminPlugin @Inject constructor(
     }
 
     private fun createGarminMessenger(): GarminMessenger {
-        val enableDebug = sp.getBoolean("communication_ciq_debug_mode", false)
+        val enableDebug = false // sp.getBoolean("communication_ciq_debug_mode", false)
         aapsLogger.info(LTag.GARMIN, "initialize IQ messenger in debug=$enableDebug")
         return GarminMessenger(
             aapsLogger, context, glucoseAppIds, { _, _ -> }, true, enableDebug
@@ -164,8 +164,8 @@ class GarminPlugin @Inject constructor(
 
     @VisibleForTesting
     fun setupHttpServer(wait: Duration) {
-        if (preferences.get(BooleanKey.GarminLocalHttpServer)) {
-            val port = preferences.get(IntKey.GarminLocalHttpPort)
+        if (preferences.get(GarminBooleanKey.LocalHttpServer)) {
+            val port = preferences.get(GarminIntKey.LocalHttpPort)
             if (server != null && server?.port == port) return
             aapsLogger.info(LTag.GARMIN, "starting HTTP server on $port")
             server?.close()
@@ -296,7 +296,7 @@ class GarminPlugin @Inject constructor(
 
     /** Responses to get glucose value request by the device.
      *
-     * Also, gets the heart rate readings from the device.
+     * Also, gets the heart rate and steps readings from the device.
      */
     @VisibleForTesting
     fun onGetBloodGlucose(uri: URI): CharSequence {
@@ -347,7 +347,7 @@ class GarminPlugin @Inject constructor(
         val value = getQueryParameter(uri, name)
         return try {
             if (value.isNullOrEmpty()) defaultValue else value.toLong()
-        } catch (e: NumberFormatException) {
+        } catch (_: NumberFormatException) {
             aapsLogger.error(LTag.GARMIN, "invalid $name value '$value'")
             defaultValue
         }
@@ -383,6 +383,11 @@ class GarminPlugin @Inject constructor(
     // end mod
 
     private fun toLong(v: Any?) = (v as? Number?)?.toLong() ?: 0L
+    private fun toInt(v: Any?) = when (v) {
+        is Number -> v.toInt()
+        is String -> v.toDoubleOrNull()?.toInt()
+        else -> null
+    }
 
     @VisibleForTesting
     fun receiveHeartRate(msg: Map<String, Any>, test: Boolean) {
@@ -394,6 +399,7 @@ class GarminPlugin @Inject constructor(
             Instant.ofEpochSecond(samplingStartSec), Instant.ofEpochSecond(samplingEndSec),
             avg, device, test
         )
+        receiveSteps(msg, test)
     }
 
     @VisibleForTesting
@@ -406,6 +412,7 @@ class GarminPlugin @Inject constructor(
             Instant.ofEpochSecond(samplingStartSec), Instant.ofEpochSecond(samplingEndSec),
             avg, device, getQueryParameter(uri, "test", false)
         )
+        receiveSteps(uri)
     }
 
     private fun receiveHeartRate(
@@ -418,6 +425,99 @@ class GarminPlugin @Inject constructor(
             loopHub.storeHeartRate(samplingStart, samplingEnd, avg, device)
         } else if (avg > 0) {
             aapsLogger.warn(LTag.GARMIN, "Skip saving invalid HR $avg $samplingStart..$samplingEnd")
+        }
+    }
+
+    @VisibleForTesting
+    fun receiveSteps(msg: Map<String, Any>, test: Boolean) {
+        if (!msg.containsKey("stepsStart") || !msg.containsKey("stepsEnd")) return
+        val samplingStartSec = toLong(msg["stepsStart"])
+        val samplingEndSec = toLong(msg["stepsEnd"])
+        val steps5 = toInt(msg["steps5"]) ?: return
+        val steps10 = toInt(msg["steps10"]) ?: return
+        val steps15 = toInt(msg["steps15"]) ?: return
+        val steps30 = toInt(msg["steps30"]) ?: return
+        val steps60 = toInt(msg["steps60"]) ?: return
+        val steps180 = toInt(msg["steps180"]) ?: return
+        val device: String? = msg["device"] as String?
+        receiveSteps(
+            Instant.ofEpochSecond(samplingStartSec),
+            Instant.ofEpochSecond(samplingEndSec),
+            steps5,
+            steps10,
+            steps15,
+            steps30,
+            steps60,
+            steps180,
+            device,
+            test,
+        )
+    }
+
+    @VisibleForTesting
+    fun receiveSteps(uri: URI) {
+        val samplingStart = getQueryParameter(uri, "stepsStart")?.toLongOrNull() ?: return
+        val samplingEnd = getQueryParameter(uri, "stepsEnd")?.toLongOrNull() ?: return
+        val steps5 = getQueryParameter(uri, "steps5")?.toIntOrNull() ?: return
+        val steps10 = getQueryParameter(uri, "steps10")?.toIntOrNull() ?: return
+        val steps15 = getQueryParameter(uri, "steps15")?.toIntOrNull() ?: return
+        val steps30 = getQueryParameter(uri, "steps30")?.toIntOrNull() ?: return
+        val steps60 = getQueryParameter(uri, "steps60")?.toIntOrNull() ?: return
+        val steps180 = getQueryParameter(uri, "steps180")?.toIntOrNull() ?: return
+        val device = getQueryParameter(uri, "device")
+        val test = getQueryParameter(uri, "test", false)
+        receiveSteps(
+            Instant.ofEpochSecond(samplingStart),
+            Instant.ofEpochSecond(samplingEnd),
+            steps5,
+            steps10,
+            steps15,
+            steps30,
+            steps60,
+            steps180,
+            device,
+            test,
+        )
+    }
+
+    private fun receiveSteps(
+        samplingStart: Instant,
+        samplingEnd: Instant,
+        steps5: Int,
+        steps10: Int,
+        steps15: Int,
+        steps30: Int,
+        steps60: Int,
+        steps180: Int,
+        device: String?,
+        test: Boolean,
+    ) {
+        if (steps5 < 0 || steps10 < 0 || steps15 < 0 || steps30 < 0 || steps60 < 0 || steps180 < 0) {
+            aapsLogger.warn(LTag.GARMIN, "Skip saving invalid steps values $steps5/$steps10/$steps15/$steps30/$steps60/$steps180")
+            return
+        }
+        aapsLogger.info(
+            LTag.GARMIN,
+            "steps $steps5/$steps10/$steps15/$steps30/$steps60/$steps180 from $samplingStart to $samplingEnd",
+        )
+        if (test) return
+        if (samplingEnd > samplingStart) {
+            loopHub.storeStepsCount(
+                samplingStart,
+                samplingEnd,
+                steps5,
+                steps10,
+                steps15,
+                steps30,
+                steps60,
+                steps180,
+                device,
+            )
+        } else {
+            aapsLogger.warn(
+                LTag.GARMIN,
+                "Skip saving invalid steps period $samplingStart..$samplingEnd",
+            )
         }
     }
 
@@ -531,14 +631,17 @@ class GarminPlugin @Inject constructor(
             key = "garmin_settings"
             title = rh.gs(R.string.garmin)
             initialExpandedChildrenCount = 0
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.GarminLocalHttpServer, title = R.string.garmin_local_http_server))
-            addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.GarminLocalHttpPort, title = R.string.garmin_local_http_server_port))
-            addPreference(AdaptiveStringPreference(
-                ctx = context,
-                stringKey = StringKey.GarminRequestKey,
-                title = R.string.garmin_request_key,
-                summary = R.string.garmin_request_key_summary,
-                validatorParams = DefaultEditTextValidator.Parameters(emptyAllowed = true)))
+            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = GarminBooleanKey.LocalHttpServer, title = R.string.garmin_local_http_server))
+            addPreference(AdaptiveIntPreference(ctx = context, intKey = GarminIntKey.LocalHttpPort, title = R.string.garmin_local_http_server_port))
+            addPreference(
+                AdaptiveStringPreference(
+                    ctx = context,
+                    stringKey = GarminStringKey.RequestKey,
+                    title = R.string.garmin_request_key,
+                    summary = R.string.garmin_request_key_summary,
+                    validatorParams = DefaultEditTextValidator.Parameters(emptyAllowed = true)
+                )
+            )
         }
     }
 }

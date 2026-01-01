@@ -1,5 +1,3 @@
-import org.gradle.kotlin.dsl.android
-import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 
@@ -7,14 +5,15 @@ plugins {
     alias(libs.plugins.ksp)
     id("com.android.application")
     id("kotlin-android")
+    kotlin("plugin.serialization")
     id("android-app-dependencies")
     id("test-app-dependencies")
     id("jacoco-app-dependencies")
 }
 
 repositories {
-    google()
     mavenCentral()
+    google()
 }
 
 fun generateGitBuild(): String {
@@ -66,58 +65,30 @@ android {
             isDefault = true
             applicationId = "info.nightscout.androidaps"
             dimension = "standard"
+            resValue("string", "app_name", "AAPS")
             versionName = Versions.appVersion
+            manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher"
         }
         create("pumpcontrol") {
             applicationId = "info.nightscout.aapspumpcontrol"
             dimension = "standard"
+            resValue("string", "app_name", "Pumpcontrol")
             versionName = Versions.appVersion + "-pumpcontrol"
+            manifestPlaceholders["appIcon"] = "@mipmap/ic_pumpcontrol"
         }
         create("aapsclient") {
             applicationId = "info.nightscout.aapsclient"
             dimension = "standard"
+            resValue("string", "app_name", "AAPSClient")
             versionName = Versions.appVersion + "-aapsclient"
+            manifestPlaceholders["appIcon"] = "@mipmap/ic_yellowowl"
         }
         create("aapsclient2") {
             applicationId = "info.nightscout.aapsclient2"
             dimension = "standard"
+            resValue("string", "app_name", "AAPSClient2")
             versionName = Versions.appVersion + "-aapsclient2"
-        }
-    }
-    // -------------------------------------------------------------------------
-    // Configuration de signature (release)
-    // -------------------------------------------------------------------------
-    signingConfigs {
-        // On peut l'appeler "release" ou un autre nom
-        create("release") {
-            // Seule storeFile attend un File
-            storeFile = file(System.getenv("KEYSTORE_FILE") ?: "dummy.jks")
-            // Les autres sont des Strings
-            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "dummy"
-            keyAlias = System.getenv("KEY_ALIAS") ?: "dummy"
-            keyPassword = System.getenv("KEY_PASSWORD") ?: "dummy"
-        }
-    }
-    // -------------------------------------------------------------------------
-    // Build Types
-    // -------------------------------------------------------------------------
-    buildTypes {
-        getByName("release") {
-            // Active ou non le minify
-            // minifyEnabled true
-            // shrinkResources true
-            // Associe la config "release"
-            signingConfig = signingConfigs.getByName("release")
-            // minifyEnabled =false
-            //shrinkResources =false
-            //proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-        }
-        getByName("debug") {
-            enableUnitTestCoverage = true
-            // Disable androidTest coverage, since it performs offline coverage
-            // instrumentation and that causes online (JavaAgent) instrumentation
-            // to fail in this project.
-            enableAndroidTestCoverage = false
+            manifestPlaceholders["appIcon"] = "@mipmap/ic_blueowl"
         }
     }
     buildFeatures {
@@ -140,27 +111,27 @@ dependencies {
 
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.core)
+    implementation(libs.androidx.datastore)
     implementation(libs.androidx.legacy.support)
     implementation(libs.androidx.preference)
     implementation(libs.androidx.wear)
     implementation(libs.androidx.wear.tiles)
+    implementation(libs.androidx.wear.protolayout)
+    implementation(libs.androidx.wear.protolayout.expression)
+    implementation(libs.androidx.wear.watchface)
+    implementation(libs.androidx.wear.watchface.complications.data)
+    implementation(libs.androidx.wear.watchface.complications.datasource)
+    implementation(libs.androidx.wear.watchface.complications.datasource.ktx)
     implementation(libs.androidx.constraintlayout)
-
-    testImplementation(project(":shared:tests"))
-
-    compileOnly(libs.com.google.android.wearable)
-    implementation(libs.com.google.android.wearable.support)
-    implementation(libs.com.google.android.gms.playservices.wearable)
-    implementation(files("${rootDir}/wear/libs/ustwo-clockwise-debug.aar"))
-    implementation(files("${rootDir}/wear/libs/wearpreferenceactivity-0.5.0.aar"))
-    implementation(files("${rootDir}/wear/libs/hellocharts-library-1.5.8.aar"))
-
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.guava)
     implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.kotlinx.datetime)
-    implementation(libs.kotlin.stdlib.jdk8)
+    implementation(libs.kotlinx.serialization.protobuf)
+
+    implementation(libs.com.google.android.gms.playservices.wearable)
+    implementation(files("${rootDir}/wear/libs/hellocharts-library-1.5.8.aar"))
 
     ksp(libs.com.google.dagger.android.processor)
     ksp(libs.com.google.dagger.compiler)
