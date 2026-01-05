@@ -19,6 +19,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.View.OnLongClickListener
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.RelativeLayout
 import android.widget.TextView
@@ -417,7 +418,8 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             runOnUiThread {
             //_binding?.root?.findViewById<View>(R.id.aimi_context_indicator)?.visibility = hasContext.toVisibility()
 
-                    val indicator = binding?.root?.findViewById<View>(R.id.aimi_context_indicator)
+                //    val indicator = binding?.root?.findViewById<View>(R.id.aimi_context_indicator)
+                val indicator = binding?.root?.findViewById<ImageView>(R.id.aimi_context_indicator)
 
                     // Assicurati che sia sempre visibile
                     indicator?.visibility = View.VISIBLE
@@ -425,7 +427,11 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
                     // Cambia solo il colore in base a hasContext
 
                     val color = if (hasContext) 0xFFF44336.toInt() else 0xFF9E9E9E.toInt()
-                   indicator?.setBackgroundColor(color)
+
+
+
+                indicator?.setColorFilter(color)
+                 //indicator?.setBackgroundColor(color)
               //indicator?.backgroundTintList = ColorStateList.valueOf(color)
               //indicator?.backgroundTintMode = PorterDuff.Mode.SRC_IN // <- qui scegli il mode
 
