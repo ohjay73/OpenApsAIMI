@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PorterDuff
@@ -414,7 +415,21 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             val hasContext = jsonStr.length > 5 // "[]" length is 2
             
             runOnUiThread {
-                _binding?.root?.findViewById<View>(R.id.aimi_context_indicator)?.visibility = hasContext.toVisibility()
+            //_binding?.root?.findViewById<View>(R.id.aimi_context_indicator)?.visibility = hasContext.toVisibility()
+
+                    val indicator = binding?.root?.findViewById<View>(R.id.aimi_context_indicator)
+
+                    // Assicurati che sia sempre visibile
+                    indicator?.visibility = View.VISIBLE
+
+                    // Cambia solo il colore in base a hasContext
+
+                    val color = if (hasContext) 0xFFF44336.toInt() else 0xFF9E9E9E.toInt()
+                   indicator?.setBackgroundColor(color)
+              //indicator?.backgroundTintList = ColorStateList.valueOf(color)
+              //indicator?.backgroundTintMode = PorterDuff.Mode.SRC_IN // <- qui scegli il mode
+
+                    //
             }
         } catch (e: Exception) {
             aapsLogger.error(LTag.CORE, "Failed to update context indicator: ${e.message}")
