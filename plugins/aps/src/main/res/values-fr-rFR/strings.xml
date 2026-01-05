@@ -1009,9 +1009,9 @@
     <string name="aimi_coach_placeholder">Configurez une clé API OpenAI ou Gemini dans les préférences pour activer le Coach IA.</string>
     <string name="aimi_coach_error">Erreur lors de la récupération des conseils IA.</string>
 
-    <string name="aimi_adv_analysis_intro_excellent">Excellent travail ! Vos résultats sont impressionnants.</string>
-    <string name="aimi_adv_analysis_intro_good">Bon travail, mais quelques ajustements sont possibles.</string>
-    <string name="aimi_adv_analysis_intro_poor">Attention, des ajustements sont nécessaires pour améliorer l\'équilibre.</string>
+    <string name="aimi_adv_analysis_intro_excellent">L\'analyse indique d\'excellents résultats. Votre profil semble bien adapté.</string>
+    <string name="aimi_adv_analysis_intro_good">L\'analyse montre une bonne maîtrise globale, mais quelques ajustements pourraient améliorer la stabilité.</string>
+    <string name="aimi_adv_analysis_intro_poor">L\'analyse détecte plusieurs zones d\'instabilité. Des ajustements sont recommandés pour réduire la variabilité.</string>
     <string name="aimi_adv_analysis_issues_header">Points d\'attention identifiés :</string>
     <string name="aimi_adv_analysis_all_good">Aucun problème majeur détecté.</string>
     <string name="aimi_adv_analysis_footer">Ceci est une analyse automatisée basée sur vos données.</string>
