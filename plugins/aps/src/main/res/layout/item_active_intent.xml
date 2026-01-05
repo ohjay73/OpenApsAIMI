@@ -19,6 +19,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textAppearance="?attr/textAppearanceBodyLarge"
+            android:textSize="15sp"
             android:textStyle="bold"
             tools:text="🏃 Activity: CARDIO HIGH"/>
 
@@ -34,6 +35,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
+                android:textSize="15sp"
                 android:textAppearance="?attr/textAppearanceBodyMedium"
                 android:textColor="?android:attr/textColorSecondary"
                 tools:text="45min left"/>
@@ -44,7 +46,9 @@
                 android:layout_height="wrap_content"
                 android:textAppearance="?attr/textAppearanceBodySmall"
                 android:textColor="?android:attr/textColorSecondary"
+                android:textSize="15sp"
                 tools:text="✓ High confidence"/>
+
         </LinearLayout>
 
         <LinearLayout
