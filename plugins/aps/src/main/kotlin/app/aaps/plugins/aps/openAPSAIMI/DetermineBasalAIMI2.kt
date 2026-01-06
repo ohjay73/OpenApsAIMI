@@ -269,9 +269,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private var mealModeSmbReason: String? = null
     private val consoleError = mutableListOf<String>()
     private val consoleLog = mutableListOf<String>()
-    private var lastResistanceHammerTime: Long = 0L // FCL 6.0 State
     private var lastAutodriveActionTime: Long = 0L  // FCL 14.1 Cooldown State
-    private var hammerFailureCount: Int = 0 // FCL 7.0 State
     private val externalDir = File(Environment.getExternalStorageDirectory().absolutePath + "/Documents/AAPS")
     //private val modelFile = File(externalDir, "ml/model.tflite")
     //private val modelFileUAM = File(externalDir, "ml/modelUAM.tflite")
@@ -1939,27 +1937,33 @@ class DetermineBasalaimiSMB2 @Inject constructor(
      * @param lookbackMinutes Time window to check (default 15 min)
      * @return IOB increase amount if rapid, 0.0 otherwise
      */
-    private fun detectRapidIOBIncrease(currentIOB: Double, lookbackMinutes: Int = 15): Double {
-        val lookbackTime = dateUtil.now() - lookbackMinutes * 60 * 1000L
-        
-        try {
-            // Get boluses in the last N minutes
-            val recentBoluses = persistenceLayer.getBolusesFromTime(lookbackTime, true).blockingGet()
-            val totalRecentBolus = recentBoluses.sumOf { it.amount }
-            
-            // If >2U delivered in lookback window, consider it "rapid"
-            // This suggests a large bolus that may saturate receptors
-            return if (totalRecentBolus >= 2.0) {
-                totalRecentBolus
-            } else {
-                0.0
-            }
-        } catch (e: Exception) {
-            return 0.0
-        }
-    }
     
     /**
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // ❌ CODE MORT SUPPRIMÉ (2026-01-05) - Système FCL Legacy
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //
+    // Fonctions supprimées (partiellement implémentées, jamais utilisées):
+    // - detectRapidIOBIncrease()           : Détection bolus rapide > 2U
+    // - calculateDynamicDIA()              : Ajustement DIA saturation récepteurs
+    // - calculateAdaptivePrebolus()        : Prebolus adaptatif (DISABLED user)
+    // - isHighPlateauBreakerCondition()    : Feature FCL "High Plateau Breaker"
+    // - calculateResistanceHammer()        : Feature FCL boost x1.5 résistance
+    // - checkIneffectivenessWatchdog()     : Watchdog échecs Hammer
+    // - updateWatchdogState()              : Update state Hammer (tournait vide)
+    //
+    // Variables supprimées:
+    // - lastResistanceHammerTime: Long     : État Resistance Hammer (jamais modifié)
+    // - hammerFailureCount: Int            : Compteur échecs (jamais incrémenté)
+    //
+    // Raison suppression: Système partiellement détruit, remplacé par:
+    // - pkpd/PkPdRuntime            : DIA/peak dynamiques + saturation tail
+    // - safety/HighBgOverride       : Gestion montées élevées (progressif vs brutal)
+    //
+    // Total supprimé: 149 lignes (7 fonctions + 1 appel + 2 variables)
+    // Backup: DetermineBasalAIMI2.kt.backup_20260105_221151
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
      * Calculates dynamic DIA and peak time adjustments based on rapid IOB increase.
      * Large boluses may slow absorption due to receptor saturation.
      * 
@@ -1967,74 +1971,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
      * @param rapidIOBAmount Amount of rapid IOB increase
      * @return Pair of (adjustedDIA, adjustedPeak)
      */
-    private fun calculateDynamicDIA(profile: OapsProfileAimi, rapidIOBAmount: Double): Pair<Double, Double> {
-        if (rapidIOBAmount < 2.0) {
-            // No significant rapid bolus, use standard values
-            return Pair(profile.dia, profile.peakTime.toDouble())
-        }
-        
-        // Adjustment factors based on bolus size
-        // Larger bolus → more potential for saturation → longer DIA/peak
-        val diaMultiplier = when {
-            rapidIOBAmount >= 5.0 -> 1.25  // Very large bolus: +25% DIA
-            rapidIOBAmount >= 3.5 -> 1.20  // Large bolus: +20% DIA
-            rapidIOBAmount >= 2.0 -> 1.15  // Medium bolus: +15% DIA
-            else -> 1.0
-        }
-        
-        val peakMultiplier = when {
-            rapidIOBAmount >= 5.0 -> 1.15  // Very large: +15% peak delay
-            rapidIOBAmount >= 3.5 -> 1.12  // Large: +12% peak delay
-            rapidIOBAmount >= 2.0 -> 1.08  // Medium: +8% peak delay
-            else -> 1.0
-        }
-        
-        val adjustedDIA = profile.dia * diaMultiplier
-        val adjustedPeak = profile.peakTime * peakMultiplier
-        
-        consoleLog.add("DIA_DYNAMIC rapidIOB=${String.format("%.1f", rapidIOBAmount)}U → DIA=${String.format("%.1f", profile.dia)}→${String.format("%.1f", adjustedDIA)} Peak=${String.format("%.0f", profile.peakTime)}→${String.format("%.0f", adjustedPeak)}min")
-        
-        return Pair(adjustedDIA, adjustedPeak)
-    }
 
-    private fun calculateAdaptivePrebolus(
-        baseBolus: Double,
-        delta: Float,
-        reason: StringBuilder
-    ): Double {
-        // Base factor 1.0
-        // If delta > 5, we add boost. Example: Delta 15 -> (15-5)/20 = 0.5 boost -> 1.5x
-        // [FIX] User Request: Disable Adaptive Scaling. Return Base Bolus strictly.
-        // "pour l'utilisateur il est augmenté à 5.18U... faille de sécurité"
-        
-        reason.append(String.format("🛑 Prebolus Fixed: %.2fU (Adaptive Scaling Disabled)\n", baseBolus))
-        return baseBolus
-    }
 
-    private fun isHighPlateauBreakerCondition(
-        bg: Float,
-        targetBg: Float,
-        stable: Boolean,
-        iob: Double,
-        maxSMB: Double,
-        reason: StringBuilder
-    ): Boolean {
-        // 1. High enough (Target + 40)
-        if (bg <= targetBg + 40) return false
-        
-        // 2. Stable (Stagnation)
-        if (!stable) return false
-        
-        // 3. Low IOB (Room to act)
-        // FIX: Relaxed from maxSMB/3 to maxSMB.
-        // If we are stagnating at 273, current IOB is clearly ineffective.
-        // We rely on standard MaxIOB safety later.
-        val safeIOB = maxSMB // Was maxSMB / 3.0
-        if (iob > safeIOB) return false
-        
-        reason.append("🔨 High Plateau Breaker: BG High & Stable & Low IOB -> ENGAGED\n")
-        return true
-    }
 
     private fun isDriftTerminatorCondition(
         bg: Float,
@@ -2075,43 +2013,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         return bolus
     }
 
-    private fun checkIneffectivenessWatchdog(
-         success: Boolean,
-         reason: StringBuilder
-    ): Boolean {
-         // This is called when Resistance Hammer attempts to fire
-         if (hammerFailureCount >= 3) {
-             reason.append("⛔ Ineffectiveness Watchdog: FCL ABORTED. >3 Resistance Hammer failures. Check site/cannula!\n")
-             return true // ABORT signal
-         }
-         return false
-    }
 
-    private fun updateWatchdogState(
-        delta: Float
-    ) {
-        // Called periodically to update success/failure
-        // If Resistance Hammer was active (tracked via lastResistanceHammerTime being recent)
-        // AND delta is now negative -> Success! Reset count.
-        val cooldown = 45 * 60 * 1000L
-        val recentlyHammered = (System.currentTimeMillis() - lastResistanceHammerTime) < cooldown
-        
-        if (recentlyHammered) {
-             if (delta < -2.0) {
-                 // Success drop
-                 hammerFailureCount = 0
-             } else if (delta > 0) {
-                 // Failure, still rising. Count increments are handled at FIRE time or here?
-                 // Simpler: Increment when we FIRE the hammer again. 
-                 // Here we just reset on success.
-             }
-        } else {
-             // Reset if long time passed
-             if (hammerFailureCount > 0 && (System.currentTimeMillis() - lastResistanceHammerTime) > cooldown * 2) {
-                 hammerFailureCount = 0
-             }
-        }
-    }
 
     private fun isCompressionProtectionCondition(
         delta: Float,
@@ -2140,31 +2042,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         return false
     }
 
-    private fun calculateResistanceHammer(
-        regularBolus: Double,
-        bolusLastHour: Double,
-        delta: Float,
-        reason: StringBuilder
-    ): Double {
-        // 1. Cool-down check (45 min = 45 * 60 * 1000 ms)
-        val cooldown = 45 * 60 * 1000L
-        if (System.currentTimeMillis() - lastResistanceHammerTime < cooldown) {
-             // reason.append("  • Hammer Cooling down...\n")
-             return regularBolus
-        }
-
-        // Trigger: Significant bolus history (> 1.0U) AND still rising fast (> 2.0)
-        if (bolusLastHour > 1.0 && delta > 2.0) {
-            val boosted = regularBolus * 1.5
-            reason.append("🔨 Resistance Hammer: History ${"%.2f".format(bolusLastHour)}U & Delta ${delta} -> Boost x1.5 -> ${"%.2f".format(boosted)}U\n")
-            
-            // Update state
-            lastResistanceHammerTime = System.currentTimeMillis()
-            
-            return boosted
-        }
-        return regularBolus
-    }
 
     private fun isAutodriveModeCondition(
         delta: Float,
@@ -2630,13 +2507,21 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
     private fun isSportSafetyCondition(): Boolean {
         val manualSport = sportTime
-        val recentBurst = recentSteps5Minutes >= 200 && recentSteps10Minutes >= 500
+        
+        // Assouplissement des seuils : ne détecter que des VRAIS sports intenses
+        // Anciens seuils : 200 pas/5min, 500 pas/10min → Trop sensible (marche normale)
+        // Nouveaux seuils : 400 pas/5min, 800 pas/10min → Sports réels seulement
+        val recentBurst = recentSteps5Minutes >= 400 && recentSteps10Minutes >= 800
+        
+        // Activité soutenue : relevé significativement pour éviter faux positifs
+        // Une marche de 20 min = ~2000 pas → NE DOIT PAS déclencher sécurité sport
+        // Seuil 60 min : 3000 pas = ~30 min de marche soutenue ou 45+ min de marche normale
         val sustainedActivity =
-            recentSteps30Minutes >= 800 || recentSteps60Minutes >= 1500 || recentSteps180Minutes >= 2500
+            recentSteps30Minutes >= 1200 || recentSteps60Minutes >= 3000 || recentSteps180Minutes >= 4500
 
         val baselineHr = if (averageBeatsPerMinute10 > 0.0) averageBeatsPerMinute10 else averageBeatsPerMinute
-        val elevatedHeartRate = baselineHr > 0 && averageBeatsPerMinute > baselineHr * 1.1
-        val shortActivityWithHr = (recentSteps5Minutes >= 200 || recentSteps10Minutes >= 400) && elevatedHeartRate
+        val elevatedHeartRate = baselineHr > 0 && averageBeatsPerMinute > baselineHr * 1.15 // +15% au lieu de +10%
+        val shortActivityWithHr = (recentSteps5Minutes >= 400 || recentSteps10Minutes >= 600) && elevatedHeartRate
 
         val highTargetExercise = targetBg >= 140 && (shortActivityWithHr || sustainedActivity)
 
@@ -3197,67 +3082,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         return weightedSum / weights.sum()
     }
 
-    private fun adjustFactorsBasedOnBgAndHypo(
-        morningFactor: Float,
-        afternoonFactor: Float,
-        eveningFactor: Float
-    ): Triple<Float, Float, Float> {
-        val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
-        val hypoAdjustment = if (bg < 120 || (iob > 3 * maxSMB)) 0.3f else 0.9f
-        // Récupération des deltas récents et calcul du delta prédit
-        val recentDeltas = getRecentDeltas()
-        val predicted = predictedDelta(recentDeltas)
-        // Calcul du delta combiné : combine le delta mesuré et le delta prédit
-        val combinedDelta = (delta + predicted) / 2.0f
-        // s'assurer que combinedDelta est positif pour le calcul logarithmique
-        val safeCombinedDelta = if (combinedDelta <= 0) 0.0001f else combinedDelta
-        val deltaAdjustment = ln(safeCombinedDelta.toDouble() + 1).coerceAtLeast(0.0)
-
-
-        // Interpolation de base pour factorAdjustment selon la glycémie (bg)
-        var factorAdjustment = when {
-            bg < 110 -> interpolateFactor(bg.toFloat(), 70f, 110f, 0.1f, 0.3f)
-            else -> interpolateFactor(bg.toFloat(), 110f, 280f, 0.75f, 2.5f)
-        }
-        if (honeymoon) factorAdjustment = when {
-            bg < 160 -> interpolateFactor(bg.toFloat(), 70f, 160f, 0.2f, 0.4f)
-            else -> interpolateFactor(bg.toFloat(), 160f, 250f, 0.4f, 0.65f)
-        }
-        var bgAdjustment = 1.0f + (deltaAdjustment - 1) * factorAdjustment
-        bgAdjustment *= 1.2f
-
-        val dynamicCorrection = when {
-            //hourOfDay in 0..11 || hourOfDay in 15..19 || hourOfDay >= 22 -> 0.7f
-            combinedDelta > 11f  -> 2.5f   // Très forte montée, on augmente très agressivement
-            combinedDelta > 8f  -> 2.0f   // Montée forte
-            combinedDelta > 4f  -> 1.5f   // Montée modérée à forte
-            combinedDelta > 2f  -> 1.0f   // Montée légère
-            combinedDelta in -2f..2f -> 0.8f  // Stable
-            combinedDelta < -2f && combinedDelta >= -4f -> 0.7f  // Baisse légère
-            combinedDelta < -4f && combinedDelta >= -6f -> 0.5f  // Baisse modérée
-            combinedDelta < -6f -> 0.4f   // Baisse forte, on diminue considérablement pour éviter l'hypo
-            else -> 1.0f
-        }
-        // On applique ce facteur sur bgAdjustment pour intégrer l'anticipation
-        bgAdjustment *= dynamicCorrection
-
-        // // Interpolation pour scalingFactor basée sur la cible (targetBg)
-        // val scalingFactor = interpolateFactor(bg.toFloat(), targetBg, 110f, 09f, 0.5f).coerceAtLeast(0.1f)
-
-        val maxIncreaseFactor = 12.5f
-        val maxDecreaseFactor = 0.2f
-
-        val adjustFactor = { factor: Float ->
-            val adjustedFactor = factor * bgAdjustment * hypoAdjustment //* scalingFactor
-            adjustedFactor.coerceIn(((factor * maxDecreaseFactor).toDouble()), ((factor * maxIncreaseFactor).toDouble()))
-        }
-
-        return Triple(
-            adjustFactor(morningFactor).takeIf { !it.isNaN() } ?: morningFactor,
-            adjustFactor(afternoonFactor).takeIf { !it.isNaN() } ?: afternoonFactor,
-            adjustFactor(eveningFactor).takeIf { !it.isNaN() } ?: eveningFactor
-        ) as Triple<Float, Float, Float>
-    }
+    // ❌ adjustFactorsBasedOnBgAndHypo() REMOVED (was lines 3191-3251)
+    // Legacy function for time-based reactivity (morning/afternoon/evening factors)
+    // Replaced by UnifiedReactivityLearner.globalFactor which learns optimal reactivity
+    // from actual glycemic outcomes (hypos, hypers, variability)
 
 
 
@@ -4100,7 +3928,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val bgTrend = calculateBgTrend(recentBGs, reason)
         
         // 🧠 FCL 7.0: Update Watchdog State
-        updateWatchdogState(delta.toFloat())
         
         // 🧠 FCL 8.0: Autosens Synergy
         var autosensRatio = autosens_data.ratio
@@ -5480,9 +5307,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 refineSmb = { combined, short, long, predicted, profileInput ->
                     neuralnetwork5(combined, short, long, predicted, profileInput)
                 },
-                adjustFactors = { morning, afternoon, evening ->
-                    adjustFactorsBasedOnBgAndHypo(morning, afternoon, evening)
-                },
+                // ❌ adjustFactors removed - UnifiedReactivityLearner handles reactivity
                 calculateAdjustedDia = { baseDia, currentHour, steps5, currentHr, avgHr60, pumpAge, iobValue ->
                     // 🔀 Si PKPD est actif, on l'utilise comme base, mais on permet l'ajustement dynamique (activités, heure, etc.)
                     val effectiveBaseDia = pkpdDiaMinutesOverride?.let { (it / 60.0).toFloat() } ?: baseDia
