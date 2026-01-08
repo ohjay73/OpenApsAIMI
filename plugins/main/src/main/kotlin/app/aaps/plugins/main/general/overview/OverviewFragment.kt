@@ -457,7 +457,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
         try {
             // UNIVERSAL FIX: Support ALL dashboard layouts (overview_info_layout, component_status_card, etc.)
             // Strategy: Try multiple findViewById paths in fallback order
-
+            
             // 1. Try binding.infoLayout.root (for overview_info_layout.xml - included via <include>)
             // 2. Try binding.root (for direct layouts like component_status_card.xml)
             val container = binding.infoLayout?.root?.findViewById<FrameLayout>(
@@ -468,9 +468,9 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
                 aapsLogger.warn(LTag.CORE, "Auditor indicator container not found in any layout hierarchy")
                 return
             }
-
+            
             aapsLogger.debug(LTag.CORE, "Auditor indicator container found successfully")
-
+            
             // Create and add custom indicator
             auditorIndicator = AuditorStatusIndicator(requireContext())
             container.removeAllViews()
@@ -490,13 +490,12 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
                     auditorNotificationManager.showInsightAvailable(uiState)
                 }
                 
-                // Update container visibility based on state
-                container.visibility = if (uiState.type == AuditorUIState.StateType.IDLE) {
-                    View.GONE
-                } else {
-                    View.VISIBLE
-                }
-
+                // 🎨 LIVING BADGE: Always visible, visual state changes instead of hiding
+                // - IDLE/OFF: Static gray icon (base state)
+                // - ACTIVE: Pulsing colored icon (AI decision applied)
+                // - ERROR: Static red icon (problem detected)
+                container.visibility = View.VISIBLE  // Always visible!
+                
                 aapsLogger.debug(LTag.CORE, "Auditor indicator state updated: ${uiState.type}, visible=${container.visibility == View.VISIBLE}")
             }
             
