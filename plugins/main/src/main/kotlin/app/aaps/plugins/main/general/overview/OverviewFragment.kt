@@ -285,7 +285,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
                 aapsLogger.error(LTag.CORE, "Failed to launch ContextActivity: ${e.message}")
             }
         }
-
+        
         // AIMI Auditor Indicator Setup
         setupAuditorIndicator()
     }
@@ -452,71 +452,81 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             aapsLogger.error(LTag.CORE, "Failed to update context indicator: ${e.message}")
         }
     }
-
+    
     private fun setupAuditorIndicator() {
         try {
-            // Get container from layout
-            val container = binding.root.findViewById<FrameLayout>(
+            // UNIVERSAL FIX: Support ALL dashboard layouts (overview_info_layout, component_status_card, etc.)
+            // Strategy: Try multiple findViewById paths in fallback order
+
+            // 1. Try binding.infoLayout.root (for overview_info_layout.xml - included via <include>)
+            // 2. Try binding.root (for direct layouts like component_status_card.xml)
+            val container = binding.infoLayout?.root?.findViewById<FrameLayout>(
+                R.id.aimi_auditor_indicator_container
+            ) ?: binding.root.findViewById<FrameLayout>(
                 R.id.aimi_auditor_indicator_container
             ) ?: run {
-                aapsLogger.warn(LTag.CORE, "Auditor indicator container not found in layout")
+                aapsLogger.warn(LTag.CORE, "Auditor indicator container not found in any layout hierarchy")
                 return
             }
+
+            aapsLogger.debug(LTag.CORE, "Auditor indicator container found successfully")
 
             // Create and add custom indicator
             auditorIndicator = AuditorStatusIndicator(requireContext())
             container.removeAllViews()
             container.addView(auditorIndicator)
-
+            
             // Setup click listener
             auditorIndicator?.setOnClickListener {
                 handleAuditorClick()
             }
-
+            
             // Observe LiveData for state changes
             auditorStatusLiveData.uiState.observe(viewLifecycleOwner) { uiState ->
                 auditorIndicator?.setState(uiState)
-
+                
                 // Show notification if needed
                 if (uiState.shouldNotify) {
                     auditorNotificationManager.showInsightAvailable(uiState)
                 }
-
+                
                 // Update container visibility based on state
                 container.visibility = if (uiState.type == AuditorUIState.StateType.IDLE) {
                     View.GONE
                 } else {
                     View.VISIBLE
                 }
-            }
 
+                aapsLogger.debug(LTag.CORE, "Auditor indicator state updated: ${uiState.type}, visible=${container.visibility == View.VISIBLE}")
+            }
+            
             // Initial update
             auditorStatusLiveData.forceUpdate()
-
+            
         } catch (e: Exception) {
-            aapsLogger.error(LTag.CORE, "Failed to setup Auditor indicator: ${e.message}")
+            aapsLogger.error(LTag.CORE, "Failed to setup Auditor indicator: ${e.message}", e)
         }
     }
-
+    
     private fun handleAuditorClick() {
         val state = auditorIndicator?.getCurrentState() ?: return
-
+        
         when (state.type) {
             AuditorUIState.StateType.READY,
             AuditorUIState.StateType.WARNING -> {
                 // Mark as read
                 auditorStatusLiveData.markAsRead()
                 auditorNotificationManager.cancelNotification()
-
+                
                 // TODO: Open AuditorVerdictActivity when implemented
                 // For now, show dialog with status
                 activity?.let { activity ->
-                    OKDialog.show(activity,
+                    OKDialog.show(activity, 
                         "Auditor Insight",
                         state.statusMessage)
                 }
             }
-
+            
             AuditorUIState.StateType.PROCESSING -> {
                 activity?.let { activity ->
                     OKDialog.show(activity,
@@ -524,7 +534,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
                         "Analysis in progress, please wait...")
                 }
             }
-
+            
             AuditorUIState.StateType.ERROR -> {
                 activity?.let { activity ->
                     OKDialog.show(activity,
@@ -532,7 +542,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
                         state.statusMessage)
                 }
             }
-
+            
             else -> {
                 // IDLE - show info
                 activity?.let { activity ->
@@ -556,11 +566,11 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             graph.setOnLongClickListener(null)
             graph.removeAllSeries()
         }
-
+        
         // Cleanup Auditor indicator
         auditorIndicator?.stopAnimations()
         auditorIndicator = null
-
+        
         _binding = null
         carbAnimation?.stop()
         carbAnimation = null
