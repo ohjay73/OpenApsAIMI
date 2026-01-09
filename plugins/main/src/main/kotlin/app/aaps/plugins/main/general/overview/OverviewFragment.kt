@@ -438,10 +438,16 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             // Strategy: Try multiple findViewById paths in fallback order
             
             // 1. Try binding.infoLayout.root (for overview_info_layout.xml - included via <include>)
-            // 2. Try binding.root (for direct layouts like component_status_card.xml)
+            // 2. Try status_card_layout (for component_status_card.xml - Modern Circle)
+            // 3. Try binding.root (last resort)
             val container = binding.infoLayout?.root?.findViewById<FrameLayout>(
                 R.id.aimi_auditor_indicator_container
-            ) ?: binding.root.findViewById<FrameLayout>(
+            ) ?: try {
+                binding.root.findViewById<View>(R.id.status_card_layout)
+                    ?.findViewById<FrameLayout>(R.id.aimi_auditor_indicator_container)
+            } catch (e: Exception) {
+                null
+            } ?: binding.root.findViewById<FrameLayout>(
                 R.id.aimi_auditor_indicator_container
             ) ?: run {
                 aapsLogger.warn(LTag.CORE, "Auditor indicator container not found in any layout hierarchy")
@@ -469,12 +475,11 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
                     auditorNotificationManager.showInsightAvailable(uiState)
                 }
                 
-                // Update container visibility based on state
-                container.visibility = if (uiState.type == AuditorUIState.StateType.IDLE) {
-                    View.GONE
-                } else {
-                    View.VISIBLE
-                }
+                // 🎨 LIVING BADGE: Always visible, visual state changes instead of hiding
+                // - IDLE/OFF: Static gray icon (base state)
+                // - ACTIVE: Pulsing colored icon (AI decision applied)
+                // - ERROR: Static red icon (problem detected)
+                container.visibility = View.VISIBLE  // Always visible!
                 
                 aapsLogger.debug(LTag.CORE, "Auditor indicator state updated: ${uiState.type}, visible=${container.visibility == View.VISIBLE}")
             }
@@ -1045,10 +1050,184 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
                 binding.infoLayout.bgQuality.visibility = View.GONE
             }
             binding.infoLayout.simpleMode.visibility = preferences.simpleMode.toVisibility()
+            
+            // ═══════════════════════════════════════════════════════════════════════════════
+            // MODERN CIRCLE DASHBOARD - Dynamic Unicorn + Glucose Circle
+            // ═══════════════════════════════════════════════════════════════════════════════
+            updateModernCircleDashboard()
+        }
+    }
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════════════
+     * MODERN CIRCLE DASHBOARD UPDATE
+     * ═══════════════════════════════════════════════════════════════════════════════
+     * 
+     * Updates Modern Circle dashboard components:
+     * - Dynamic Unicorn color (based on BG range)
+     * - Glucose Circle animation (arc progress)
+     * - Centralized info (glucose + delta + time)
+     * - Trend arrow
+     */
+    private fun updateModernCircleDashboard() {
+        runOnUiThread {
+            _binding ?: return@runOnUiThread
+            val profile = profileFunction.getProfile() ?: return@runOnUiThread
+            
+            // Get current data from providers (same as updateBg)
+            val lastBg = lastBgData.lastBg()
+            val lastBgColor = lastBgData.lastBgColor(context)
+            val glucoseStatus = glucoseStatusProvider.glucoseStatusData
+            val trendArrow = trendCalculator.getTrendArrow(iobCobCalculator.ads)
+            
+            // Try to find Modern Circle components (component_status_card.xml)
+            // Uses fallback strategy (binding.root) for direct layout access
+            val glucoseCircle = binding.root.findViewById<app.aaps.core.ui.elements.GlucoseCircleView>(
+                app.aaps.core.ui.R.id.glucose_circle
+            )
+            val unicornIcon = binding.root.findViewById<android.widget.ImageView>(
+                app.aaps.core.ui.R.id.unicorn_icon
+            )
+            val glucoseValue = binding.root.findViewById<android.widget.TextView>(
+                app.aaps.core.ui.R.id.glucose_value
+            )
+            val timeAgo = binding.root.findViewById<android.widget.TextView>(
+                app.aaps.core.ui.R.id.time_ago
+            )
+            val deltaSmall = binding.root.findViewById<android.widget.TextView>(
+                app.aaps.core.ui.R.id.delta_small
+            )
+            val trendArrowView = binding.root.findViewById<android.widget.ImageView>(
+                app.aaps.core.ui.R.id.trend_arrow
+            )
+            val deltaValue = binding.root.findViewById<android.widget.TextView>(
+                app.aaps.core.ui.R.id.delta_value
+            )
+            val activityText = binding.root.findViewById<android.widget.TextView>(
+                app.aaps.core.ui.R.id.activity_text
+            )
+            val tbrText = binding.root.findViewById<android.widget.TextView>(
+                app.aaps.core.ui.R.id.tbr_text
+            )
+            
+            // If Modern Circle components not found, silently return (legacy layout)
+            if (glucoseCircle == null || unicornIcon == null) {
+                return@runOnUiThread
+            }
+            
+            // ───────────────────────────────────────────────────────────────────────
+            // 1. UPDATE GLUCOSE CIRCLE (Custom View with animation)
+            // ───────────────────────────────────────────────────────────────────────
+            if (lastBg != null) {
+                glucoseCircle.setGlucose(
+                    glucoseMgDl = lastBg.recalculated,
+                    targetLow = profile.getTargetLowMgdl(),
+                    targetHigh = profile.getTargetHighMgdl(),
+                    animate = true
+                )
+            }
+            
+            // ───────────────────────────────────────────────────────────────────────
+            // 2. UPDATE DYNAMIC UNICORN COLOR (Based on BG range)
+            // ───────────────────────────────────────────────────────────────────────
+            val unicornColor = when {
+                lastBg == null -> android.graphics.Color.GRAY
+                lastBg.recalculated < 54.0 -> androidx.core.content.ContextCompat.getColor(
+                    requireContext(),
+                    app.aaps.core.ui.R.color.critical_low
+                ) // Red - Severe hypo
+                lastBg.recalculated < profile.getTargetLowMgdl() -> androidx.core.content.ContextCompat.getColor(
+                    requireContext(),
+                    app.aaps.core.ui.R.color.low
+                ) // Orange - Hypo
+                lastBg.recalculated <= profile.getTargetHighMgdl() -> androidx.core.content.ContextCompat.getColor(
+                    requireContext(),
+                    app.aaps.core.ui.R.color.inRange
+                ) // Green - In range ✅
+                lastBg.recalculated <= 250.0 -> androidx.core.content.ContextCompat.getColor(
+                    requireContext(),
+                    app.aaps.core.ui.R.color.high
+                ) // Yellow - High
+                else -> androidx.core.content.ContextCompat.getColor(
+                    requireContext(),
+                    app.aaps.core.ui.R.color.critical_high
+                ) // Orange-red - Severe high
+            }
+            
+            unicornIcon.setColorFilter(unicornColor, android.graphics.PorterDuff.Mode.SRC_ATOP)
+            
+            // ───────────────────────────────────────────────────────────────────────
+            // 3. UPDATE GLUCOSE VALUE (Inside circle)
+            // ───────────────────────────────────────────────────────────────────────
+            glucoseValue?.text = profileUtil.fromMgdlToStringInUnits(lastBg?.recalculated)
+            glucoseValue?.setTextColor(lastBgColor)
+            
+            // ───────────────────────────────────────────────────────────────────────
+            // 4. UPDATE TIME AGO (Inside circle)
+            // ───────────────────────────────────────────────────────────────────────
+            timeAgo?.text = dateUtil.minAgoShort(lastBg?.timestamp)
+            
+            // ───────────────────────────────────────────────────────────────────────
+            // 5. UPDATE DELTA SMALL (Inside circle - compact format)
+            // ───────────────────────────────────────────────────────────────────────
+            if (glucoseStatus != null && deltaSmall != null) {
+                val deltaStr = profileUtil.fromMgdlToSignedStringInUnits(glucoseStatus.delta)
+                deltaSmall.text = "Δ $deltaStr"
+                deltaSmall.setTextColor(lastBgColor)
+            } else {
+                deltaSmall?.text = "--"
+            }
+            
+            // ───────────────────────────────────────────────────────────────────────
+            // 6. UPDATE TREND ARROW (Right of circle)
+            // ───────────────────────────────────────────────────────────────────────
+            if (trendArrowView != null && trendArrow != null) {
+                trendArrowView.setImageResource(trendArrow.directionToIcon())
+                trendArrowView.visibility = android.view.View.VISIBLE
+                trendArrowView.setColorFilter(lastBgColor)
+            } else if (trendArrowView != null) {
+                trendArrowView.visibility = android.view.View.INVISIBLE
+            }
+            
+            // ───────────────────────────────────────────────────────────────────────
+            // 7. UPDATE DELTA LARGE (Right of arrow)
+            // ───────────────────────────────────────────────────────────────────────
+            deltaValue?.let { tv ->
+                if (glucoseStatus != null) {
+                    tv.text = profileUtil.fromMgdlToSignedStringInUnits(glucoseStatus.delta)
+                    tv.setTextColor(lastBgColor)
+                } else {
+                    tv.text = "--"
+                }
+            }
+            
+            // ───────────────────────────────────────────────────────────────────────
+            // 8. UPDATE ACTIVITY TEXT (Bottom right - Activity % from loop data)
+            // ───────────────────────────────────────────────────────────────────────
+            activityText?.let { tv ->
+                // Get TBR percentage from current basal vs profile basal
+                val basalData = iobCobCalculator.getBasalData(profile, lastBg?.timestamp ?: dateUtil.now())
+                val currentBasal = basalData.basal
+                val profileBasal = profile.getBasal(lastBg?.timestamp ?: dateUtil.now())
+                val activity = if (profileBasal > 0) {
+                    ((currentBasal / profileBasal) * 100).toInt()
+                } else 100
+                tv.text = "Activity: $activity%"
+            }
+            
+            // ───────────────────────────────────────────────────────────────────────
+            // 9. UPDATE TBR TEXT (Bottom right - Current basal rate)
+            // ───────────────────────────────────────────────────────────────────────
+            tbrText?.let { tv ->
+                val basalRate = iobCobCalculator.getBasalData(profile, lastBg?.timestamp ?: dateUtil.now())
+                val formattedRate = String.format("%.2f", basalRate.basal)
+                tv.text = "TBR: $formattedRate U/h"
+            }
         }
     }
 
     private fun updateProfile() {
+
         val profile = profileFunction.getProfile()
         runOnUiThread {
             _binding ?: return@runOnUiThread

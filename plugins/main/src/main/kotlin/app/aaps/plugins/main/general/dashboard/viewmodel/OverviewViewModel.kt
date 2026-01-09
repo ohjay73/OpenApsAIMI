@@ -180,6 +180,77 @@ class OverviewViewModel(
                 glucoseText + " " + lastBgData.lastBgDescription() + " " + timeAgoLong
 
 
+        // ═══════════════════════════════════════════════════════════════
+        // Circle-Top Hybrid Dashboard - Calculate all new fields
+        // ═══════════════════════════════════════════════════════════════
+        
+        // 1. Nose angle from delta (for GlucoseRingView pointer)
+        val delta = glucoseStatusProvider.glucoseStatusData?.delta ?: 0.0
+        val noseAngleDeg = when {
+            delta > 10 -> 45f   // Rapidly rising →45°
+            delta > 5 -> 20f    // Rising →20°
+            delta > 2 -> 10f    // Slightly rising →10°
+            delta < -10 -> -45f // Rapidly falling ↓-45°
+            delta < -5 -> -20f  // Falling ↓-20°
+            delta < -2 -> -10f  // Slightly falling ↓-10°
+            else -> 0f          // Stable →0°
+        }
+        
+        // 2. Reservoir
+        val reservoirText = activePlugin.activePump.reservoirLevel?.let { level ->
+            if (level > 0) decimalFormatter.to2Decimal(level) + " IE" 
+            else null
+        }
+        
+        // 3. Infusion Age (from CarePortal)
+        val infusionAgeText = persistenceLayer.getLastTherapyRecordUpToNow(TE.Type.CANNULA_CHANGE)?.let { event ->
+            val ageMillis = dateUtil.now() - event.timestamp
+            val hours = (ageMillis / (1000 * 60 * 60)).toInt()
+            val days = hours / 24
+            val remainingHours = hours % 24
+            if (days > 0) "${days}d ${remainingHours}h" else "${hours}h"
+        }
+        
+        // 4. Sensor Age
+        val sensorAgeText = persistenceLayer.getLastTherapyRecordUpToNow(TE.Type.SENSOR_CHANGE)?.let { event ->
+            val ageMillis = dateUtil.now() - event.timestamp
+            val hours = (ageMillis / (1000 * 60 * 60)).toInt()
+            val days = hours / 24
+            val remainingHours = hours % 24
+            if (days > 0) "${days}d ${remainingHours}h" else "${hours}h"
+        }
+        
+        // 5. Basal (current profile basal rate)
+        val basalText = profileFunction.getProfile()?.let { profile ->
+            val currentBasal = profile.getBasal(dateUtil.now())
+            decimalFormatter.to2Decimal(currentBasal) + " IE"
+        }
+        
+        // 6. Activity % - simplified (TBR percentage)
+        val activityPctText = processedTbrEbData.getTempBasalIncludingConvertedExtended(dateUtil.now())?.takeIf { it.isInProgress }?.let { tbr ->
+            profileFunction.getProfile()?.let { profile ->
+                val currentBasal = profile.getBasal(dateUtil.now())
+                if (currentBasal > 0) {
+                    val pct = ((tbr.rate / currentBasal) * 100 - 100).toInt()
+                    "$pct%"
+                } else "0%"
+            } ?: "0%"
+        } ?: "0%"
+        
+        // 7. Pump Battery
+        val pumpBatteryText = activePlugin.activePump.batteryLevel?.let { "$it%" }
+        
+        // 8. Last Sensor Value (simplified)
+        val lastSensorValueText = lastBg?.recalculated?.let { bg ->
+            val units = profileFunction.getUnits() ?: GlucoseUnit.MGDL
+            profileUtil.fromMgdlToStringInUnits(bg, units)
+        }
+        
+        // 9. TBR Rate
+        val tbrRateText = processedTbrEbData.getTempBasalIncludingConvertedExtended(dateUtil.now())?.takeIf { it.isInProgress }?.let { tbr ->
+            decimalFormatter.to2Decimal(tbr.rate) + " U/h"
+        } ?: "0.00 U/h"
+
         val state = StatusCardState(
             glucoseText = glucoseText,
             glucoseColor = lastBgData.lastBgColor(context),
@@ -200,7 +271,23 @@ class OverviewViewModel(
                 bg = lastBg?.recalculated,
                 delta = glucoseStatusProvider.glucoseStatusData?.delta
             ),
-            isAimiContextActive = preferences.get(app.aaps.core.keys.StringKey.OApsAIMIContextStorage).length > 5
+            isAimiContextActive = preferences.get(app.aaps.core.keys.StringKey.OApsAIMIContextStorage).length > 5,
+            // For GlucoseCircleView
+            glucoseValue = lastBg?.recalculated,
+            targetLow = profileFunction.getProfile()?.getTargetLowMgdl(),
+            targetHigh = profileFunction.getProfile()?.getTargetHighMgdl(),
+            
+            // Circle-Top Hybrid Dashboard fields
+            glucoseMgdl = lastBg?.recalculated?.toInt(),
+            noseAngleDeg = noseAngleDeg,
+            reservoirText = reservoirText,
+            infusionAgeText = infusionAgeText,
+            pumpBatteryText = pumpBatteryText,
+            sensorAgeText = sensorAgeText,
+            lastSensorValueText = lastSensorValueText,
+            activityPctText = activityPctText,
+            tbrRateText = tbrRateText,
+            basalText = basalText
         )
         _statusCardState.postValue(state)
     }
@@ -608,7 +695,23 @@ data class StatusCardState(
     val pumpStatusText: String = "",
     val predictionText: String = "",
     val unicornImageRes: Int = R.drawable.unicorn_normal_stable,  // 🦄 Dynamic unicorn image
-    val isAimiContextActive: Boolean = false
+    val isAimiContextActive: Boolean = false,
+    // For GlucoseCircleView color update
+    val glucoseValue: Double? = null,
+    val targetLow: Double? = null,
+    val targetHigh: Double? = null,
+    
+    // Circle-Top Hybrid Dashboard fields
+    val glucoseMgdl: Int? = null,
+    val noseAngleDeg: Float? = null,
+    val reservoirText: String? = null,
+    val infusionAgeText: String? = null,
+    val pumpBatteryText: String? = null,
+    val sensorAgeText: String? = null,
+    val lastSensorValueText: String? = null,
+    val activityPctText: String? = null,
+    val tbrRateText: String? = null,
+    val basalText: String? = null
 )
 
 data class AdjustmentCardState(
