@@ -46,6 +46,7 @@ import app.aaps.core.objects.extensions.round
 import app.aaps.core.objects.extensions.isInProgress
 import app.aaps.core.objects.extensions.toStringFull
 import app.aaps.core.objects.extensions.toStringShort
+import app.aaps.core.interfaces.overview.OverviewData
 import app.aaps.plugins.main.R
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
@@ -71,7 +72,8 @@ class OverviewViewModel(
     private val rxBus: RxBus,
     private val aapsSchedulers: AapsSchedulers,
     private val fabricPrivacy: FabricPrivacy,
-    private val preferences: Preferences
+    private val preferences: Preferences,
+    private val overviewData: OverviewData
 ) : ViewModel() {
 
     private val disposables = CompositeDisposable()
@@ -254,24 +256,42 @@ class OverviewViewModel(
         } ?: "0.00 U/h"
 
         // 10. Steps & HR
-        // Note: 'oapsProfileAimi' in 'request' might not be standard. Using 'loop.lastRun?.request' assuming AIMI structure
-        // Assuming DetermineBasalAIMI2 result structure availability
-        // Since we don't have direct access to 'recentSteps' here easily without casting, we stick to what might be available or use placeholders if specific fields are missing in generic 'request'
-        // For now, attempting to get from plugin access or assume typical patterns. 
-        // Actually, DetermineBasalAIMI2 logs them. But to display, we need them in a structured way.
-        // Let's check 'loop.lastRun?.sourceData' or similar? 
-        // Simpler: Just put placeholders or try to cast if specific plugin active.
-        // Given 'loop' is generic, we can't easily access 'recentSteps' unless exposed.
-        // However, user specifically asked for them.
-        // Let's use hardcoded placeholder logic OR try to find where they are stored.
-        // Wait, DetermineBasalAIMI2.kt logs them. 
-        // I will use placeholders "--" for now but correctly wired, as I don't see direct accessor in Loop/OverviewDataImpl for Steps/HR yet.
-        // Wait! In `OverviewDataImpl.kt`, there are `stepsCountGraphSeries` and `heartRateGraphSeries`.
-        // I can use `OverviewData` injected in `OverviewFragment` -> `OverviewViewModel`?
-        // No, `OverviewViewModel` has `lastBgData` etc.
-        // Let's add them as nullable strings.
-        val stepsText: String = "--" // TODO: Wire up real steps
-        val hrText: String = "--"    // TODO: Wire up real HR
+        var stepsText: String = "--"
+        var hrText: String = "--"
+        
+        try {
+            val now = System.currentTimeMillis()
+            val from = now - (15 * 60 * 1000) // Last 15 minutes
+
+            // Steps (Sum of steps in the last 15m)
+            val stepsList = persistenceLayer.getStepsCountFromTimeToTime(from, now)
+            var totalSteps = 0
+            stepsList.forEach { 
+                // data is usually stored as "steps in X min", so we just sum them up for the period
+                // However, steps are 5-min buckets.
+                totalSteps += it.steps5min
+            }
+            if (totalSteps > 0) {
+                stepsText = totalSteps.toString()
+            } else {
+                 // Fallback: check if we have any data slightly older if current is 0?
+                 // Or maybe the user just hasn't walked. 0 is valid.
+                 // If list is empty, it means no data.
+                 if (stepsList.isNotEmpty()) stepsText = "0"
+            }
+
+            // Heart Rate (Average or Last)
+            val hrList = persistenceLayer.getHeartRatesFromTimeToTime(from, now)
+            if (hrList.isNotEmpty()) {
+                val lastHr = hrList.lastOrNull()?.beatsPerMinute
+                if (lastHr != null && lastHr > 0) {
+                    hrText = "%.0f".format(lastHr)
+                }
+            }
+        
+        } catch (e: Exception) {
+             e.printStackTrace()
+        }
 
         val state = StatusCardState(
             glucoseText = glucoseText,
@@ -650,7 +670,8 @@ class OverviewViewModel(
         private val rxBus: RxBus,
         private val aapsSchedulers: AapsSchedulers,
         private val fabricPrivacy: FabricPrivacy,
-        private val preferences: Preferences
+        private val preferences: Preferences,
+        private val overviewData: OverviewData
     ) : ViewModelProvider.Factory {
 
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -674,7 +695,8 @@ class OverviewViewModel(
                     rxBus,
                     aapsSchedulers,
                     fabricPrivacy,
-                    preferences
+                    preferences,
+                    overviewData
                 ) as T
             }
             throw IllegalArgumentException("Unknown ViewModel class $modelClass")
