@@ -61,7 +61,8 @@ class CircleTopDashboardView @JvmOverloads constructor(
                     mainText = getProp<String>("glucoseText") ?: "--",
                     subLeftText = getProp<String>("timeAgo") ?: "",
                     subRightText = getProp<String>("deltaText") ?: "",
-                    noseAngleDeg = getProp<Float>("noseAngleDeg")
+                    noseAngleDeg = getProp<Float>("noseAngleDeg"),
+                    overrideColor = getProp<Int>("glucoseColor")
                 )
             }
 
@@ -84,9 +85,13 @@ class CircleTopDashboardView @JvmOverloads constructor(
 
 
             // ═══════════════════════════════════════════════════════════════
-            // 5. Loop Status
+            // 5. Loop Status & New Metrics (Steps/HR)
             // ═══════════════════════════════════════════════════════════════
             binding.loopStatus.text = getProp<String>("loopStatusText") ?: "Closed Loop"
+            
+            // Steps & HR
+            binding.stepsText.text = getProp<String>("stepsText") ?: "--"
+            binding.hrText.text = getProp<String>("hrText") ?: "--"
             
 
             
