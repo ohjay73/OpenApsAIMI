@@ -1199,9 +1199,13 @@
     <string name="aimi_prefs_provider_deepseek">DeepSeek (Chat)</string>
     <string name="aimi_prefs_provider_claude">Claude (3.5 Sonnet)</string>
     <string name="aimi_prefs_openai_key_title">Chiave API OpenAI</string>
-    <string name="aimi_prefs_openai_key_summary">Inserisci la tua chiave API OpenAI (sk-...)</string>
+    <string name="aimi_prefs_openai_key_summary">Inserisci la tua chiave API OpenAI(sk-...)</string>
     <string name="aimi_prefs_gemini_key_title">Chiave API Gemini</string>
-    <string name="aimi_prefs_gemini_key_summary">Inserisci la tua chiave API Google Gemini (AIza...)</string>
+    <string name="aimi_prefs_gemini_key_summary">>Inserisci la tua chiave API Google Gemini(AIza...)</string>
+    <string name="aimi_prefs_deepseek_key_title">Chiave API DeepSeek</string>
+    <string name="aimi_prefs_deepseek_key_summary">>Inserisci la tua chiave API DeepSeek</string>
+    <string name="aimi_prefs_claude_key_title">Chiave API Claude</string>
+    <string name="aimi_prefs_claude_key_summary">>Inserisci la tua chiave API Anthropic Claude</string>
 
     <!-- STRINGHE AIMI ADVISOR -->
     <string name="aimi_advisor_title">AIMI Advisor</string>
