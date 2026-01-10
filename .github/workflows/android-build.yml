@@ -9,6 +9,10 @@ on:
   pull_request:
     branches:
       - dev_OAPSAIMI
+  workflow_dispatch:
+    branches:
+      - aimi-test-translations-v2
+
 
 jobs:
   build-signed:
