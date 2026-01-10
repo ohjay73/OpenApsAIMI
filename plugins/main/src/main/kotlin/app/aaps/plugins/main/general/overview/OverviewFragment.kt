@@ -5,7 +5,6 @@ import android.app.NotificationManager
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
-import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PorterDuff
@@ -459,7 +458,8 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             // Strategy: Try multiple findViewById paths in fallback order
             
             // 1. Try binding.infoLayout.root (for overview_info_layout.xml - included via <include>)
-            // 2. Try binding.root (for direct layouts like component_status_card.xml)
+            // 2. Try status_card_layout (for component_status_card.xml - Modern Circle)
+            // 3. Try binding.root (last resort)
             val container = binding.infoLayout?.root?.findViewById<FrameLayout>(
                 R.id.aimi_auditor_indicator_container
             ) ?: binding.root.findViewById<FrameLayout>(

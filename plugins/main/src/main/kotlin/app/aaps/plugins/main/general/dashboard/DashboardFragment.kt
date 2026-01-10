@@ -48,14 +48,18 @@ import app.aaps.plugins.main.databinding.FragmentDashboardBinding
 import app.aaps.plugins.main.general.dashboard.viewmodel.AdjustmentCardState
 import app.aaps.plugins.main.general.dashboard.viewmodel.OverviewViewModel
 import app.aaps.plugins.main.general.overview.graphData.GraphData
-import app.aaps.plugins.main.general.overview.notifications.NotificationStore
-import app.aaps.plugins.main.general.overview.notifications.events.EventUpdateOverviewNotification
+import app.aaps.plugins.main.general.overview.notifications.NotificationUiBinder
 import androidx.recyclerview.widget.LinearLayoutManager
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
 import dagger.android.support.DaggerFragment
+import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorStatusLiveData
+import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorNotificationManager
+import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorStatusIndicator
 import javax.inject.Inject
 import javax.inject.Provider
+import app.aaps.plugins.main.general.dashboard.views.CircleTopActionListener
+import app.aaps.plugins.aps.openAPSAIMI.advisor.AimiProfileAdvisorActivity
 
 class DashboardFragment : DaggerFragment() {
 
@@ -86,12 +90,15 @@ class DashboardFragment : DaggerFragment() {
     @Inject lateinit var automation: Automation
     @Inject lateinit var xDripSource: XDripSource
     @Inject lateinit var dexcomBoyda: DexcomBoyda
-    @Inject lateinit var notificationStore: NotificationStore
+    @Inject lateinit var notificationUiBinder: NotificationUiBinder
+    @Inject lateinit var auditorStatusLiveData: AuditorStatusLiveData
+    @Inject lateinit var auditorNotificationManager: AuditorNotificationManager
 
     private val disposables = CompositeDisposable()
     private var _binding: FragmentDashboardBinding? = null
     private val binding get() = _binding!!
     private var currentRange = 0
+    private var auditorIndicator: AuditorStatusIndicator? = null
     private fun sensor(): Boolean {
         val ctx = context ?: return false
 
@@ -152,7 +159,8 @@ class DashboardFragment : DaggerFragment() {
             rxBus,
             aapsSchedulers,
             fabricPrivacy,
-            preferences
+            preferences,
+            overviewData
         )
     }
 
@@ -186,11 +194,10 @@ class DashboardFragment : DaggerFragment() {
         }
 
         binding.overviewNotifications.layoutManager = LinearLayoutManager(context)
-        notificationStore.updateNotifications(binding.overviewNotifications)
 
         syncGraphRange(preferences.get(IntNonKey.RangeToDisplay), false)
 
-        viewModel.statusCardState.observe(viewLifecycleOwner) { binding.statusCard.update(it) }
+        viewModel.statusCardState.observe(viewLifecycleOwner) { binding.statusCard.updateWithState(it) }
         viewModel.adjustmentState.observe(viewLifecycleOwner) { state ->
             state?.let {
                 binding.adjustmentStatus.update(it)
@@ -220,8 +227,42 @@ class DashboardFragment : DaggerFragment() {
 
         binding.statusCard.isClickable = true
         binding.statusCard.isFocusable = true
+        
+        // Setup Action Listeners (Advisor, Adjust, Prefs, Stats)
+        binding.statusCard.setActionListener(object : CircleTopActionListener {
+            override fun onAimiAdvisorClicked() {
+                try {
+                    val intent = Intent(requireContext(), AimiProfileAdvisorActivity::class.java)
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    aapsLogger.error(LTag.CORE, "Failed to launch Advisor: ${e.message}")
+                }
+            }
+            override fun onAdjustClicked() { openAdjustmentDetails() }
+            override fun onAimiPreferencesClicked() {
+                try {
+                    val intent = Intent(requireContext(), app.aaps.plugins.aps.openAPSAIMI.advisor.meal.MealAdvisorActivity::class.java)
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    aapsLogger.error(LTag.CORE, "Failed to launch Meal Advisor: ${e.message}")
+                }
+            }
+            override fun onStatsClicked() {
+                try {
+                    val intent = Intent().setClassName(requireContext(), "app.aaps.plugins.aps.openAPSAIMI.context.ui.ContextActivity")
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    aapsLogger.error(LTag.CORE, "Failed to launch ContextActivity: ${e.message}")
+                }
+            }
+        })
+
+        // Loop Dialog on general click or specific indicator
         binding.statusCard.setOnClickListener { openLoopDialog() }
-        binding.statusCard.setOnAimiIconClickListener {
+        binding.statusCard.getLoopIndicator().setOnClickListener { openLoopDialog() }
+
+        // Context Indicator Click
+        binding.statusCard.getContextIndicator().setOnClickListener {
             try {
                 val intent = Intent().setClassName(requireContext(), "app.aaps.plugins.aps.openAPSAIMI.context.ui.ContextActivity")
                 startActivity(intent)
@@ -272,19 +313,19 @@ class DashboardFragment : DaggerFragment() {
             }
             popup.show()
         }
+        
+        // 🔍 Setup Auditor badge
+        setupAuditorIndicator()
     }
 
     override fun onResume() {
         super.onResume()
         viewModel.start()
-        disposables += activePlugin.activeOverview.overviewBus
-            .toObservable(EventUpdateOverviewNotification::class.java)
-            .observeOn(aapsSchedulers.main)
-            .subscribe({
-                notificationStore.updateNotifications(binding.overviewNotifications)
-            }, {
-                aapsLogger.error(LTag.UI, "Error updating notifications", it)
-            })
+        notificationUiBinder.bind(
+            overviewBus = activePlugin.activeOverview.overviewBus,
+            notificationsView = binding.overviewNotifications,
+            disposable = disposables,
+        )
         disposables += rxBus
             .toObservable(EventPreferenceChange::class.java)
             .observeOn(aapsSchedulers.main)
@@ -303,7 +344,41 @@ class DashboardFragment : DaggerFragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        auditorIndicator?.stopAnimations()
+        auditorIndicator = null
         _binding = null
+    }
+
+    private fun setupAuditorIndicator() {
+        try {
+            aapsLogger.debug(LTag.CORE, "🔍 [Dashboard] Searching for Auditor badge...")
+            
+            val container = binding.statusCard.getAuditorContainer()
+            
+            aapsLogger.debug(LTag.CORE, "✅ [Dashboard] Badge container found!")
+            
+            auditorIndicator = AuditorStatusIndicator(requireContext())
+            container.removeAllViews()
+            container.addView(auditorIndicator)
+            
+            auditorIndicator?.setOnClickListener {
+                aapsLogger.debug(LTag.CORE, "Auditor badge clicked")
+            }
+            
+            auditorStatusLiveData.uiState.observe(viewLifecycleOwner) { uiState ->
+                auditorIndicator?.setState(uiState)
+                if (uiState.shouldNotify) {
+                    auditorNotificationManager.showInsightAvailable(uiState)
+                }
+                container.visibility = android.view.View.VISIBLE
+                aapsLogger.debug(LTag.CORE, "[Dashboard] Badge state: ${uiState.type}")
+            }
+            
+            auditorStatusLiveData.forceUpdate()
+            
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.CORE, "[Dashboard] Badge setup error: ${e.message}", e)
+        }
     }
 
     private fun openHistory(): Boolean {

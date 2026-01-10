@@ -48,7 +48,6 @@
                 android:textColor="?android:attr/textColorSecondary"
                 android:textSize="15sp"
                 tools:text="✓ High confidence"/>
-
         </LinearLayout>
 
         <LinearLayout

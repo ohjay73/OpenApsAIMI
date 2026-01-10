@@ -46,6 +46,7 @@ import app.aaps.core.objects.extensions.round
 import app.aaps.core.objects.extensions.isInProgress
 import app.aaps.core.objects.extensions.toStringFull
 import app.aaps.core.objects.extensions.toStringShort
+import app.aaps.core.interfaces.overview.OverviewData
 import app.aaps.plugins.main.R
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
@@ -71,7 +72,8 @@ class OverviewViewModel(
     private val rxBus: RxBus,
     private val aapsSchedulers: AapsSchedulers,
     private val fabricPrivacy: FabricPrivacy,
-    private val preferences: Preferences
+    private val preferences: Preferences,
+    private val overviewData: OverviewData
 ) : ViewModel() {
 
     private val disposables = CompositeDisposable()
@@ -180,6 +182,129 @@ class OverviewViewModel(
                 glucoseText + " " + lastBgData.lastBgDescription() + " " + timeAgoLong
 
 
+        // ═══════════════════════════════════════════════════════════════
+        // Circle-Top Hybrid Dashboard - Calculate all new fields
+        // ═══════════════════════════════════════════════════════════════
+        
+        // 1. Nose angle from delta (for GlucoseRingView pointer)
+        val delta = glucoseStatusProvider.glucoseStatusData?.delta ?: 0.0
+        val noseAngleDeg = when {
+            delta > 10 -> 45f   // Rapidly rising →45°
+            delta > 5 -> 20f    // Rising →20°
+            delta > 2 -> 10f    // Slightly rising →10°
+            delta < -10 -> -45f // Rapidly falling ↓-45°
+            delta < -5 -> -20f  // Falling ↓-20°
+            delta < -2 -> -10f  // Slightly falling ↓-10°
+            else -> 0f          // Stable →0°
+        }
+        
+        // 2. Reservoir
+        val reservoirText = activePlugin.activePump.reservoirLevel?.let { level ->
+            if (level > 0) decimalFormatter.to2Decimal(level) + " IE" 
+            else null
+        }
+        
+        // 3. Infusion Age (from CarePortal)
+        val infusionAgeText = persistenceLayer.getLastTherapyRecordUpToNow(TE.Type.CANNULA_CHANGE)?.let { event ->
+            val ageMillis = dateUtil.now() - event.timestamp
+            val hours = (ageMillis / (1000 * 60 * 60)).toInt()
+            val days = hours / 24
+            val remainingHours = hours % 24
+            if (days > 0) "${days}d ${remainingHours}h" else "${hours}h"
+        }
+        
+        // 4. Sensor Age
+        val sensorAgeText = persistenceLayer.getLastTherapyRecordUpToNow(TE.Type.SENSOR_CHANGE)?.let { event ->
+            val ageMillis = dateUtil.now() - event.timestamp
+            val hours = (ageMillis / (1000 * 60 * 60)).toInt()
+            val days = hours / 24
+            val remainingHours = hours % 24
+            if (days > 0) "${days}d ${remainingHours}h" else "${hours}h"
+        }
+        
+        // 5. Basal (current profile basal rate)
+        val basalText = profileFunction.getProfile()?.let { profile ->
+            val currentBasal = profile.getBasal(dateUtil.now())
+            decimalFormatter.to2Decimal(currentBasal) + " IE"
+        }
+        
+        // 6. Activity % - simplified (TBR percentage)
+        val activityPctText = processedTbrEbData.getTempBasalIncludingConvertedExtended(dateUtil.now())?.takeIf { it.isInProgress }?.let { tbr ->
+            profileFunction.getProfile()?.let { profile ->
+                val currentBasal = profile.getBasal(dateUtil.now())
+                if (currentBasal > 0) {
+                    val pct = ((tbr.rate / currentBasal) * 100 - 100).toInt()
+                    "$pct%"
+                } else "0%"
+            } ?: "0%"
+        } ?: "0%"
+        
+        // 7. Pump Battery
+        val pumpBatteryText = activePlugin.activePump.batteryLevel?.let { "$it%" }
+        
+        // 8. IOB (replacing Last Sensor Value as per user request)
+        val lastSensorValueText = run {
+            val bolus = bolusIob()
+            val basal = basalIob()
+            val total = bolus.iob + basal.basaliob
+            decimalFormatter.to2Decimal(total) + " IE"
+        }
+        
+        // 9. TBR Rate
+        val tbrRateText = processedTbrEbData.getTempBasalIncludingConvertedExtended(dateUtil.now())?.takeIf { it.isInProgress }?.let { tbr ->
+            decimalFormatter.to2Decimal(tbr.rate) + " U/h"
+        } ?: "0.00 U/h"
+
+        // 10. Steps & HR
+        var stepsText: String = "--"
+        var hrText: String = "--"
+        
+        try {
+            val now = System.currentTimeMillis()
+            val from = dateUtil.beginOfDay(now) // Start of today (Midnight)
+
+            // Steps (Sum of steps in the last 15m)
+            // Steps (Integration of rolling windows)
+            val stepsList = persistenceLayer.getStepsCountFromTimeToTime(from, now).sortedBy { it.timestamp }
+            var totalSteps = 0.0
+            var lastTimestamp = from
+
+            stepsList.forEach { sc ->
+                if (sc.duration > 0 && sc.steps5min > 0) {
+                    val dt = (sc.timestamp - lastTimestamp).coerceAtLeast(0)
+                    if (dt > 0) {
+                        // Calculate rate (steps per ms)
+                        val rate = sc.steps5min.toDouble() / sc.duration
+                        // Determine meaningful time window (handle overlaps vs gaps)
+                        // If dt < duration (overlap), we integrate over dt.
+                        // If dt >= duration (gap), we integrate over duration (full record) and assume 0 for the gap.
+                        val coveredDuration = java.lang.Math.min(dt, sc.duration)
+                        
+                        totalSteps += rate * coveredDuration
+                    }
+                }
+                lastTimestamp = java.lang.Math.max(lastTimestamp, sc.timestamp)
+            }
+
+            if (totalSteps > 1) {
+                stepsText = "%.0f".format(totalSteps)
+            } else {
+                 if (stepsList.isNotEmpty()) stepsText = "0"
+            }
+
+            // Heart Rate (Average or Last)
+            val hrList = persistenceLayer.getHeartRatesFromTimeToTime(from, now)
+            if (hrList.isNotEmpty()) {
+                val lastHr = hrList.lastOrNull()?.beatsPerMinute
+                if (lastHr != null && lastHr > 0) {
+                    hrText = "%.0f".format(lastHr)
+                }
+            }
+        
+        } catch (e: Exception) {
+             e.printStackTrace()
+        }
+
         val state = StatusCardState(
             glucoseText = glucoseText,
             glucoseColor = lastBgData.lastBgColor(context),
@@ -200,7 +325,25 @@ class OverviewViewModel(
                 bg = lastBg?.recalculated,
                 delta = glucoseStatusProvider.glucoseStatusData?.delta
             ),
-            isAimiContextActive = preferences.get(app.aaps.core.keys.StringKey.OApsAIMIContextStorage).length > 5
+            isAimiContextActive = preferences.get(app.aaps.core.keys.StringKey.OApsAIMIContextStorage).length > 5,
+            // For GlucoseCircleView
+            glucoseValue = lastBg?.recalculated,
+            targetLow = profileFunction.getProfile()?.getTargetLowMgdl(),
+            targetHigh = profileFunction.getProfile()?.getTargetHighMgdl(),
+            
+            // Circle-Top Hybrid Dashboard fields
+            glucoseMgdl = lastBg?.recalculated?.toInt(),
+            noseAngleDeg = noseAngleDeg,
+            reservoirText = reservoirText,
+            infusionAgeText = infusionAgeText,
+            pumpBatteryText = pumpBatteryText,
+            sensorAgeText = sensorAgeText,
+            lastSensorValueText = lastSensorValueText,
+            activityPctText = activityPctText,
+            tbrRateText = tbrRateText,
+            basalText = basalText,
+            stepsText = stepsText,
+            hrText = hrText
         )
         _statusCardState.postValue(state)
     }
@@ -539,7 +682,8 @@ class OverviewViewModel(
         private val rxBus: RxBus,
         private val aapsSchedulers: AapsSchedulers,
         private val fabricPrivacy: FabricPrivacy,
-        private val preferences: Preferences
+        private val preferences: Preferences,
+        private val overviewData: OverviewData
     ) : ViewModelProvider.Factory {
 
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -563,7 +707,8 @@ class OverviewViewModel(
                     rxBus,
                     aapsSchedulers,
                     fabricPrivacy,
-                    preferences
+                    preferences,
+                    overviewData
                 ) as T
             }
             throw IllegalArgumentException("Unknown ViewModel class $modelClass")
@@ -608,7 +753,25 @@ data class StatusCardState(
     val pumpStatusText: String = "",
     val predictionText: String = "",
     val unicornImageRes: Int = R.drawable.unicorn_normal_stable,  // 🦄 Dynamic unicorn image
-    val isAimiContextActive: Boolean = false
+    val isAimiContextActive: Boolean = false,
+    // For GlucoseCircleView color update
+    val glucoseValue: Double? = null,
+    val targetLow: Double? = null,
+    val targetHigh: Double? = null,
+    
+    // Circle-Top Hybrid Dashboard fields
+    val glucoseMgdl: Int? = null,
+    val noseAngleDeg: Float? = null,
+    val reservoirText: String? = null,
+    val infusionAgeText: String? = null,
+    val pumpBatteryText: String? = null,
+    val sensorAgeText: String? = null,
+    val lastSensorValueText: String? = null,
+    val activityPctText: String? = null,
+    val tbrRateText: String? = null,
+    val basalText: String? = null,
+    val stepsText: String? = null,
+    val hrText: String? = null
 )
 
 data class AdjustmentCardState(
