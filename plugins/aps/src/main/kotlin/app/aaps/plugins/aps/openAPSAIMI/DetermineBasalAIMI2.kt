@@ -7,7 +7,7 @@ import app.aaps.core.data.model.BS
 import app.aaps.core.data.model.TB
 import app.aaps.core.data.model.TE
 import app.aaps.core.data.model.UE
-import app.aaps.core.data.time.T
+
 import app.aaps.core.interfaces.aps.APSResult
 import app.aaps.core.interfaces.aps.AutosensResult
 import app.aaps.core.interfaces.aps.CurrentTemp
@@ -47,6 +47,8 @@ import app.aaps.plugins.aps.openAPSAIMI.utils.AimiStorageHelper
 import app.aaps.plugins.aps.openAPSAIMI.model.Constants
 import app.aaps.plugins.aps.openAPSAIMI.model.SmbPlan
 // Imports updated for strict patch
+import app.aaps.core.data.model.HR
+import app.aaps.core.data.model.SC
 import app.aaps.plugins.aps.openAPSAIMI.model.DecisionResult
 
 import app.aaps.plugins.aps.openAPSAIMI.model.LoopContext
@@ -1477,34 +1479,29 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         isExplicitUserAction: Boolean = false,
         decisionSource: String = "AIMI"
     ) {
-        // 🛡️ FIX NC3: REACTIVITY CLAMP for Low BG (Safety-Critical)
-        // Prevent learner amplification at low BG
-        var effectiveProposed = proposedUnits
+        // 🚀 REACTOR MODE: Full Speed (Safety delegated to applySafetyPrecautions)
+        // User Directive: "Garde le moteur à plein régime"
         
-        if (bg < 120.0 && !isExplicitUserAction) {
-            val lowBgReactivityMax = 1.05 // Maximum 5% amplification below 120
-            val currentReactivity = try {
-                unifiedReactivityLearner.globalFactor
-            } catch (e: Exception) {
-                1.0 // Fallback if learner not initialized
-            }
-            
-            if (currentReactivity > lowBgReactivityMax) {
-                val clampedFactor = lowBgReactivityMax
-                effectiveProposed = (proposedUnits / currentReactivity * clampedFactor).coerceAtLeast(0.0)
-                consoleLog.add("REACTIVITY_CLAMP bg=${bg.roundToInt()} react=${"%.2f".format(currentReactivity)} max=${"%.2f".format(clampedFactor)} proposed=${"%.2f".format(proposedUnits)}->${"%.2f".format(effectiveProposed)}")
-            }
-        }
+        var effectiveProposed = proposedUnits
+
+        // No inline clamping here. 
+        // We trust the UnifiedReactivityLearner to provide the correct amplification
+        // and the Safety Module to catch critical issues.
         
         val proposedFloat = effectiveProposed.toFloat()
         lastDecisionSource = decisionSource
         lastSmbProposed = effectiveProposed
         
-        // Use maxSMB (Preferences) as the hard limit.
-        // We use 'maxSMB' instead of 'maxSMBHB' to ensure strict safety unless explicitly handled otherwise.
-        // 1. Determine dynamic baseline limit (Normal vs High BG)
-        // If BG > 120, use the High BG Max SMB preference (MaxSMBHB).
-         val baseLimit = if (this.bg > 120) this.maxSMBHB else this.maxSMB
+        // 🛡️ SAFETY NET: Dynamic SMB Limit (Zones & Trajectory)
+        // Replaces simple "React Over 120" with a smart, amplified range logic.
+        // Handles: Strict Lows (<120), Buffer/Transition (120-160), and Full Reactor (>160).
+        val baseLimit = app.aaps.plugins.aps.openAPSAIMI.safety.SafetyNet.calculateSafeSmbLimit(
+            bg = this.bg,
+            eventualBg = this.eventualBG,
+            maxSmbLow = this.maxSMB,
+            maxSmbHigh = this.maxSMBHB,
+            isExplicitUserAction = isExplicitUserAction
+        )
 
          // 🔒 FCL Safety: Enforce Safety Precautions (Dropping Fast, Hypo Risk, etc)
          // finalizeAndCapSMB often handles forced boluses, but they MUST yield to critical physical safety.
@@ -1520,23 +1517,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             exerciseFlag = sportTime, // Pass exercise state
             suspectedLateFatMeal = lateFatRiseFlag, // Pass late fat flag
             ignoreSafetyConditions = isExplicitUserAction
-         )
+         ).coerceAtMost(baseLimit.toFloat()) // Apply the SafetyNet limit immediately
 
          if (safetyCappedUnits < proposedFloat) {
-              consoleLog.add("Safety Precautions reduced SMB: $proposedFloat -> $safetyCappedUnits")
-         }
-
-         // 🛡️ FIX NC2: LOW BG SMB GUARD (Safety-Critical)
-         // Reduce maxSMB significantly under 120 mg/dL to prevent hypo
-         val lowBgThreshold = 120.0
-         val lowBgSmbFactor = 0.4 // 60% reduction (configurable via preferences later)
-         
-         if (bg < lowBgThreshold && !isExplicitUserAction) {
-             val lowBgLimit = (baseLimit * lowBgSmbFactor).toFloat()
-             if (safetyCappedUnits > lowBgLimit) {
-                 consoleLog.add("LOW_BG_GUARD bg=${bg.roundToInt()} cap=${"%.2f".format(lowBgLimit)} factor=${"%.0f".format(lowBgSmbFactor*100)}%")
-                 safetyCappedUnits = lowBgLimit
-             }
+              consoleLog.add("Safety Precautions reduced SMB: $proposedFloat -> $safetyCappedUnits (BaseLimit=${"%.2f".format(baseLimit)})")
          }
 
          // 🔧 FIX 3: Enhanced refractory if prediction absent
@@ -4846,30 +4830,45 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val timeMillis60 = now - 60 * 60 * 1000 // 60 minutes en millisecondes
         val timeMillis180 = now - 180 * 60 * 1000 // 180 minutes en millisecondes
 
-        val allStepsCounts = persistenceLayer.getStepsCountFromTimeToTime(timeMillis180, now)
-
         if (preferences.get(BooleanKey.OApsAIMIEnableStepsFromWatch)) {
-            allStepsCounts.forEach { stepCount ->
-                val timestamp = stepCount.timestamp
-                if (timestamp >= timeMillis5) {
-                    this.recentSteps5Minutes = stepCount.steps5min
-                }
-                if (timestamp >= timeMillis10) {
-                    this.recentSteps10Minutes = stepCount.steps10min
-                }
-                if (timestamp >= timeMillis15) {
-                    this.recentSteps15Minutes = stepCount.steps15min
-                }
-                if (timestamp >= timeMillis30) {
-                    this.recentSteps30Minutes = stepCount.steps30min
-                }
-                if (timestamp >= timeMillis60) {
-                    this.recentSteps60Minutes = stepCount.steps60min
-                }
-                if (timestamp >= timeMillis180) {
-                    this.recentSteps180Minutes = stepCount.steps180min
-                }
+            // Robust Steps Retrieval (Matches HR logic)
+            // Search window: 210 mins to cover 180min + delays
+            val stepsSearchStart = now - 210 * 60 * 1000
+            val allStepsCounts = persistenceLayer.getStepsCountFromTimeToTime(stepsSearchStart, now)
+
+            if (allStepsCounts.isNotEmpty()) {
+                val lastSteps = allStepsCounts.maxByOrNull { it.timestamp }
+                aapsLogger.debug(LTag.APS, "Steps Data: Found ${allStepsCounts.size} records. Last: ${lastSteps?.steps5min} steps @ ${java.util.Date(lastSteps?.timestamp ?: 0)}")
+            } else {
+                aapsLogger.debug(LTag.APS, "Steps Data: No records found in last 210 mins")
             }
+
+
+            
+            // Re-implement correctly to extract specific fields
+            val valid5 = allStepsCounts.filter { (it.timestamp + it.duration) >= timeMillis5 }.maxByOrNull { it.timestamp }
+            // Fallback for 5 min
+            val fallbackRecord = if (valid5 == null) {
+                 allStepsCounts.filter { (it.timestamp + it.duration) >= (now - 30 * 60 * 1000) }.maxByOrNull { it.timestamp }
+            } else null
+            
+            this.recentSteps5Minutes = valid5?.steps5min ?: fallbackRecord?.steps5min ?: 0
+            
+            this.recentSteps10Minutes = allStepsCounts.filter { (it.timestamp + it.duration) >= timeMillis10 }
+                .maxByOrNull { it.timestamp }?.steps10min ?: this.recentSteps5Minutes // Fallback to smaller window if needed? No, just 0 or current
+            
+            this.recentSteps15Minutes = allStepsCounts.filter { (it.timestamp + it.duration) >= timeMillis15 }
+                .maxByOrNull { it.timestamp }?.steps15min ?: 0
+                
+            this.recentSteps30Minutes = allStepsCounts.filter { (it.timestamp + it.duration) >= timeMillis30 }
+                .maxByOrNull { it.timestamp }?.steps30min ?: 0
+                
+            this.recentSteps60Minutes = allStepsCounts.filter { (it.timestamp + it.duration) >= timeMillis60 }
+                .maxByOrNull { it.timestamp }?.steps60min ?: 0
+                
+            this.recentSteps180Minutes = allStepsCounts.filter { (it.timestamp + it.duration) >= timeMillis180 }
+                .maxByOrNull { it.timestamp }?.steps180min ?: 0
+                
         } else {
             this.recentSteps5Minutes = StepService.getRecentStepCount5Min()
             this.recentSteps10Minutes = StepService.getRecentStepCount10Min()
@@ -4879,42 +4878,74 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             this.recentSteps180Minutes = StepService.getRecentStepCount180Min()
         }
 
+        // Efficient robust Heart Rate retrieval (One query for all windows + fallback)
         try {
-            // Fix: Widen search by 15min to catch records starting before window but overlapping (e.g. Garmin)
-            val heartRates5 = persistenceLayer.getHeartRatesFromTimeToTime(timeMillis5 - 15 * 60 * 1000, now)
-                .filter { (it.timestamp + it.duration) >= timeMillis5 }
-            this.averageBeatsPerMinute = heartRates5.map { it.beatsPerMinute.toInt() }.average()
+            // Search window: 200 mins to cover the 180min avg + buffer for overlapping records
+            val searchStart = now - 200 * 60 * 1000
+            val allHeartRates = persistenceLayer.getHeartRatesFromTimeToTime(searchStart, now)
+
+            // Debug info for the user/screenshot
+            if (allHeartRates.isNotEmpty()) {
+                val lastHR = allHeartRates.maxByOrNull { it.timestamp }
+                aapsLogger.debug(LTag.APS, "HR Data: Found ${allHeartRates.size} records. Last: ${lastHR?.beatsPerMinute} @ ${java.util.Date(lastHR?.timestamp ?: 0)}")
+            } else {
+                aapsLogger.debug(LTag.APS, "HR Data: No records found in last 200 mins")
+            }
+
+            // Helper to get average for a window (considering Overlap)
+            fun getRateForWindow(windowMillis: Long): List<HR> {
+                val windowStart = now - windowMillis
+                return allHeartRates.filter {
+                    val end = it.timestamp + it.duration
+                    end >= windowStart // Ends after start of window
+                }
+            }
+
+            // 1. Current HR (5 min window) - with Fallback
+            val hr5List = getRateForWindow(5 * 60 * 1000)
+            this.averageBeatsPerMinute = if (hr5List.isNotEmpty()) {
+                hr5List.map { it.beatsPerMinute.toInt() }.average()
+            } else {
+                // FALLBACK: Use the most recent value from the entire cache if available
+                val partialFallback = allHeartRates.filter { (it.timestamp + it.duration) >= (now - 30 * 60 * 1000) } // Look back 30 mins for fallback
+                val lastKnown = partialFallback.maxByOrNull { it.timestamp }
+                if (lastKnown != null) {
+                    // consoleLog.add("⚠️ HR Fallback: using data from ${((now - lastKnown.timestamp)/60000)} min ago")
+                    lastKnown.beatsPerMinute
+                } else {
+                    Double.NaN // Will display "--" if truly nothing in 30 mins
+                }
+            }
+
+            // 2. 10 Min Average
+            val hr10List = getRateForWindow(10 * 60 * 1000)
+            this.averageBeatsPerMinute10 = if (hr10List.isNotEmpty()) {
+                hr10List.map { it.beatsPerMinute.toInt() }.average()
+            } else {
+                this.averageBeatsPerMinute // fallback to current (which might be last known)
+            }
+
+            // 3. 60 Min Average
+            val hr60List = getRateForWindow(60 * 60 * 1000)
+            this.averageBeatsPerMinute60 = if (hr60List.isNotEmpty()) {
+                hr60List.map { it.beatsPerMinute.toInt() }.average()
+            } else {
+                80.0 // Default for long term avg
+            }
+
+            // 4. 180 Min Average
+            val hr180List = getRateForWindow(180 * 60 * 1000)
+            this.averageBeatsPerMinute180 = if (hr180List.isNotEmpty()) {
+                hr180List.map { it.beatsPerMinute.toInt() }.average()
+            } else {
+                80.0
+            }
 
         } catch (e: Exception) {
-
+            aapsLogger.error(LTag.APS, "Error processing Heart Rate data", e)
             averageBeatsPerMinute = 80.0
-        }
-        try {
-            val heartRates10 = persistenceLayer.getHeartRatesFromTimeToTime(timeMillis10 - 15 * 60 * 1000, now)
-                .filter { (it.timestamp + it.duration) >= timeMillis10 }
-            this.averageBeatsPerMinute10 = heartRates10.map { it.beatsPerMinute.toInt() }.average()
-
-        } catch (e: Exception) {
-
             averageBeatsPerMinute10 = 80.0
-        }
-        try {
-            val heartRates60 = persistenceLayer.getHeartRatesFromTimeToTime(timeMillis60 - 15 * 60 * 1000, now)
-                .filter { (it.timestamp + it.duration) >= timeMillis60 }
-            this.averageBeatsPerMinute60 = heartRates60.map { it.beatsPerMinute.toInt() }.average()
-
-        } catch (e: Exception) {
-
             averageBeatsPerMinute60 = 80.0
-        }
-        try {
-
-            val heartRates180 = persistenceLayer.getHeartRatesFromTimeToTime(timeMillis180 - 15 * 60 * 1000, now)
-                .filter { (it.timestamp + it.duration) >= timeMillis180 }
-            this.averageBeatsPerMinute180 = heartRates180.map { it.beatsPerMinute.toInt() }.average()
-
-        } catch (e: Exception) {
-
             averageBeatsPerMinute180 = 80.0
         }
         val heartRateTrend = averageBeatsPerMinute10 / averageBeatsPerMinute60
