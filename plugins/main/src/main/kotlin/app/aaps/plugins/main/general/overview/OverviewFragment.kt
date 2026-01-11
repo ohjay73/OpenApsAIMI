@@ -18,7 +18,6 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.View.OnLongClickListener
 import android.view.ViewGroup
-import android.widget.ImageView
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.RelativeLayout
@@ -426,26 +425,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             val hasContext = jsonStr.length > 5 // "[]" length is 2
             
             runOnUiThread {
-            //_binding?.root?.findViewById<View>(R.id.aimi_context_indicator)?.visibility = hasContext.toVisibility()
-
-                //    val indicator = binding?.root?.findViewById<View>(R.id.aimi_context_indicator)
-                val indicator = binding?.root?.findViewById<ImageView>(R.id.aimi_context_indicator)
-
-                    // Assicurati che sia sempre visibile
-                    indicator?.visibility = View.VISIBLE
-
-                    // Cambia solo il colore in base a hasContext
-
-                    val color = if (hasContext) 0xFFF44336.toInt() else 0xFF9E9E9E.toInt()
-
-
-
-                indicator?.setColorFilter(color)
-                 //indicator?.setBackgroundColor(color)
-              //indicator?.backgroundTintList = ColorStateList.valueOf(color)
-              //indicator?.backgroundTintMode = PorterDuff.Mode.SRC_IN // <- qui scegli il mode
-
-                    //
+                _binding?.root?.findViewById<View>(R.id.aimi_context_indicator)?.visibility = hasContext.toVisibility()
             }
         } catch (e: Exception) {
             aapsLogger.error(LTag.CORE, "Failed to update context indicator: ${e.message}")
