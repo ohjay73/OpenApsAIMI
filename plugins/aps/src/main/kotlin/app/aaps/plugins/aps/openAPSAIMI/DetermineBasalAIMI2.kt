@@ -228,6 +228,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     @Inject lateinit var trajectoryHistoryProvider: app.aaps.plugins.aps.openAPSAIMI.trajectory.TrajectoryHistoryProvider  // 🌀 Trajectory History
     @Inject lateinit var contextManager: app.aaps.plugins.aps.openAPSAIMI.context.ContextManager  // 🎯 Context Module
     @Inject lateinit var contextInfluenceEngine: app.aaps.plugins.aps.openAPSAIMI.context.ContextInfluenceEngine  // 🎯 Context Influence
+    @Inject lateinit var physioAdapter: app.aaps.plugins.aps.openAPSAIMI.physio.AIMIInsulinDecisionAdapterMTR  // 🏥 Physiological Modulation
     // ❌ OLD reactivityLearner removed - UnifiedReactivityLearner is now the only one
     init {
         // Branche l’historique basal (TBR) sur la persistence réelle
@@ -297,6 +298,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     //private var enablebasal: Boolean = false
     private var recentNotes: List<UE>? = null
     private var tags0to60minAgo = ""
+    private var cachedPkpdRuntime: PkPdRuntime? = null // 🔧 FIX (MTR): Global cache for Safety methods
     private var tags60to120minAgo = ""
     private var tags120to180minAgo = ""
     private var tags180to240minAgo = ""
@@ -1524,7 +1526,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             smbToGiveParam = proposedFloat,
             hypoThreshold = hypoThreshold,
             reason = rT.reason,
-            pkpdRuntime = null, // Computed later, but tail damping logic available in applySafetyPrecautions
+            pkpdRuntime = cachedPkpdRuntime, // 🔧 FIX (MTR): Use cached runtime for Tail Damping
             exerciseFlag = sportTime, // Pass exercise state
             suspectedLateFatMeal = lateFatRiseFlag, // Pass late fat flag
             ignoreSafetyConditions = isExplicitUserAction
@@ -3684,8 +3686,99 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             corrSqu = f?.corrR2 ?: 0.0
         )
         ensurePredictionFallback(rT, glucoseStatus.glucose)
+        
+        // ═══════════════════════════════════════════════════════════════════════════
+        // 🏥 PHYSIOLOGICAL ASSISTANT INTEGRATION (MTR)
+        // ═══════════════════════════════════════════════════════════════════════════
+        val physioMultipliers = if (preferences.get(app.aaps.core.keys.BooleanKey.AimiPhysioAssistantEnable)) {
+            try {
+                physioAdapter.getMultipliers(
+                    currentBG = glucoseStatus.glucose,
+                    currentDelta = glucoseStatus.delta
+                    // recentHypoTimestamp will be fetched internally by adapter
+                )
+            } catch (e: Exception) {
+                aapsLogger.error(app.aaps.core.interfaces.logging.LTag.APS, "Physio adapter error - using defaults", e)
+                app.aaps.plugins.aps.openAPSAIMI.physio.PhysioMultipliersMTR.NEUTRAL
+            }
+        } else {
+            app.aaps.plugins.aps.openAPSAIMI.physio.PhysioMultipliersMTR.NEUTRAL
+        }
+        
+        // Log physio modulation if active
+        if (!physioMultipliers.isNeutral()) {
+            consoleLog.add(
+                "🏥 PHYSIO: ISF×${String.format("%.3f", physioMultipliers.isfFactor)} " +
+                "Basal×${String.format("%.3f", physioMultipliers.basalFactor)} " +
+                "SMB×${String.format("%.3f", physioMultipliers.smbFactor)} " +
+                "Conf=${(physioMultipliers.confidence * 100).toInt()}%"
+            )
+        }
+        // ═══════════════════════════════════════════════════════════════════════════
+        
+        // ═══════════════════════════════════════════════════════════════════════════
+        // 🔧 FIX CRITIQUE (MTR): EARLY PKPD CALCULATION
+        // PkPd predictions must be available BEFORE SafetyNet, Meal Advisor, and Legacy logic run.
+        // ═══════════════════════════════════════════════════════════════════════════
+        
+        // 1. Prepare Sensitivity for PKPD
+        // Use default 1.0 if autosens not available yet (it is computed later usually)
+        // Accessing autosens_data might fail if it's a local var defined later.
+        val earlyAutosensRatio = 1.0 
+        val earlySens = profile.sens / earlyAutosensRatio 
+        
+        // 2. Compute PKPD Predictions Immediately
+        val earlyPkpdPredictions = computePkpdPredictions(
+            currentBg = glucoseStatus.glucose,
+            iobArray = iob_data_array,
+            finalSensitivity = earlySens,
+            cobG = mealData.mealCOB, // Use mealData which is initialized at start
+            profile = profile,
+            rT = rT,
+            delta = glucoseStatus.delta
+        )
+        
+        // 3. Initialize Variables & PkPdRuntime
+        this.eventualBG = earlyPkpdPredictions.eventual
+        this.predictedBg = earlyPkpdPredictions.eventual.toFloat()
+        rT.eventualBG = earlyPkpdPredictions.eventual
+        
+        // 4. Compute PkPdRuntime (Critical for Tail Damping)
+        this.cachedPkpdRuntime = try {
+             pkpdIntegration.computeRuntime(
+                epochMillis = dateUtil.now(),
+                bg = glucoseStatus.glucose,
+                deltaMgDlPer5 = glucoseStatus.delta,
+                iobU = iobTotal.toDouble(),  // FIX: Use iobTotal from iobActionProfile (line 3614)
+                carbsActiveG = mealData.mealCOB,
+                windowMin = 360, // 6h window
+                exerciseFlag = sportTime,
+                profileIsf = earlySens,
+                tdd24h = profile.max_daily_basal * 24.0, // Sort of
+                consoleLog = consoleLog
+            )
+        } catch (e: Exception) {
+            consoleError.add("❌ Early PKPD Runtime init failed: ${e.message}")
+            null
+        }
+        
+        // Local alias for compatibility with legacy code below
+        var pkpdRuntime = this.cachedPkpdRuntime
+        
+        // 5. 🏥 Apply Physiological Multipliers NOW
+        // This ensures Legacy modes and Meal Advisor respect fatigue/stress limits
+        if (!physioMultipliers.isNeutral()) {
+             // Apply to local sensitivity (will be refined later but good baseline)
+             this.variableSensitivity = (earlySens * physioMultipliers.isfFactor).toFloat()
+             
+             // Apply to limits
+             profile.max_daily_basal = profile.max_daily_basal * physioMultipliers.basalFactor
+             this.maxSMB = (this.maxSMB * physioMultipliers.smbFactor).coerceAtLeast(0.1)
+             
+             consoleLog.add("🏥 PHYSIO APPLIED: MaxSMB=${"%.2f".format(this.maxSMB)} MaxBasal=${"%.2f".format(profile.max_daily_basal)}")
+        }
+
         val reasonAimi = StringBuilder()
-        var pkpdRuntime: PkPdRuntime? = null
         var windowSinceDoseInt = 0
         var carbsActiveForPkpd = 0.0
         // On définit fromTime pour couvrir une longue période (par exemple, les 7 derniers jours)
@@ -5164,6 +5257,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // 🔹 Sécurisation des bornes minimales et maximales
         this.variableSensitivity = this.variableSensitivity.coerceIn(5.0f, 300.0f)
 
+        // 🏥 Apply Physiological Multipliers (AFTER all other ISF/basal calculations)
+        this.variableSensitivity = (this.variableSensitivity * physioMultipliers.isfFactor).toFloat()
+        profile.max_daily_basal = profile.max_daily_basal * physioMultipliers.basalFactor
+        this.maxSMB = (this.maxSMB * physioMultipliers.smbFactor).coerceAtLeast(0.1)
 
         sens = variableSensitivity.toDouble()
         val pkpdPredictions = computePkpdPredictions(

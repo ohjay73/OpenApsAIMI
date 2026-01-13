@@ -123,7 +123,9 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
     private val profiler: Profiler,
     private val context: Context,
     private val apsResultProvider: Provider<APSResult>,
-    private val unifiedReactivityLearner: app.aaps.plugins.aps.openAPSAIMI.learning.UnifiedReactivityLearner // 🧠 Brain Injection
+    private val unifiedReactivityLearner: app.aaps.plugins.aps.openAPSAIMI.learning.UnifiedReactivityLearner, // 🧠 Brain Injection
+    private val stepsManager: app.aaps.plugins.aps.openAPSAIMI.steps.AIMIStepsManagerMTR, // 🏃 Steps Manager MTR
+    private val physioManager: app.aaps.plugins.aps.openAPSAIMI.physio.AIMIPhysioManagerMTR // 🏥 Physiological Manager MTR
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -141,6 +143,23 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
 
     override fun onStart() {
         super.onStart()
+        
+        // 🏃 Start AIMI Steps Manager (Health Connect + Phone Sensor sync)
+        try {
+            stepsManager.start()
+            aapsLogger.info(LTag.APS, "✅ AIMI Steps Manager started successfully")
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "❌ Failed to start AIMI Steps Manager", e)
+        }
+        
+        // 🏥 Start AIMI Physiological Manager
+        try {
+            physioManager.start()
+            aapsLogger.info(LTag.APS, "✅ AIMI Physiological Manager started successfully")
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "❌ Failed to start AIMI Physiological Manager", e)
+        }
+        
         AimiUamHandler.clearCache(context)
         AimiUamHandler.installConfidenceSupplier {
             // retourne null si tu veux "laisser la main" au runtime
@@ -162,6 +181,23 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         glucoseStatusCalculatorAimi.getGlucoseStatusData(allowOldData)
     override fun onStop() {
         super.onStop()
+        
+        // 🏃 Stop AIMI Steps Manager
+        try {
+            stepsManager.stop()
+            aapsLogger.info(LTag.APS, "🛑 AIMI Steps Manager stopped")
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "Error stopping AIMI Steps Manager", e)
+        }
+        
+        // 🏥 Stop AIMI Physiological Manager
+        try {
+            physioManager.stop()
+            aapsLogger.info(LTag.APS, "🛑 AIMI Physiological Manager stopped")
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "Error stopping AIMI Physiological Manager", e)
+        }
+        
         AimiUamHandler.close(context)
     }
     // last values
@@ -1063,6 +1099,65 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                             stringKey = StringKey.AimiAdvisorClaudeKey,
                             summary = R.string.aimi_prefs_claude_key_summary,
                             title = R.string.aimi_prefs_claude_key_title
+                        )
+                    )
+                })
+
+                // 🏥 Physiological Assistant Section
+                addPreference(preferenceManager.createPreferenceScreen(context).apply {
+                    key = "AIMI_PHYSIO"
+                    title = rh.gs(R.string.aimi_physio_title)
+
+                    addPreference(
+                        AdaptiveSwitchPreference(
+                            ctx = context,
+                            booleanKey = BooleanKey.AimiPhysioAssistantEnable,
+                            title = R.string.aimi_physio_enable_title,
+                            summary = R.string.aimi_physio_enable_summary
+                        )
+                    )
+
+                    addPreference(PreferenceCategory(context).apply {
+                        title = rh.gs(R.string.aimi_physio_data_sources_title)
+                    })
+
+                    addPreference(
+                        AdaptiveSwitchPreference(
+                            ctx = context,
+                            booleanKey = BooleanKey.AimiPhysioSleepDataEnable,
+                            title = R.string.aimi_physio_sleep_enable_title,
+                            summary = R.string.aimi_physio_sleep_enable_summary
+                        )
+                    )
+
+                    addPreference(
+                        AdaptiveSwitchPreference(
+                            ctx = context,
+                            booleanKey = BooleanKey.AimiPhysioHRVDataEnable,
+                            title = R.string.aimi_physio_hrv_enable_title,
+                            summary = R.string.aimi_physio_hrv_enable_summary
+                        )
+                    )
+
+                    addPreference(PreferenceCategory(context).apply {
+                        title = rh.gs(R.string.aimi_physio_advanced_title)
+                    })
+
+                    addPreference(
+                        AdaptiveSwitchPreference(
+                            ctx = context,
+                            booleanKey = BooleanKey.AimiPhysioLLMAnalysisEnable,
+                            title = R.string.aimi_physio_llm_enable_title,
+                            summary = R.string.aimi_physio_llm_enable_summary
+                        )
+                    )
+
+                    addPreference(
+                        AdaptiveSwitchPreference(
+                            ctx = context,
+                            booleanKey = BooleanKey.AimiPhysioDebugLogs,
+                            title = R.string.aimi_physio_debug_title,
+                            summary = R.string.aimi_physio_debug_summary
                         )
                     )
                 })
