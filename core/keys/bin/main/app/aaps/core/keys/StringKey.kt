@@ -75,8 +75,5 @@ enum class StringKey(
     ContextMode("aimi_context_mode", "BALANCED"), // CONSERVATIVE, BALANCED, AGGRESSIVE
 
     OApsAIMIUnstableModeState("key_oaps_aimi_mode_state", ""),
-    OApsAIMIContextStorage("aimi_context_storage", "", exportable = false),
-    
-    // 🏥 AIMI Physiological Assistant (MTR)
-    AimiPhysioLLMProvider("aimi_physio_llm_provider", "gpt4"),
+    OApsAIMIContextStorage("aimi_context_storage", "", exportable = false)
 }
