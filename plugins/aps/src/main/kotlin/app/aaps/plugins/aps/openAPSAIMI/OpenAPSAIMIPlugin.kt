@@ -1170,7 +1170,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                 })
 
             //addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.OApsAIMIMLtraining, title = R.string.oaps_aimi_enableMlTraining_title))
-                //addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIMaxSMB, dialogMessage = R.string.openapsaimi_maxsmb_summary, title = R.string.openapsaimi_maxsmb_title))
+            //addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIMaxSMB, dialogMessage = R.string.openapsaimi_maxsmb_summary, title = R.string.openapsaimi_maxsmb_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIweight, dialogMessage = R.string.oaps_aimi_weight_summary, title = R.string.oaps_aimi_weight_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMICHO, dialogMessage = R.string.oaps_aimi_cho_summary, title = R.string.oaps_aimi_cho_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMITDD7, dialogMessage = R.string.oaps_aimi_tdd7_summary, title = R.string.oaps_aimi_tdd7_title))
@@ -1178,11 +1178,11 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                 addPreference(preferenceManager.createPreferenceScreen(context).apply {
                     key = "AIMI_Trajectory"
                     title = "🌀 Trajectory Guard"  // TODO: Add string resource
-
+                    
                     addPreference(PreferenceCategory(context).apply {
                         title = "Phase-Space Control Settings"  // TODO: Add string resource
                     })
-
+                    
                     addPreference(
                         AdaptiveSwitchPreference(
                             ctx = context,
