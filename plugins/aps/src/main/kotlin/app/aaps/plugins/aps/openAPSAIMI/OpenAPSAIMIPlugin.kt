@@ -1183,7 +1183,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                             summary = R.string.aimi_physio_enable_summary
                         )
                     )
-                    
+
                     // 🔐 Health Connect Permissions Button
                     addPreference(androidx.preference.Preference(context).apply {
                         key = "aimi_physio_hc_permissions"
