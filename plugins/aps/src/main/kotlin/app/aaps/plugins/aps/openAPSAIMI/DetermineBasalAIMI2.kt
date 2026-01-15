@@ -3721,10 +3721,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         try {
              val physioLog = physioAdapter.getDetailedLogString()
              if (physioLog != null) {
-                  consoleLog.add(physioLog)
+                  consoleError.add(physioLog)
              } else {
                   // Persistent feedback that system is active but waiting for data
-                  consoleLog.add("🏥 Physio: Waiting for initial Health Connect sync...")
+                  consoleError.add("🏥 Physio: Waiting for initial Health Connect sync...")
              }
         } catch (e: Exception) {
              consoleError.add("❌ Physio Log Error: ${e.message}")
