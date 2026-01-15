@@ -3715,16 +3715,23 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             )
         }
         
+        // Log detailed physio status (Night Data) regardless of multipliers
+        // This gives visibility into sleep/HRV even if state is OPTIMAL
+        val physioLog = physioAdapter.getDetailedLogString()
+        if (physioLog != null) {
+             consoleLog.add(physioLog)
+        }
+        
         // 🏥 Log detailed physio status (Visible in Script Debug)
         // We use consoleError temporarily to ensure high visibility in the UI log list
         // logic mirrors existing Trajectory visualization
         try {
              val physioLog = physioAdapter.getDetailedLogString()
              if (physioLog != null) {
-                  consoleLog.add(physioLog)
+                  consoleError.add(physioLog)
              } else {
                   // Persistent feedback that system is active but waiting for data
-                  consoleLog.add("🏥 Physio: Waiting for initial Health Connect sync...")
+                  consoleError.add("🏥 Physio: Waiting for initial Health Connect sync...")
              }
         } catch (e: Exception) {
              consoleError.add("❌ Physio Log Error: ${e.message}")
@@ -5595,18 +5602,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         
         val maxBasalPref = preferences.get(DoubleKey.meal_modes_MaxBasal)
         val rate: Double? = when {
-          //snackTime && snackrunTime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 4.0, "AI Force basal because snackTime $snackrunTime.", currenttemp, rT, overrideSafety = true)
-          //mealTime && mealruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because mealTime $mealruntime.", currenttemp, rT, overrideSafety = true)
-          //bfastTime && bfastruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because bfastTime $bfastruntime.", currenttemp, rT, overrideSafety = true)
-          //lunchTime && lunchruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because lunchTime $lunchruntime.", currenttemp, rT, overrideSafety = true)
-          //dinnerTime && dinnerruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because dinnerTime $dinnerruntime.", currenttemp, rT, overrideSafety = true)
-          //highCarbTime && highCarbrunTime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because highcarb $highCarbrunTime.", currenttemp, rT, overrideSafety = true)
-            snackTime && snackrunTime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 4.0, context.getString(R.string.ai_force_basal_reason_snack) + " ($snackrunTime m).", currenttemp, rT, overrideSafety = true)
-            mealTime && mealruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, context.getString(R.string.ai_force_basal_reason_meal) + " ($mealruntime m).", currenttemp, rT, overrideSafety = true)
-            bfastTime && bfastruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because bfastTime $bfastruntime.", currenttemp, rT, overrideSafety = true)
-            lunchTime && lunchruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, context.getString(R.string.ai_force_basal_reason_lunch) + " ($lunchruntime m).", currenttemp, rT, overrideSafety = true)
-            dinnerTime && dinnerruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, context.getString(R.string.ai_force_basal_reason_dinner) + " ($dinnerruntime m).", currenttemp, rT, overrideSafety = true)
-            highCarbTime && highCarbrunTime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, context.getString(R.string.ai_force_basal_reason_highcarb) + " ($highCarbrunTime m).", currenttemp, rT, overrideSafety = true)
+            snackTime && snackrunTime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 4.0, "AI Force basal because Snack Time $snackrunTime.", currenttemp, rT, overrideSafety = true)
+            mealTime && mealruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because mealTime $mealruntime.", currenttemp, rT, overrideSafety = true)
+            bfastTime && bfastruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because Breakfast $bfastruntime.", currenttemp, rT, overrideSafety = true)
+            lunchTime && lunchruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because lunchTime $lunchruntime.", currenttemp, rT, overrideSafety = true)
+            dinnerTime && dinnerruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because dinnerTime $dinnerruntime.", currenttemp, rT, overrideSafety = true)
+            highCarbTime && highCarbrunTime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because highcarb $highCarbrunTime.", currenttemp, rT, overrideSafety = true)
             // 📸 Meal Advisor Forced Basal REMOVED (Duplicate of Pipeline)
             
             // 🔥 Patch Post-Meal Hyper Boost (AIMI 2.0)
@@ -5657,8 +5658,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             }
 
             // Fix: Clamp delta multiplier to 0.0 to prevent negative basal (delta is Float)
-            //fastingTime -> calculateRate(profile_current_basal, profile_current_basal, delta.coerceAtLeast(0.0f).toDouble(), "AI Force basal because fastingTime", currenttemp, rT)
-            fastingTime -> calculateRate(profile_current_basal, profile_current_basal, delta.coerceAtLeast(0.0f).toDouble(), context.getString(R.string.ai_force_basal_reason_fasting), currenttemp, rT)
+            fastingTime -> calculateRate(profile_current_basal, profile_current_basal, delta.coerceAtLeast(0.0f).toDouble(), "AI Force basal because fastingTime", currenttemp, rT)
             else -> null
         }
 
@@ -6037,13 +6037,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             //console.error(iob_data.lastBolusTime);
             // minutes since last bolus
             val lastBolusAge = round((systemTime - iob_data.lastBolusTime) / 60000.0, 1)
-            val lastBolusAgeLog = if (lastBolusAge >= 60) {
-                val hours = (lastBolusAge / 60).toInt()
-                val minutes = (lastBolusAge % 60).toInt()
-                "${hours}h${minutes}m"
-            } else {
-                "${lastBolusAge.toInt()}m"
-            }
             //console.error(lastBolusAge);
             //console.error(profile.temptargetSet, target_bg, rT.COB);
             // only allow microboluses with COB or low temp targets, or within DIA hours of a bolus
@@ -6070,15 +6063,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 val intervalStr = String.format(java.util.Locale.US, "%.1f", smbInterval.toDouble())
                 val lastBolusStr = String.format(java.util.Locale.US, "%.1f", lastBolusAge)
                 val deltaStr = String.format(java.util.Locale.US, "%.1f", delta.toDouble())
-              //rT.reason.append(" [SMB interval=")
-                rT.reason.append(context.getString(R.string.smb_interval))
+                rT.reason.append(" [SMB interval=")
                 rT.reason.append(intervalStr)
-              //rT.reason.append(" min, lastBolusAge=")
-                rT.reason.append(context.getString(R.string.lastBolusAge))
-              //rT.reason.append(lastBolusStr)
-                rT.reason.append(lastBolusAgeLog)
-              //rT.reason.append(" min, Δ=")
-                rT.reason.append(", Δ=")
+                rT.reason.append(" min, lastBolusAge=")
+                rT.reason.append(lastBolusStr)
+                rT.reason.append(" min, Δ=")
                 rT.reason.append(deltaStr)
                 rT.reason.append(", BG=")
                 rT.reason.append(bg.toInt().toString())
