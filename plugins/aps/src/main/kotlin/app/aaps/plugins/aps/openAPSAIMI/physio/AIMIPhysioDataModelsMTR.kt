@@ -209,12 +209,6 @@ data class PhysioBaselineMTR(
                 put("mean", mean); put("stdDev", stdDev); put("count", sampleCount)
             }
         })
-        put("dailySteps", with(dailySteps) {
-            JSONObject().apply {
-                put("p25", p25); put("p50", p50); put("p75", p75)
-                put("mean", mean); put("stdDev", stdDev); put("count", sampleCount)
-            }
-        })
         put("lastUpdate", lastUpdateTimestamp)
         put("validDays", validDaysCount)
     }
@@ -240,7 +234,6 @@ data class PhysioBaselineMTR(
                 sleepDuration = parseMetric("sleepDuration", json.optJSONObject("sleepDuration")),
                 hrvRMSSD = parseMetric("hrvRMSSD", json.optJSONObject("hrvRMSSD")),
                 morningRHR = parseMetric("morningRHR", json.optJSONObject("morningRHR")),
-                dailySteps = parseMetric("dailySteps", json.optJSONObject("dailySteps")),
                 lastUpdateTimestamp = json.optLong("lastUpdate", 0),
                 validDaysCount = json.optInt("validDays", 0)
             )

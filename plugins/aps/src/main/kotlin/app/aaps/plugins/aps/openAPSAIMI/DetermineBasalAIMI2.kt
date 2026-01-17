@@ -3544,9 +3544,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     /**
      * 🛡️ Log de santé du stockage et des learners AIMI.
      * Affiche l'état du système dans l'UI (Reasoning) ET dans les logs système.
-     * NOUVEAU: Populate aussi rT.learnersInfo pour affichage comme section dédiée.
      */
-    private fun logLearnersHealth(rT: RT) {
+    private fun logLearnersHealth() {
         val storageReport = storageHelper.getHealthReport()
         val reactivityFactor = unifiedReactivityLearner.getCombinedFactor()
         val basalMultiplier = basalLearner.getMultiplier()
@@ -3562,29 +3561,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             "═══════════════════════════════"
         )
         
-        // 📊 NOUVEAU: Afficher en HAUT de la page AIMI via rT.learnersInfo (section dédiée)
-        val reactivityPct = (reactivityFactor * 100).toInt()
-        val reactivityTrend = when {
-            reactivityFactor < 0.5 -> "↓ prudent"
-            reactivityFactor > 1.2 -> "↑ agressif"
-            else -> "→ neutre"
-        }
-        
-        val basalTrend = when {
-            basalMultiplier < 0.9 -> "↓ basal réduit"
-            basalMultiplier > 1.1 -> "↑ basal augmenté"
-            else -> "→ basal neutre"
-        }
-        
-        // ✅ Populate rT.learnersInfo for UI section display (like "Profil :", "Données repas :", etc.)
-        rT.learnersInfo = buildString {
-            appendLine("UnifiedReactivity: $reactivityPct% ($reactivityTrend)")
-            appendLine("BasalLearner: ×${String.format("%.2f", basalMultiplier)} ($basalTrend)")
-            appendLine("PkPdEstimator: ℹ️ runtime-only")
-            append("Storage: $storageReport")
-        }
-        
-        // Aussi dans consoleLog pour affichage UI (Reasoning)
+        // Ajouter dans consoleLog pour affichage UI (Reasoning)
         healthLines.forEach { line ->
             consoleLog.add(line)
         }
@@ -3607,6 +3584,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         consoleError.clear()
         consoleLog.clear()
         
+        // 🛡️ Log health status of storage and learners
+        logLearnersHealth()
+        
         var rT = RT(
             algorithm = APSResult.Algorithm.AIMI,
             runningDynamicIsf = dynIsfMode,
@@ -3614,9 +3594,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             consoleLog = consoleLog,
             consoleError = consoleError
         )
-        
-        // 🛡️ Log health status of storage and learners (NOW with rT)
-        logLearnersHealth(rT)
         wCycleInfoForRun = null
         wCycleReasonLogged = false
         lastProfile = profile
@@ -3738,10 +3715,17 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             )
         }
         
-        // 🏥 Log detailed physio status (Always visible - never null)
+        // 🏥 Log detailed physio status (Visible in Script Debug)
+        // We use consoleError temporarily to ensure high visibility in the UI log list
+        // logic mirrors existing Trajectory visualization
         try {
              val physioLog = physioAdapter.getDetailedLogString()
-             consoleError.add(physioLog)
+             if (physioLog != null) {
+                  consoleError.add(physioLog)
+             } else {
+                  // Persistent feedback that system is active but waiting for data
+                  consoleError.add("🏥 Physio: Waiting for initial Health Connect sync...")
+             }
         } catch (e: Exception) {
              consoleError.add("❌ Physio Log Error: ${e.message}")
         }
@@ -5477,10 +5461,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 insulinStep = pumpCaps.bolusStep.toFloat(),
                 highBgOverrideUsed = highBgOverrideUsed,
                 profileCurrentBasal = profile_current_basal,
-                cob = cob,
-                globalReactivityFactor = if (preferences.get(BooleanKey.OApsAIMIUnifiedReactivityEnabled)) {
-                    unifiedReactivityLearner.globalFactor
-                } else 1.0  // Backwards compatible default
+                cob = cob
             ),
             SmbInstructionExecutor.Hooks(
                 refineSmb = { combined, short, long, predicted, profileInput ->
