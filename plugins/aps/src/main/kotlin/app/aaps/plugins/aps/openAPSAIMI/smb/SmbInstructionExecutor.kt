@@ -81,8 +81,7 @@ object SmbInstructionExecutor {
         val insulinStep: Float,
         val highBgOverrideUsed: Boolean,
         val profileCurrentBasal: Double,
-        val cob: Float,
-        val globalReactivityFactor: Double  // 🎯 NEW: From UnifiedReactivityLearner
+        val cob: Float
     )
 
     data class Hooks(
@@ -186,22 +185,21 @@ object SmbInstructionExecutor {
         // Previously: morningFactor, afternoonFactor, eveningFactor, hyperFactor
         // Now: UnifiedReactivityLearner.globalFactor is applied BEFORE this executor
 
-        // ✅ MEAL-CONTEXT FACTORS (NOW RESPECTING REACTIVITY!)
+        // ✅ MEAL-CONTEXT FACTORS (complementary to UnifiedLearner)
         // These adjust SMB for specific meal types (breakfast vs dinner etc.)
-        // 🔧 FIX: Multiply by globalReactivityFactor to respect user's learned reactivity preference
-        val highcarbfactor = input.preferences.get(DoubleKey.OApsAIMIHCFactor) / 100.0 * input.globalReactivityFactor
-        val mealfactor = input.preferences.get(DoubleKey.OApsAIMIMealFactor) / 100.0 * input.globalReactivityFactor
-        val bfastfactor = input.preferences.get(DoubleKey.OApsAIMIBFFactor) / 100.0 * input.globalReactivityFactor
-        val lunchfactor = input.preferences.get(DoubleKey.OApsAIMILunchFactor) / 100.0 * input.globalReactivityFactor
-        val dinnerfactor = input.preferences.get(DoubleKey.OApsAIMIDinnerFactor) / 100.0 * input.globalReactivityFactor
-        val snackfactor = input.preferences.get(DoubleKey.OApsAIMISnackFactor) / 100.0 * input.globalReactivityFactor
-        val sleepfactor = input.preferences.get(DoubleKey.OApsAIMIsleepFactor) / 100.0 * input.globalReactivityFactor
+        val highcarbfactor = input.preferences.get(DoubleKey.OApsAIMIHCFactor) / 100.0
+        val mealfactor = input.preferences.get(DoubleKey.OApsAIMIMealFactor) / 100.0
+        val bfastfactor = input.preferences.get(DoubleKey.OApsAIMIBFFactor) / 100.0
+        val lunchfactor = input.preferences.get(DoubleKey.OApsAIMILunchFactor) / 100.0
+        val dinnerfactor = input.preferences.get(DoubleKey.OApsAIMIDinnerFactor) / 100.0
+        val snackfactor = input.preferences.get(DoubleKey.OApsAIMISnackFactor) / 100.0
+        val sleepfactor = input.preferences.get(DoubleKey.OApsAIMIsleepFactor) / 100.0
 
         fun Float.atLeast(min: Float) = if (this < min) min else this
 
         val base = smbToGive
 
-        // Apply meal-context factors (NOW WITH REACTIVITY!)
+        // Apply meal-context factors (NO time-based factors)
         smbToGive = when {
             input.honeymoon && input.bg > 160 && input.delta > 4 && input.iob < 0.7 && (input.hourOfDay == 23 || input.hourOfDay in 0..10) ->
                 base.atLeast(0.15f)
@@ -209,7 +207,7 @@ object SmbInstructionExecutor {
             !input.honeymoon && input.bg > 120 && input.delta > 8 && input.iob < 1.0 && base < 0.05f ->
                 input.profileCurrentBasal.toFloat()
 
-            // ✅ Meal factors now respect globalReactivityFactor
+            // ❌ hyperfactor removed - handled by UnifiedLearner
             input.highCarbTime -> base * highcarbfactor.toFloat()
             input.mealTime -> base * mealfactor.toFloat()
             input.bfastTime -> base * bfastfactor.toFloat()
@@ -217,6 +215,7 @@ object SmbInstructionExecutor {
             input.dinnerTime -> base * dinnerfactor.toFloat()
             input.snackTime -> base * snackfactor.toFloat()
             input.sleepTime -> base * sleepfactor.toFloat()
+            // ❌ time-based factors (hour 0-11, 12-18, 19-23) removed
             else -> base  // No time-based adjustment
         }.coerceAtLeast(0f)
 
@@ -228,7 +227,8 @@ object SmbInstructionExecutor {
             input.dinnerTime -> dinnerfactor
             input.snackTime -> snackfactor
             input.sleepTime -> sleepfactor
-            else -> input.globalReactivityFactor  // ✅ Use globalFactor as base when no meal mode
+            // ❌ time-based factors removed
+            else -> 1.0  // Neutral when no meal mode
         }
 
         val currentHour = Calendar.getInstance()[Calendar.HOUR_OF_DAY]
@@ -251,7 +251,7 @@ object SmbInstructionExecutor {
             (input.glucoseStatus.delta + actCurr * input.sens).coerceIn(0.0, 35.0),
             1
         )
-        val actTarget = deltaGross / input.sens * factors.toFloat()  // ✅ Now includes reactivity!
+        val actTarget = deltaGross / input.sens * factors.toFloat()
         var actMissing: Double
         var deltaScore = 0.5
 
