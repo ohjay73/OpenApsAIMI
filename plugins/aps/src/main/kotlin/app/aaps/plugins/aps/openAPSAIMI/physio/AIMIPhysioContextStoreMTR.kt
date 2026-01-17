@@ -44,18 +44,8 @@ class AIMIPhysioContextStoreMTR @Inject constructor(
     
     // Thread-safe storage
     private val lock = ReentrantReadWriteLock()
-    
-    // OUTCOME TRACKING (NEW)
     @Volatile
-    private var lastRunOutcome: PhysioPipelineOutcome = PhysioPipelineOutcome.NEVER_RUN
-    @Volatile
-    private var lastRunTimestamp: Long = 0
-    @Volatile
-    private var lastProbeResult: ProbeResult? = null
-    
-    // CONTEXT STORAGE
-    @Volatile
-    private var lastContextUnsafe: PhysioContextMTR? = null  // Always available if any run succeeded
+    private var currentContext: PhysioContextMTR? = null
     @Volatile
     private var currentBaseline: PhysioBaselineMTR? = null
     @Volatile
@@ -91,37 +81,25 @@ class AIMIPhysioContextStoreMTR @Inject constructor(
     // ═══════════════════════════════════════════════════════════════════════
     
     /**
-     * Updates current context WITH outcome tracking
+     * Updates current context and persists to disk
      * 
-     * @param context New physiological context (even if low confidence)
+     * @param context New physiological context
      * @param baseline Updated baseline (optional)
-     * @param outcome Pipeline outcome (determines UI messaging)
-     * @param probeResult Diagnostic probe result (optional)
      */
-    fun updateContext(
-        context: PhysioContextMTR, 
-        baseline: PhysioBaselineMTR? = null,
-        outcome: PhysioPipelineOutcome = PhysioPipelineOutcome.READY,
-        probeResult: ProbeResult? = null
-    ) {
+    fun updateContext(context: PhysioContextMTR, baseline: PhysioBaselineMTR? = null) {
         lock.write {
-            lastContextUnsafe = context
+            currentContext = context
             if (baseline != null) {
                 currentBaseline = baseline
             }
             lastUpdate = System.currentTimeMillis()
-            lastRunOutcome = outcome
-            lastRunTimestamp = System.currentTimeMillis()
-            if (probeResult != null) {
-                lastProbeResult = probeResult
-            }
             
             // Persist to disk
             try {
-                saveToDisk(context, baseline ?: currentBaseline, outcome, probeResult)
+                saveToDisk(context, baseline ?: currentBaseline)
                 aapsLogger.info(
                     LTag.APS,
-                    "[$TAG] ✅ Context updated (outcome=$outcome, state=${context.state}, conf=${(context.confidence * 100).toInt()}%)"
+                    "[$TAG] ✅ Context updated and saved (state=${context.state}, confidence=${(context.confidence * 100).toInt()}%)"
                 )
             } catch (e: Exception) {
                 aapsLogger.error(LTag.APS, "[$TAG] Failed to save to disk", e)
@@ -130,64 +108,32 @@ class AIMIPhysioContextStoreMTR @Inject constructor(
     }
     
     /**
-     * Gets last context UNSAFE (always returns context if any run succeeded)
-     * Use this for UI/logging, NOT for applying multipliers
+     * Gets current context (thread-safe read)
+     * Returns null if context is invalid or expired
      * 
-     * @return PhysioContextMTR or null if NEVER_RUN
-     */
-    fun getLastContextUnsafe(): PhysioContextMTR? = lock.read {
-        lastContextUnsafe
-    }
-    
-    /**
-     * Gets EFFECTIVE context (only if confidence >= threshold)
-     * Use this for applying multipliers/modulations
-     * 
-     * @param minConfidence Minimum confidence threshold (default 0.5)
      * @return PhysioContextMTR or null
      */
-    fun getEffectiveContext(minConfidence: Double = 0.5): PhysioContextMTR? = lock.read {
-        val context = lastContextUnsafe
+    fun getCurrentContext(): PhysioContextMTR? = lock.read {
+        val context = currentContext
         
         if (context == null) {
-            return@read null
+            aapsLogger.debug(LTag.APS, "[$TAG] No context available")
+            return null
         }
         
-        if (context.confidence < minConfidence) {
-            aapsLogger.debug(LTag.APS, "[$TAG] Context confidence too low (${(context.confidence * 100).toInt()}% < ${(minConfidence * 100).toInt()}%)")
-            return@read null
+        if (!context.isValid()) {
+            aapsLogger.debug(LTag.APS, "[$TAG] Context expired (age=${context.ageSeconds()}s)")
+            return null
         }
         
-        // Check age
         val age = (System.currentTimeMillis() - lastUpdate) / 1000
         if (age > VALIDITY_MS / 1000) {
             aapsLogger.debug(LTag.APS, "[$TAG] Context too old (${age / 3600}h)")
-            return@read null
+            return null
         }
         
         context
     }
-    
-    /**
-     * Gets last pipeline run outcome
-     */
-    fun getLastRunOutcome(): PhysioPipelineOutcome = lock.read {
-        lastRunOutcome
-    }
-    
-    /**
-     * Gets last probe result
-     */
-    fun getLastProbeResult(): ProbeResult? = lock.read {
-        lastProbeResult
-    }
-    
-    /**
-     * Gets current context (DEPRECATED - use getLastContextUnsafe or getEffectiveContext)
-     * Kept for compatibility
-     */
-    @Deprecated("Use getLastContextUnsafe() or getEffectiveContext() instead")
-    fun getCurrentContext(): PhysioContextMTR? = getEffectiveContext(0.3)
     
     /**
      * Gets current baseline
@@ -200,12 +146,14 @@ class AIMIPhysioContextStoreMTR @Inject constructor(
     
     /**
      * Checks if context is valid and fresh
-     * NOTE: This checks EFFECTIVE context (with confidence threshold)
      * 
      * @return true if usable, false otherwise
      */
     fun isValid(): Boolean = lock.read {
-        getEffectiveContext(0.5) != null
+        val context = currentContext ?: return@read false
+        val age = System.currentTimeMillis() - lastUpdate
+        
+        context.isValid() && age < VALIDITY_MS
     }
     
     /**
@@ -213,12 +161,9 @@ class AIMIPhysioContextStoreMTR @Inject constructor(
      */
     fun clear() {
         lock.write {
-            lastContextUnsafe = null
+            currentContext = null
             currentBaseline = null
             lastUpdate = 0
-            lastRunOutcome = PhysioPipelineOutcome.NEVER_RUN
-            lastRunTimestamp = 0
-            lastProbeResult = null
             
             if (storageFile.exists()) {
                 storageFile.delete()
@@ -233,37 +178,15 @@ class AIMIPhysioContextStoreMTR @Inject constructor(
     // ═══════════════════════════════════════════════════════════════════════
     
     /**
-     * Saves context and baseline to JSON file (WITH OUTCOME TRACKING)
+     * Saves context and baseline to JSON file
      */
-    private fun saveToDisk(
-        context: PhysioContextMTR, 
-        baseline: PhysioBaselineMTR?,
-        outcome: PhysioPipelineOutcome,
-        probeResult: ProbeResult?
-    ) {
+    private fun saveToDisk(context: PhysioContextMTR, baseline: PhysioBaselineMTR?) {
         val json = JSONObject().apply {
-            put("version", 2) // Bumped version for new schema
+            put("version", 1)
             put("lastUpdate", lastUpdate)
-            put("lastRunOutcome", outcome.name)
-            put("lastRunTimestamp", lastRunTimestamp)
             put("context", context.toJSON())
             if (baseline != null) {
                 put("baseline", baseline.toJSON())
-            }
-            if (probeResult != null) {
-                put("probeResult", JSONObject().apply {
-                    put("sdkStatus", probeResult.sdkStatus)
-                    put("sleepCount", probeResult.sleepCount)
-                    put("hrvCount", probeResult.hrvCount)
-                    put("heartRateCount", probeResult.heartRateCount)
-                    put("stepsCount", probeResult.stepsCount)
-                    put("dataOrigins", JSONObject().apply {
-                        probeResult.dataOrigins.forEachIndexed { i, origin ->
-                            put("writer_$i", origin)
-                        }
-                    })
-                    put("windowDays", probeResult.windowDays)
-                })
             }
         }
         
@@ -273,7 +196,7 @@ class AIMIPhysioContextStoreMTR @Inject constructor(
     }
     
     /**
-     * Restores context and baseline from JSON file (WITH OUTCOME TRACKING)
+     * Restores context and baseline from JSON file
      */
     private fun restoreFromDisk() {
         if (!storageFile.exists()) {
@@ -285,7 +208,7 @@ class AIMIPhysioContextStoreMTR @Inject constructor(
             val json = JSONObject(storageFile.readText())
             val version = json.optInt("version", 0)
             
-            if (version < 1) {
+            if (version != 1) {
                 aapsLogger.warn(LTag.APS, "[$TAG] Unsupported version: $version")
                 return
             }
@@ -293,19 +216,8 @@ class AIMIPhysioContextStoreMTR @Inject constructor(
             lock.write {
                 lastUpdate = json.optLong("lastUpdate", 0)
                 
-                // Restore outcome tracking (v2+)
-                if (version >= 2) {
-                    val outcomeStr = json.optString("lastRunOutcome", "NEVER_RUN")
-                    lastRunOutcome = try {
-                        PhysioPipelineOutcome.valueOf(outcomeStr)
-                    } catch (e: Exception) {
-                        PhysioPipelineOutcome.NEVER_RUN
-                    }
-                    lastRunTimestamp = json.optLong("lastRunTimestamp", 0)
-                }
-                
                 json.optJSONObject("context")?.let { contextJson ->
-                    lastContextUnsafe = PhysioContextMTR.fromJSON(contextJson)
+                    currentContext = PhysioContextMTR.fromJSON(contextJson)
                 }
                 
                 json.optJSONObject("baseline")?.let { baselineJson ->
@@ -315,10 +227,12 @@ class AIMIPhysioContextStoreMTR @Inject constructor(
             
             val age = (System.currentTimeMillis() - lastUpdate) / (60 * 60 * 1000)
             
-            if (lastContextUnsafe != null) {
+            if (currentContext != null) {
                 aapsLogger.info(
                     LTag.APS,
-                    "[$TAG] ✅ Context restored (outcome=$lastRunOutcome, state=${lastContextUnsafe?.state}, age=${age}h)"
+                    "[$TAG] ✅ Context restored from disk " +
+                    "(state=${currentContext?.state}, age=${age}h, " +
+                    "baseline=${if (currentBaseline != null) "${currentBaseline!!.validDaysCount}d" else "none"})"
                 )
             }
             
@@ -326,10 +240,9 @@ class AIMIPhysioContextStoreMTR @Inject constructor(
             aapsLogger.error(LTag.APS, "[$TAG] Failed to restore from disk", e)
             // Don't crash - just clear corrupted data
             lock.write {
-                lastContextUnsafe = null
+                currentContext = null
                 currentBaseline = null
                 lastUpdate = 0
-                lastRunOutcome = PhysioPipelineOutcome.NEVER_RUN
             }
         }
     }
@@ -345,12 +258,11 @@ class AIMIPhysioContextStoreMTR @Inject constructor(
      */
     fun getStatus(): Map<String, String> = lock.read {
         mapOf(
-            "hasContext" to (lastContextUnsafe != null).toString(),
+            "hasContext" to (currentContext != null).toString(),
             "hasBaseline" to (currentBaseline != null).toString(),
-            "lastRunOutcome" to lastRunOutcome.name,
-            "contextState" to (lastContextUnsafe?.state?.name ?: "NONE"),
+            "contextState" to (currentContext?.state?.name ?: "NONE"),
             "contextAge" to "${(System.currentTimeMillis() - lastUpdate) / (60 * 60 * 1000)}h",
-            "confidence" to "${((lastContextUnsafe?.confidence ?: 0.0) * 100).toInt()}%",
+            "confidence" to "${((currentContext?.confidence ?: 0.0) * 100).toInt()}%",
             "baselineDays" to (currentBaseline?.validDaysCount ?: 0).toString(),
             "isValid" to isValid().toString(),
             "fileExists" to storageFile.exists().toString(),
