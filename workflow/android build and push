@@ -1,0 +1,78 @@
+name: Android build and Google upload (Signed)
+
+on:
+  push:
+    branches:
+      - dev_OAPSAIMI # !!! CUSTOMIZE THIS !!!
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches:
+      - dev_OAPSAIMI # !!! CUSTOMIZE THIS !!!
+  workflow_dispatch:
+    branches:
+      - aimi-test-translations-v2
+
+jobs:
+  build-signed:
+    runs-on: ubuntu-22.04
+
+    env:
+      # THE QUOTE RULE: Use single quotes for the Folder ID here
+      PARENT_FOLDER_ID: '1noIAAjSxhjb8-qOI4r7ttrMKyjeS5dky' 
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v3
+
+      - name: Set Short SHA
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Set up JDK
+        uses: actions/setup-java@v3
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Decode keystore
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > monkeystore.jks
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+
+      - name: Grant execute permission for Gradlew
+        run: chmod +x gradlew
+
+      - name: Build Release APKs
+        run: ./gradlew :app:assembleFullRelease :wear:assembleFullRelease :app:assembleAapsClientRelease
+        env:
+          KEYSTORE_FILE: ${{ github.workspace }}/monkeystore.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      # Diagnostic step to help if files aren't found
+      - name: Verify APK Locations
+        run: find ${{ github.workspace }} -type f -name "*.apk"
+
+      - name: Upload APKs to Google Drive
+        uses: adityak74/google-drive-upload-git-action@main
+        with:
+          credentials: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+          # Wildcard (**) is more reliable for finding files in subfolders
+          filename: "${{ github.workspace }}/**/release/*.apk"
+          folderId: ${{ env.PARENT_FOLDER_ID }}
+          name: "Build-${{ steps.vars.outputs.sha_short }}" 
+          overwrite: "false"
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref }}
+          name: Release ${{ github.ref }}
+          files: "${{ github.workspace }}/**/release/*.apk"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}b
