@@ -3,12 +3,12 @@ name: Android build and Google upload (Signed)
 on:
   push:
     branches:
-      - dev_OAPSAIMI # CUSTOMIZE: Your branch name
+      - dev_OAPSAIMI
     tags:
       - 'v*.*.*'
   pull_request:
     branches:
-      - dev_OAPSAIMI # CUSTOMIZE: Your branch name
+      - dev_OAPSAIMI
   workflow_dispatch:
     branches:
       - aimi-test-translations-v2
@@ -19,7 +19,6 @@ jobs:
 
     env:
       # --- FOLDER SELECTION ---
-      # Move the # to the start of the line you DON'T want to use.
       PARENT_FOLDER_ID: '1noIAAjSxhjb8-qOI4r7ttrMKyjeS5dky' # MTR Folder
       # PARENT_FOLDER_ID: '1YwSMARXgKDhiGw8fnUD5HOvVXwymYgWI' # Lostboy Folder
       # ------------------------
@@ -56,16 +55,21 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
-      # Diagnostic check to ensure APKs exist before upload
-      - name: Verify APK Locations
-        run: find . -name "*.apk"
+      # STEP 1: Gather APKs into a clean folder
+      - name: Stage APKs for Upload
+        run: |
+          mkdir -p upload_me
+          find . -name "*.apk" -exec cp {} upload_me/ \;
+          echo "Files in staging folder:"
+          ls upload_me
 
+      # STEP 2: Upload that specific folder
       - name: Upload APKs to Google Drive
         uses: adityak74/google-drive-upload-git-action@main
         with:
           credentials: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
-          # Using relative path pattern to avoid Docker workspace issues
-          filename: "**/release/*.apk"
+          # Now we point directly to the staging folder
+          filename: "upload_me/*.apk"
           folderId: ${{ env.PARENT_FOLDER_ID }}
           name: "Build-${{ steps.vars.outputs.sha_short }}" 
           overwrite: "false"
@@ -76,6 +80,6 @@ jobs:
         with:
           tag_name: ${{ github.ref }}
           name: Release ${{ github.ref }}
-          files: "**/release/*.apk"
+          files: "upload_me/*.apk"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
