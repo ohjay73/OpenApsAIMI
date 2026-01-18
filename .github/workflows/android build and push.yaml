@@ -1,15 +1,8 @@
 name: Android build and Google upload (Signed)
 
 on:
-  push:
-    branches:
-      - dev_OAPSAIMI # !!! CUSTOMIZE: Change to your branch name !!!
-    tags:
-      - 'v*.*.*'
-  pull_request:
-    branches:
-      - dev_OAPSAIMI # !!! CUSTOMIZE: Change to your branch name !!!
   workflow_dispatch:
+      - dev_OAPSAIMI # !!! CUSTOMIZE: Change to your branch name !!!
 
 jobs:
   build-signed:
