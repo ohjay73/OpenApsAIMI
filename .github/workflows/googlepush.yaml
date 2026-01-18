@@ -1,4 +1,4 @@
-name: Android Build (Signed)
+name: Google Push and Android Build (Signed)
 
 on:
   push:
