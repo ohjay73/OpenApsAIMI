@@ -1,8 +1,20 @@
 name: Android build and Google upload (Signed)
 
 on:
-  workflow_dispatch:
-      - dev_OAPSAIMI # !!! CUSTOMIZE: Change to your branch name !!!
+  push:
+    branches:
+      - dev_OAPSAIMI               # Active Branch 1
+     # - aimi-test-translations-v2  # Active Branch 2
+      # - main                     # Comment out branches you don't want to trigger on
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches:
+      - dev_OAPSAIMI               # Active Branch 1
+     # - aimi-test-translations-v2  # Active Branch 2
+  workflow_dispatch:               # Allows manual triggering
+        - dev_OAPSAIMI               # Active Branch 1
+     # - aimi-test-translations-v2  # Active Branch 2
 
 jobs:
   build-signed:
@@ -10,7 +22,7 @@ jobs:
 
     env:
       # --- FOLDER SELECTION ---
-      # Toggle these by moving the '#' comment symbol
+      # Remove the '#' from the line you want to use. Comment out the other.
       PARENT_FOLDER_ID: '1noIAAjSxhjb8-qOI4r7ttrMKyjeS5dky' # MTR Folder
       # PARENT_FOLDER_ID: '1YwSMARXgKDhiGw8fnUD5HOvVXwymYgWI' # Lostboy Folder
       # ------------------------
@@ -48,12 +60,12 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       # --- STAGING STEP ---
-      # Gathers APKs into a root folder to avoid Docker pathing errors.
+      # This gathers only the APKs into a clean folder for the uploader.
       - name: Stage APKs for Upload
         run: |
           mkdir -p upload_me
           find . -name "*.apk" -not -path "./upload_me/*" -exec cp {} upload_me/ \;
-          echo "Files in staging folder:"
+          echo "Files ready for upload:"
           ls upload_me
 
       - name: Upload APKs to Google Drive
