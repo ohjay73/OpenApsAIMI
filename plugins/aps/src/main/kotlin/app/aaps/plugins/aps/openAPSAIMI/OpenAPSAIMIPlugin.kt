@@ -13,6 +13,7 @@ import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreference
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
+import app.aaps.plugins.aps.openAPSAIMI.steps.UnifiedActivityProviderMTR
 import app.aaps.core.data.aps.SMBDefaults
 import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.data.model.GV
@@ -123,7 +124,9 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
     private val profiler: Profiler,
     private val context: Context,
     private val apsResultProvider: Provider<APSResult>,
-    private val unifiedReactivityLearner: app.aaps.plugins.aps.openAPSAIMI.learning.UnifiedReactivityLearner // 🧠 Brain Injection
+    private val unifiedReactivityLearner: app.aaps.plugins.aps.openAPSAIMI.learning.UnifiedReactivityLearner, // 🧠 Brain Injection
+    private val stepsManager: app.aaps.plugins.aps.openAPSAIMI.steps.AIMIStepsManagerMTR, // 🏃 Steps Manager MTR
+    private val physioManager: app.aaps.plugins.aps.openAPSAIMI.physio.AIMIPhysioManagerMTR // 🏥 Physiological Manager MTR
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -141,6 +144,23 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
 
     override fun onStart() {
         super.onStart()
+        
+        // 🏃 Start AIMI Steps Manager (Health Connect + Phone Sensor sync)
+        try {
+            stepsManager.start()
+            aapsLogger.info(LTag.APS, "✅ AIMI Steps Manager started successfully")
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "❌ Failed to start AIMI Steps Manager", e)
+        }
+        
+        // 🏥 Start AIMI Physiological Manager
+        try {
+            physioManager.start()
+            aapsLogger.info(LTag.APS, "✅ AIMI Physiological Manager started successfully")
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "❌ Failed to start AIMI Physiological Manager", e)
+        }
+        
         AimiUamHandler.clearCache(context)
         AimiUamHandler.installConfidenceSupplier {
             // retourne null si tu veux "laisser la main" au runtime
@@ -162,6 +182,23 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         glucoseStatusCalculatorAimi.getGlucoseStatusData(allowOldData)
     override fun onStop() {
         super.onStop()
+        
+        // 🏃 Stop AIMI Steps Manager
+        try {
+            stepsManager.stop()
+            aapsLogger.info(LTag.APS, "🛑 AIMI Steps Manager stopped")
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "Error stopping AIMI Steps Manager", e)
+        }
+        
+        // 🏥 Stop AIMI Physiological Manager
+        try {
+            physioManager.stop()
+            aapsLogger.info(LTag.APS, "🛑 AIMI Physiological Manager stopped")
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "Error stopping AIMI Physiological Manager", e)
+        }
+        
         AimiUamHandler.close(context)
     }
     // last values
@@ -1066,6 +1103,106 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                         )
                     )
                 })
+
+                // 🏥 Physiological Assistant Section
+                addPreference(preferenceManager.createPreferenceScreen(context).apply {
+                    key = "AIMI_PHYSIO"
+                    title = rh.gs(R.string.aimi_physio_title)
+
+                    addPreference(
+                        AdaptiveSwitchPreference(
+                            ctx = context,
+                            booleanKey = BooleanKey.AimiPhysioAssistantEnable,
+                            title = R.string.aimi_physio_enable_title,
+                            summary = R.string.aimi_physio_enable_summary
+                        )
+                    )
+                    
+                    // 🔐 Health Connect Permissions Button
+                    addPreference(androidx.preference.Preference(context).apply {
+                        key = "aimi_physio_hc_permissions"
+                        title = "Grant Health Connect Permissions"
+                        summary = "Tap to authorize AAPS to access Sleep, HRV, and Heart Rate data"
+                        setOnPreferenceClickListener {
+                            try {
+                                val intent = android.content.Intent(
+                                    context,
+                                    app.aaps.plugins.aps.openAPSAIMI.physio.AIMIHealthConnectPermissionActivityMTR::class.java
+                                )
+                                context.startActivity(intent)
+                                true
+                            } catch (e: Exception) {
+                                android.util.Log.e("OpenAPSAIMIPlugin", "Failed to launch HC permissions", e)
+                                false
+                            }
+                        }
+                    })
+
+                    addPreference(PreferenceCategory(context).apply {
+                        title = rh.gs(R.string.aimi_physio_data_sources_title)
+                    })
+
+                    // Steps & Heart Rate Source Mode
+                    // Steps & Heart Rate Source Mode
+                    addPreference(ListPreference(context).apply {
+                        key = UnifiedActivityProviderMTR.PREF_KEY_SOURCE_MODE
+                        title = rh.gs(R.string.pref_aimi_steps_source_title)
+                        entries = arrayOf(
+                            rh.gs(R.string.pref_aimi_steps_source_wear),
+                            rh.gs(R.string.pref_aimi_steps_source_auto),
+                            rh.gs(R.string.pref_aimi_steps_source_hc),
+                            rh.gs(R.string.pref_aimi_steps_source_disabled)
+                        )
+                        entryValues = arrayOf(
+                            UnifiedActivityProviderMTR.MODE_PREFER_WEAR,
+                            UnifiedActivityProviderMTR.MODE_AUTO_FALLBACK,
+                            UnifiedActivityProviderMTR.MODE_HEALTH_CONNECT_ONLY,
+                            UnifiedActivityProviderMTR.MODE_DISABLED
+                        )
+                        setDefaultValue(UnifiedActivityProviderMTR.DEFAULT_MODE)
+                        summaryProvider = ListPreference.SimpleSummaryProvider.getInstance()
+                    })
+
+                    addPreference(
+                        AdaptiveSwitchPreference(
+                            ctx = context,
+                            booleanKey = BooleanKey.AimiPhysioSleepDataEnable,
+                            title = R.string.aimi_physio_sleep_enable_title,
+                            summary = R.string.aimi_physio_sleep_enable_summary
+                        )
+                    )
+
+                    addPreference(
+                        AdaptiveSwitchPreference(
+                            ctx = context,
+                            booleanKey = BooleanKey.AimiPhysioHRVDataEnable,
+                            title = R.string.aimi_physio_hrv_enable_title,
+                            summary = R.string.aimi_physio_hrv_enable_summary
+                        )
+                    )
+
+                    addPreference(PreferenceCategory(context).apply {
+                        title = rh.gs(R.string.aimi_physio_advanced_title)
+                    })
+
+                    addPreference(
+                        AdaptiveSwitchPreference(
+                            ctx = context,
+                            booleanKey = BooleanKey.AimiPhysioLLMAnalysisEnable,
+                            title = R.string.aimi_physio_llm_enable_title,
+                            summary = R.string.aimi_physio_llm_enable_summary
+                        )
+                    )
+
+                    addPreference(
+                        AdaptiveSwitchPreference(
+                            ctx = context,
+                            booleanKey = BooleanKey.AimiPhysioDebugLogs,
+                            title = R.string.aimi_physio_debug_title,
+                            summary = R.string.aimi_physio_debug_summary
+                        )
+                    )
+                })
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.OApsAIMIMLtraining, title = R.string.oaps_aimi_enableMlTraining_title))
                 addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIMaxSMB, dialogMessage = R.string.openapsaimi_maxsmb_summary, title = R.string.openapsaimi_maxsmb_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIweight, dialogMessage = R.string.oaps_aimi_weight_summary, title = R.string.oaps_aimi_weight_title))
@@ -1223,7 +1360,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                     )
                 })
                 
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.OApsAIMIEnableStepsFromWatch, title = R.string.countsteps_watch_title))
+                // addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.OApsAIMIEnableStepsFromWatch, title = R.string.countsteps_watch_title))
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.OApsxdriponeminute, title = R.string.Enable_xdripOM_title))
                 addPreference(PreferenceCategory(context).apply {
                     title = rh.gs(R.string.user_modes_preferences_title_menu)
