@@ -120,3 +120,21 @@ jobs:
           files: ${{ env.WEAR_APK_PATH }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Upload to Google Drive
+        on: [push] # This triggers the upload every time you push code
+
+       jobs:
+  upload_to_drive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Upload File
+        uses: adityak74/google-drive-upload-git-action@main
+        with:
+          credentials: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+          filename: 'path/to/your/file.txt' # Change this to the file you want to upload
+          folderId: 'YOUR_FOLDER_ID_HERE' # Paste the ID from Phase 2
+          overwrite: "true"
