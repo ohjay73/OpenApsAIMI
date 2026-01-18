@@ -3,12 +3,12 @@ name: Android build and Google upload (Signed)
 on:
   push:
     branches:
-      - dev_OAPSAIMI # !!! CUSTOMIZE THIS !!!
+      - dev_OAPSAIMI # CUSTOMIZE: Your branch name
     tags:
       - 'v*.*.*'
   pull_request:
     branches:
-      - dev_OAPSAIMI # !!! CUSTOMIZE THIS !!!
+      - dev_OAPSAIMI # CUSTOMIZE: Your branch name
   workflow_dispatch:
     branches:
       - aimi-test-translations-v2
@@ -18,8 +18,7 @@ jobs:
     runs-on: ubuntu-22.04
 
     env:
-      # THE QUOTE RULE: Use single quotes for the Folder ID here
-      PARENT_FOLDER_ID: '1wJ4o-av372pRVUd7sS1YvYyZ-l0-38im' 
+      PARENT_FOLDER_ID: '1YwSMARXgKDhiGw8fnUD5HOvVXwymYgWI' # CUSTOMIZE: Your Folder ID
 
     steps:
       - name: Check out the code
@@ -53,16 +52,16 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
-      # Diagnostic step to help if files aren't found
+      # Diagnostic check (Relative)
       - name: Verify APK Locations
-        run: find ${{ github.workspace }} -type f -name "*.apk"
+        run: find . -name "*.apk"
 
       - name: Upload APKs to Google Drive
         uses: adityak74/google-drive-upload-git-action@main
         with:
           credentials: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
-          # Wildcard (**) is more reliable for finding files in subfolders
-          filename: "${{ github.workspace }}/**/release/*.apk"
+          # FIX: We use a relative path pattern starting from the root of the repo
+          filename: "**/release/*.apk"
           folderId: ${{ env.PARENT_FOLDER_ID }}
           name: "Build-${{ steps.vars.outputs.sha_short }}" 
           overwrite: "false"
@@ -73,6 +72,7 @@ jobs:
         with:
           tag_name: ${{ github.ref }}
           name: Release ${{ github.ref }}
-          files: "${{ github.workspace }}/**/release/*.apk"
+          # FIX: Matching the same relative pattern here
+          files: "**/release/*.apk"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
