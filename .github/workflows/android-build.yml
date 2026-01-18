@@ -3,12 +3,12 @@ name: Android Build (Signed)
 on:
   push:
     branches:
-      - master-AIMI-Test
+      - dev_OAPSAIMI
     tags:
       - 'v*.*.*'  # Déclenche sur les tags de version
   pull_request:
     branches:
-      - master
+      - dev_OAPSAIMI
 
 jobs:
   build-signed:
@@ -87,8 +87,8 @@ jobs:
       - name: Upload AAPS Client APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-aapsclient-release.apk
-          path: ${{ env.CLIENT_APK_PATH }}
+            name: app-aapsclient-release.apk
+            path: ${{ env.CLIENT_APK_PATH }}
 
       # 9. Optionnel : Créer une Release GitHub et y attacher les APKs
       - name: Create GitHub Release

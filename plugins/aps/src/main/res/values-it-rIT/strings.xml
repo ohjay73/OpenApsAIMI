@@ -734,7 +734,7 @@
     <string name="original_file_missing">Il file originale non esiste.</string>
     <string name="file_too_short">Il file contiene meno di 200 righe, nessuna eliminazione effettuata.</string>
     <string name="last_200_deleted">Le ultime 200 righe sono state eliminate. Il file originale è stato salvato come \'%1$s\'.</string>
-    <string name="reason_data_removed">I valori per la data %1$s sono stati eliminati perché TIR1DAIIR è inferiore all\'85%%%.</string>
+    <string name="reason_data_removed">I valori per la data %1$s sono stati eliminati perché TIR1DAIIR è inferiore all\'85%%.</string>
     <string name="reason_deletion_time_restricted">L\'eliminazione può essere eseguita solo tra le 00:05 e le 00:10.</string>
     <string name="reason_no_deletion_needed">Nessuna eliminazione necessaria: tir1DAYIR è maggiore o uguale all\'85%.</string>
     <string name="safety_sport_smb_zero">🏃‍♂️ Sicurezza sport → SMB=0</string>
@@ -862,6 +862,10 @@
     <string name="reason_iob_max">IOB %.2f > maxIOB %.2f</string>
     <string name="reason_bg_dropping">, BG sta calando (delta %1$.0f), imposto basale a 0.</string>
     <string name="reason_set_temp_basal">; imposto basale corrente di %1$.2f come temporanea.</string>
+    <!-- Meal-mode safety relaxations -->
+    <string name="smb_enabled_meal_mode">SMB attivato: aumento post-pasto (glicemia %1$s, Δ=%2$.1f, previsto %3$s)</string>
+    <string name="reason_meal_high_iob_relaxed">Aumento post-pasto: IOB %1$.2f &gt; max %2$.2f → SMB ridotto al %3$d%%.</string>
+    <string name="reason_meal_hold_profile_basal">Aumento post-pasto: IOB %1$.2f &gt; max %2$.2f → basale mantenuta al minimo del profilo.\n</string>
     <string name="reason_insulin_required"> insulina richiesta %1$.2f</string>
     <string name="reason_max_smb">; maxSMB %1$.2f</string>
     <string name="reason_microbolus">Microbolo %1$.2fU.</string>

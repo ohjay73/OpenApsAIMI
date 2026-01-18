@@ -5,8 +5,9 @@ import app.aaps.core.data.model.EPS
 import app.aaps.core.data.model.GV
 import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.data.model.HR
+import app.aaps.core.data.model.SC
 import app.aaps.core.data.model.ICfg
-import app.aaps.core.data.model.OE
+import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.SourceSensor
 import app.aaps.core.data.model.TB
 import app.aaps.core.data.model.TE
@@ -43,12 +44,12 @@ import org.mockito.ArgumentMatchers.anyString
 import org.mockito.ArgumentMatchers.argThat
 import org.mockito.ArgumentMatchers.isNull
 import org.mockito.Mock
-import org.mockito.Mockito.times
-import org.mockito.Mockito.verify
-import org.mockito.Mockito.verifyNoMoreInteractions
 import org.mockito.kotlin.any
 import org.mockito.kotlin.atLeast
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.times
+import org.mockito.kotlin.verify
+import org.mockito.kotlin.verifyNoMoreInteractions
 import org.mockito.kotlin.whenever
 import java.time.Clock
 import java.time.Instant
@@ -169,9 +170,9 @@ class LoopHubTest : TestBase() {
 
     @Test
     fun testIsConnected() {
-        whenever(loop.isDisconnected).thenReturn(false)
+        whenever(loop.runningMode).thenReturn(RM.Mode.CLOSED_LOOP)
         assertEquals(true, loopHub.isConnected)
-        verify(loop, times(1)).isDisconnected
+        verify(loop, times(1)).runningMode
     }
 
     private fun effectiveProfileSwitch(duration: Long) = EPS(
@@ -245,10 +246,10 @@ class LoopHubTest : TestBase() {
 
     @Test
     fun testConnectPump() {
-        whenever(persistenceLayer.cancelCurrentOfflineEvent(clock.millis(), Action.RECONNECT, Sources.Garmin)).thenReturn(Single.just(PersistenceLayer.TransactionResult()))
+        whenever(persistenceLayer.cancelCurrentRunningMode(clock.millis(), Action.RECONNECT, Sources.Garmin)).thenReturn(Single.just(PersistenceLayer.TransactionResult()))
         loopHub.connectPump()
-        verify(persistenceLayer).cancelCurrentOfflineEvent(clock.millis(), Action.RECONNECT, Sources.Garmin)
-        verify(commandQueue).cancelTempBasal(true, null)
+        verify(persistenceLayer).cancelCurrentRunningMode(clock.millis(), Action.RECONNECT, Sources.Garmin)
+        verify(commandQueue).cancelTempBasal(enforceNew = true, autoForced = false, callback = null)
     }
 
     @Test
@@ -257,10 +258,9 @@ class LoopHubTest : TestBase() {
         whenever(profileFunction.getProfile()).thenReturn(profile)
         loopHub.disconnectPump(23)
         verify(profileFunction).getProfile()
-        verify(loop).goToZeroTemp(
-            23, profile, OE.Reason.DISCONNECT_PUMP, Action.DISCONNECT,
-            Sources.Garmin,
-            listOf(ValueWithUnit.Minute(23))
+        verify(loop).handleRunningModeChange(
+            durationInMinutes = 23, profile = profile, newRM = RM.Mode.DISCONNECTED_PUMP, action = Action.DISCONNECT,
+            source = Sources.Garmin, listValues = listOf(ValueWithUnit.Minute(23))
         )
     }
 
@@ -270,7 +270,7 @@ class LoopHubTest : TestBase() {
             GV(
                 timestamp = 1_000_000L, raw = 90.0, value = 93.0,
                 trendArrow = TrendArrow.FLAT, noise = null,
-                sourceSensor = SourceSensor.DEXCOM_G5_XDRIP
+                sourceSensor = SourceSensor.DEXCOM_G6_NATIVE_XDRIP
             )
         )
         whenever(persistenceLayer.getBgReadingsDataFromTime(1001_000, false))
@@ -322,5 +322,38 @@ class LoopHubTest : TestBase() {
             samplingStart, samplingEnd, 101, "Test Device"
         )
         verify(persistenceLayer).insertOrUpdateHeartRate(hr)
+    }
+
+    @Test
+    fun testStoreStepsCount() {
+        val samplingStart = Instant.ofEpochMilli(1_001_000)
+        val samplingEnd = Instant.ofEpochMilli(1_301_000)
+        val sc = SC(
+            duration = samplingEnd.toEpochMilli() - samplingStart.toEpochMilli(),
+            timestamp = samplingEnd.toEpochMilli(),
+            steps5min = 12,
+            steps10min = 18,
+            steps15min = 24,
+            steps30min = 36,
+            steps60min = 48,
+            steps180min = 60,
+            device = "Test Device",
+            dateCreated = clock.millis(),
+        )
+        whenever(persistenceLayer.insertOrUpdateStepsCount(sc)).thenReturn(
+            Single.just(PersistenceLayer.TransactionResult())
+        )
+        loopHub.storeStepsCount(
+            samplingStart,
+            samplingEnd,
+            12,
+            18,
+            24,
+            36,
+            48,
+            60,
+            "Test Device",
+        )
+        verify(persistenceLayer).insertOrUpdateStepsCount(sc)
     }
 }

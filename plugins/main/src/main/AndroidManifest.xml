@@ -28,6 +28,26 @@
             android:exported="false"
             android:theme="@style/AppTheme" />
 
+        <activity
+            android:name=".general.dashboard.DashboardModesActivity"
+            android:exported="false"
+            android:theme="@style/AppTheme" />
+
+        <activity
+            android:name=".general.dashboard.AdjustmentDetailsActivity"
+            android:exported="false"
+            android:theme="@style/AppTheme" />
+
+        <activity
+            android:name=".general.manual.UserManualActivity"
+            android:exported="false"
+            android:theme="@style/AppTheme.NoActionBar" />
+
+        <activity
+            android:name=".general.dashboard.LoopStateActivity"
+            android:exported="false"
+            android:theme="@style/AppTheme.NoActionBar" />
+
         <service android:name=".general.persistentNotification.DummyService" />
 
         <service

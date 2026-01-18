@@ -1,9 +1,9 @@
 package app.aaps.core.interfaces.aps
 
-import kotlinx.serialization.InternalSerializationApi
+import android.annotation.SuppressLint
 import kotlinx.serialization.Serializable
 
-@OptIn(InternalSerializationApi::class)
+@SuppressLint("UnsafeOptInUsageError")
 @Serializable
 data class AutosensResult(
 

@@ -31,3 +31,6 @@ wear/full/
 .kotlin/*
 /*.log
 *.preferences_pb
+/buildSrc/.kotlin
+.claude/settings.local.json
+/CLAUDE.md

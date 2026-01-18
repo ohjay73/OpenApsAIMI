@@ -29,13 +29,17 @@ import androidx.appcompat.widget.Toolbar
 import androidx.core.view.GravityCompat
 import androidx.core.view.MenuCompat
 import androidx.core.view.MenuProvider
+import app.aaps.activities.DashboardPreviewActivity
 import app.aaps.activities.HistoryBrowseActivity
 import app.aaps.activities.PreferencesActivity
+import app.aaps.core.data.ue.Action
 import app.aaps.core.data.ue.Sources
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.configuration.ConfigBuilder
 import app.aaps.core.interfaces.constraints.ConstraintsChecker
+import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.interfaces.logging.UserEntryLogger
 import app.aaps.core.interfaces.maintenance.FileListProvider
 import app.aaps.core.interfaces.notifications.Notification
 import app.aaps.core.interfaces.plugin.ActivePlugin
@@ -44,10 +48,10 @@ import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.protection.ExportPasswordDataStore
 import app.aaps.core.interfaces.protection.ProtectionCheck
 import app.aaps.core.interfaces.rx.AapsSchedulers
+import app.aaps.core.interfaces.rx.events.EventAppExit
 import app.aaps.core.interfaces.rx.events.EventAppInitialized
 import app.aaps.core.interfaces.rx.events.EventPreferenceChange
 import app.aaps.core.interfaces.rx.events.EventRebuildTabs
-import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.smsCommunicator.SmsCommunicator
 import app.aaps.core.interfaces.ui.IconsProvider
 import app.aaps.core.interfaces.ui.UiInteraction
@@ -87,7 +91,6 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
     private val disposable = CompositeDisposable()
 
     @Inject lateinit var aapsSchedulers: AapsSchedulers
-    @Inject lateinit var sp: SP
     @Inject lateinit var versionCheckerUtils: VersionCheckerUtils
     @Inject lateinit var smsCommunicator: SmsCommunicator
     @Inject lateinit var loop: Loop
@@ -112,6 +115,7 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
     private var menuOpen = false
     private var isProtectionCheckActive = false
     private lateinit var binding: ActivityMainBinding
+    private var mainMenuProvider: MenuProvider? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -162,7 +166,7 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
                 else finish()
             }
         })
-        addMenuProvider(object : MenuProvider {
+        mainMenuProvider = object : MenuProvider {
             override fun onCreateMenu(menu: Menu, menuInflater: MenuInflater) {
                 MenuCompat.setGroupDividerEnabled(menu, true)
                 this@MainActivity.menu = menu
@@ -196,6 +200,26 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
                         protectionCheck.queryProtection(this@MainActivity, ProtectionCheck.Protection.PREFERENCES, {
                             startActivity(Intent(this@MainActivity, SetupWizardActivity::class.java).setAction("info.nightscout.androidaps.MainActivity"))
                         })
+                        true
+                    }
+
+                    R.id.nav_dashboard_preview  -> {
+                        startActivity(Intent(this@MainActivity, DashboardPreviewActivity::class.java))
+                        true
+                    }
+
+                    R.id.nav_comparator         -> {
+                        startActivity(Intent(this@MainActivity, app.aaps.activities.ComparatorActivity::class.java))
+                        true
+                    }
+
+                    R.id.nav_meal_advisor       -> {
+                        startActivity(Intent(this@MainActivity, app.aaps.plugins.aps.openAPSAIMI.advisor.meal.MealAdvisorActivity::class.java))
+                        true
+                    }
+
+                    R.id.nav_aimi_advisor       -> {
+                        startActivity(Intent(this@MainActivity, app.aaps.plugins.aps.openAPSAIMI.advisor.AimiProfileAdvisorActivity::class.java))
                         true
                     }
 
@@ -265,7 +289,8 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
                     else                        ->
                         actionBarDrawerToggle.onOptionsItemSelected(menuItem)
                 }
-        })
+        }
+        mainMenuProvider?.let { addMenuProvider(it) }
         // Setup views on 2nd and next activity start
         // On 1st start app is still initializing, start() is delayed and run from EventAppInitialized
         if (config.appInitialized) setupViews()
@@ -273,8 +298,6 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
 
     private fun start() {
         binding.splash.visibility = View.GONE
-        //Check here if loop plugin is disabled. Else check via constraints
-        if (!loop.isEnabled()) versionCheckerUtils.triggerCheckVersion()
         setUserStats()
         setupViews()
 
@@ -343,6 +366,9 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
 
     override fun onDestroy() {
         super.onDestroy()
+        binding.mainPager.adapter = null
+        binding.mainDrawerLayout.removeDrawerListener(actionBarDrawerToggle)
+        mainMenuProvider?.let { removeMenuProvider(it) }
         disposable.clear()
     }
 
@@ -579,7 +605,7 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
                 fh.delete()
                 // Also clear any stored password
                 exportPasswordDataStore.clearPasswordDataStore(context)
-                ToastUtils.okToast(context, context.getString(app.aaps.core.ui.R.string.password_set))
+                ToastUtils.okToast(context, context.getString(app.aaps.core.ui.R.string.password_set), isShort = false)
             }.start()
         }
     }

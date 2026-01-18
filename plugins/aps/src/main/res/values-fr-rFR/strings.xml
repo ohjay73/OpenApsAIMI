@@ -730,7 +730,7 @@
     <string name="original_file_missing">Le fichier original n\'existe pas.</string>
     <string name="file_too_short">Le fichier contient moins ou égal à 200 lignes, aucune suppression effectuée.</string>
     <string name="last_200_deleted">Les 200 dernières lignes ont été supprimées. Le fichier original a été sauvegardé sous \'%1$s\'.</string>
-    <string name="reason_data_removed">Les données pour la date %1$s ont été supprimées car TIR1DAIIR est inférieur à 85%%%.</string>
+    <string name="reason_data_removed">Les données pour la date %1$s ont été supprimées car TIR1DAIIR est inférieur à 85%%.</string>
     <string name="reason_deletion_time_restricted">La suppression ne peut être exécutée qu\'entre 00:05 et 00:10.</string>
     <string name="reason_no_deletion_needed">Aucune suppression nécessaire : tir1DAYIR est supérieur ou égal à 85%.</string>
     <string name="safety_sport_smb_zero">🏃‍♂️ Sécurité sport → SMB=0</string>
@@ -857,6 +857,10 @@
     <string name="reason_iob_max">IOB %.2f > maxIOB %.2f</string>
     <string name="reason_bg_dropping">, BG diminue (delta %1$.0f), basal mis à 0.</string>
     <string name="reason_set_temp_basal">; basale courant de %1$.2f défini comme temporaire.</string>
+    <!-- Meal-mode safety relaxations -->
+    <string name="smb_enabled_meal_mode">SMB activé : augmentation liée au repas (glycémie %1$s, Δ=%2$.1f, prévision %3$s)</string>
+    <string name="reason_meal_high_iob_relaxed">Augmentation post-repas : IOB %1$.2f &gt; max %2$.2f → SMB réduit à %3$d%%.</string>
+    <string name="reason_meal_hold_profile_basal">Augmentation post-repas : IOB %1$.2f &gt; max %2$.2f → basale maintenue au minimum du profil.\n</string>
     <string name="reason_insulin_required"> insuline requise %1$.2f</string>
     <string name="reason_max_smb">; SMB maximum %1$.2f</string>
     <string name="reason_microbolus">Microbolus %1$.2fU.</string>
@@ -893,5 +897,27 @@
     <string name="honeymoon_meal_slope">Lune de miel pente repas.</string>
     <string name="pregnancy_delta_over_0_adjustment">Grossesse &amp; Δ&gt;0 → ajustement.</string>
 
+    <!-- AIMI ADVISOR ANALYSIS -->
+    <string name="aimi_adv_analysis_intro_excellent">L\'analyse indique d\'excellents résultats. Votre profil semble bien adapté.</string>
+    <string name="aimi_adv_analysis_intro_good">L\'analyse montre une bonne maîtrise globale, mais quelques ajustements pourraient améliorer la stabilité.</string>
+    <string name="aimi_adv_analysis_intro_poor">L\'analyse détecte plusieurs zones d\'instabilité. Des ajustements sont recommandés pour réduire la variabilité.</string>
+    <string name="aimi_adv_analysis_issues_header">Points d\'attention identifiés :</string>
+    <string name="aimi_adv_analysis_issue_safety">Risque d\'hypoglycémie détecté (MaxSMB potentiellement trop agressif).</string>
+    <string name="aimi_adv_analysis_issue_hyper">Hyperglycémies persistantes (ISF ou Cible à revoir).</string>
+    <string name="aimi_adv_analysis_issue_smb">Gestion des repas perfectible (Modes ou SMB).</string>
+    <string name="aimi_adv_analysis_issue_basal">Le poids de la basale est déséquilibré par rapport au TDD.</string>
+    <string name="aimi_adv_analysis_issue_profile">Qualité du profil à optimiser.</string>
+    <string name="aimi_adv_analysis_footer">Les actions suggérées ci-dessous visent à corriger ces déséquilibres de manière ciblée.</string>
+    <string name="aimi_adv_analysis_all_good">Aucun problème majeur détecté. Continuez ainsi !</string>
+    <string name="aimi_adv_loading">Analyse des données en cours...</string>
+    <string name="aimi_adv_error_prefix">Erreur lors de l\'analyse :\n</string>
+    <!-- AIMI PKPD Advisor -->
+    <string name="aimi_pkpd_advisor_disabled">Le module PKPD adaptatif est désactivé. L\'activer permettrait d\'ajuster automatiquement votre DIA et pic d\'action pour améliorer le TIR.</string>
+    <string name="aimi_pkpd_hyper_dia">Vos hypers sont fréquentes. Réduire la Durée d\'Action (DIA) de %1$s à %2$s h pourrait rendre l\'insuline active plus \'rapide\' dans les calculs et augmenter les corrections.</string>
+    <string name="aimi_pkpd_hyper_peak">Un pic d\'action plus tôt (%1$s min) peut aider à être plus agressif sur les montées post-prandiales.</string>
+    <string name="aimi_pkpd_hyper_isf">Augmenter le facteur max de fusion ISF permettrait de renforcer l\'insuline quand la glycémie est résistante.</string>
+    <string name="aimi_pkpd_hypo_dia">Hypos fréquentes détectées. Allonger la DIA de %1$s à %2$s h permettrait de mieux prendre en compte l\'insuline restante (IOB) et d\'éviter les cumuls.</string>
+    <string name="aimi_pkpd_hypo_peak">Retarder le pic d\'action (%1$s min) adoucirait la courbe d\'activité de l\'insuline.</string>
+    <string name="aimi_pkpd_hypo_damping">Augmenter l\'amortissement (damping) en fin de DIA (Tail) réduirait les SMB risqués avec de l\'IOB tardive.</string>
 </resources>
 
