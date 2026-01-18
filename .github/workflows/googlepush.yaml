@@ -1,17 +1,117 @@
-name: Upload to Google Drive
-on: [workflow_dispatch] # This triggers the upload every time you push code
+name: Android Build (Signed)
+
+on:
+  push:
+    branches:
+      - dev_OAPSAIMI
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches:
+      - dev_OAPSAIMI
+  workflow_dispatch:
+    branches:
+      - aimi-test-translations-v2
 
 jobs:
-  upload_to_drive:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+  build-signed:
+    runs-on: ubuntu-22.04
 
-      - name: Upload File
+    env:
+      APP_APK_PATH: app/build/outputs/apk/full/release/app-full-release.apk
+      CLIENT_APK_PATH: app/build/outputs/apk/aapsclient/release/app-aapsclient-release.apk
+      WEAR_APK_PATH: wear/build/outputs/apk/full/release/wear-full-release.apk
+      PARENT_FOLDER_ID: 'YOUR_MAIN_DRIVE_FOLDER_ID_HERE' # Replace with your actual ID
+
+    steps:
+      # 1. Get code
+      - name: Check out the code
+        uses: actions/checkout@v3
+
+      # 2. Get Short SHA for folder naming
+      - name: Set Short SHA
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      # 3. Create a unique folder on Google Drive for this commit
+      - name: Create Commit Folder
+        id: create_folder
         uses: adityak74/google-drive-upload-git-action@main
         with:
           credentials: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
-          filename: 'path/to/your/file.apk' # Change this to the file you want to upload
-          folderId: '1wJ4o-av372pRVUd7sS1YvYyZ-l0-38im' # Paste the ID from Phase 2
+          filename: '.github/workflows/upload.yml' # A "dummy" file is often needed to trigger folder creation logic in some actions
+          folderId: ${{ env.PARENT_FOLDER_ID }}
+          name: "Build-${{ steps.vars.outputs.sha_short }}"
           overwrite: "false"
+
+      # 4. Set up JDK
+      - name: Set up JDK
+        uses: actions/setup-java@v3
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # 5. Decode keystore
+      - name: Decode keystore
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > monkeystore.jks
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+
+      # 6. Permissions
+      - name: Grant execute permission for Gradlew
+        run: chmod +x gradlew
+
+      # 7. Cache Gradle
+      - name: Cache Gradle packages
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper/
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # 8. Build APKs
+      - name: Build Release APKs
+        run: ./gradlew :app:assembleFullRelease :wear:assembleFullRelease :app:assembleAapsClientRelease
+        env:
+          KEYSTORE_FILE: ${{ github.workspace }}/monkeystore.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      # 9. Verify
+      - name: Verify APK Generation
+        run: |
+          find app/build/outputs/apk -type f -name "*.apk"
+          find wear/build/outputs/apk -type f -name "*.apk"
+
+      # 10. Upload All APKs to the NEW Commit Folder
+      - name: Upload APKs to Google Drive Folder
+        uses: adityak74/google-drive-upload-git-action@main
+        with:
+          credentials: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+          filename: |
+            ${{ env.APP_APK_PATH }}
+            ${{ env.CLIENT_APK_PATH }}
+            ${{ env.WEAR_APK_PATH }}
+          folderId: ${{ env.PARENT_FOLDER_ID }}
+          name: "Build-${{ steps.vars.outputs.sha_short }}" # Action will detect existing folder or create it
+          overwrite: "false" 
+
+      # 11. Optional: Standard GitHub Release (unchanged from your original)
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref }}
+          name: Release ${{ github.ref }}
+          files: |
+            ${{ env.APP_APK_PATH }}
+            ${{ env.CLIENT_APK_PATH }}
+            ${{ env.WEAR_APK_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
