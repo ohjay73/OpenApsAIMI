@@ -1,4 +1,4 @@
-name: Google Push and Android Build (Signed)
+name: Google Build and Push (Signed)
 
 on:
   push:
@@ -21,37 +21,29 @@ jobs:
       APP_APK_PATH: app/build/outputs/apk/full/release/app-full-release.apk
       CLIENT_APK_PATH: app/build/outputs/apk/aapsclient/release/app-aapsclient-release.apk
       WEAR_APK_PATH: wear/build/outputs/apk/full/release/wear-full-release.apk
-      PARENT_FOLDER_ID: 'YOUR_MAIN_DRIVE_FOLDER_ID_HERE' # Replace with your actual ID
+      
+      # 1. ENTER YOUR MAIN GOOGLE DRIVE FOLDER ID HERE
+      # This is the "Parent" folder where all commit folders will be created.
+      # Find it in your browser URL: drive.google.com/drive/folders/ID_IS_HERE
+      PARENT_FOLDER_ID: '1wJ4o-av372pRVUd7sS1YvYyZ-l0-38im' 
 
     steps:
-      # 1. Get code
       - name: Check out the code
         uses: actions/checkout@v3
 
-      # 2. Get Short SHA for folder naming
+      # 2. THIS STEP GENERATES THE FOLDER NAME
+      # It uses the first 7 characters of your commit (e.g., "Build-a1b2c3d")
       - name: Set Short SHA
         id: vars
         run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-      # 3. Create a unique folder on Google Drive for this commit
-      - name: Create Commit Folder
-        id: create_folder
-        uses: adityak74/google-drive-upload-git-action@main
-        with:
-          credentials: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
-          filename: '.github/workflows/upload.yml' # A "dummy" file is often needed to trigger folder creation logic in some actions
-          folderId: ${{ env.PARENT_FOLDER_ID }}
-          name: "Build-${{ steps.vars.outputs.sha_short }}"
-          overwrite: "false"
-
-      # 4. Set up JDK
       - name: Set up JDK
         uses: actions/setup-java@v3
         with:
           distribution: temurin
           java-version: '21'
 
-      # 5. Decode keystore
+      # 3. ENSURE YOU HAVE CREATED A GITHUB SECRET CALLED 'KEYSTORE_BASE64'
       - name: Decode keystore
         run: |
           echo "$KEYSTORE_BASE64" | base64 --decode > monkeystore.jks
@@ -59,11 +51,9 @@ jobs:
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 
-      # 6. Permissions
       - name: Grant execute permission for Gradlew
         run: chmod +x gradlew
 
-      # 7. Cache Gradle
       - name: Cache Gradle packages
         uses: actions/cache@v3
         with:
@@ -74,7 +64,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # 8. Build APKs
+      # 4. ENSURE THESE 3 SECRETS EXIST IN GITHUB SETTINGS
       - name: Build Release APKs
         run: ./gradlew :app:assembleFullRelease :wear:assembleFullRelease :app:assembleAapsClientRelease
         env:
@@ -83,14 +73,15 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
-      # 9. Verify
       - name: Verify APK Generation
         run: |
           find app/build/outputs/apk -type f -name "*.apk"
           find wear/build/outputs/apk -type f -name "*.apk"
 
-      # 10. Upload All APKs to the NEW Commit Folder
-      - name: Upload APKs to Google Drive Folder
+      # 5. UPLOAD TO GOOGLE DRIVE
+      # ENSURE YOU HAVE CREATED A SECRET CALLED 'GDRIVE_SERVICE_ACCOUNT_JSON'
+      # This secret should contain the ENTIRE text of your Google Cloud JSON key.
+      - name: Upload APKs to Google Drive Commit Folder
         uses: adityak74/google-drive-upload-git-action@main
         with:
           credentials: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
@@ -99,10 +90,11 @@ jobs:
             ${{ env.CLIENT_APK_PATH }}
             ${{ env.WEAR_APK_PATH }}
           folderId: ${{ env.PARENT_FOLDER_ID }}
-          name: "Build-${{ steps.vars.outputs.sha_short }}" # Action will detect existing folder or create it
-          overwrite: "false" 
+          # This 'name' parameter tells the action to put these files into a sub-folder
+          name: "Build-${{ steps.vars.outputs.sha_short }}" 
+          overwrite: "false"
 
-      # 11. Optional: Standard GitHub Release (unchanged from your original)
+      # 6. GITHUB RELEASES (STAYS THE SAME)
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
