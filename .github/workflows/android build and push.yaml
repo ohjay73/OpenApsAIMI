@@ -3,18 +3,18 @@ name: Android build and Google upload (Signed)
 on:
   push:
     branches:
-      - dev_OAPSAIMI               # Active Branch 1
-     # - aimi-test-translations-v2  # Active Branch 2
-      # - main                     # Comment out branches you don't want to trigger on
+      - dev_OAPSAIMI
+     # - aimi-test-translations-v2
     tags:
       - 'v*.*.*'
   pull_request:
     branches:
-      - dev_OAPSAIMI               # Active Branch 1
-     # - aimi-test-translations-v2  # Active Branch 2
-  workflow_dispatch:               # Allows manual triggering
-        - dev_OAPSAIMI               # Active Branch 1
-     # - aimi-test-translations-v2  # Active Branch 2
+       - dev_OAPSAIMI
+      # - aimi-test-translations-v2
+  workflow_dispatch:
+    branches:
+      - dev_OAPSAIMI
+    # - aimi-test-translations-v2
 
 jobs:
   build-signed:
@@ -22,7 +22,7 @@ jobs:
 
     env:
       # --- FOLDER SELECTION ---
-      # Remove the '#' from the line you want to use. Comment out the other.
+      # Move the '#' to toggle between your MTR and Lostboy folders
       PARENT_FOLDER_ID: '1noIAAjSxhjb8-qOI4r7ttrMKyjeS5dky' # MTR Folder
       # PARENT_FOLDER_ID: '1YwSMARXgKDhiGw8fnUD5HOvVXwymYgWI' # Lostboy Folder
       # ------------------------
@@ -42,9 +42,7 @@ jobs:
           java-version: '21'
 
       - name: Decode keystore
-        run: |
-          echo "$KEYSTORE_BASE64" | base64 --decode > monkeystore.jks
-        shell: bash
+        run: echo "$KEYSTORE_BASE64" | base64 --decode > monkeystore.jks
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 
@@ -60,17 +58,18 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       # --- STAGING STEP ---
-      # This gathers only the APKs into a clean folder for the uploader.
+      # Optimized to avoid the "same file" cp error by excluding the 'upload_me' path from find
       - name: Stage APKs for Upload
         run: |
           mkdir -p upload_me
           find . -name "*.apk" -not -path "./upload_me/*" -exec cp {} upload_me/ \;
-          echo "Files ready for upload:"
+          echo "Files in staging folder:"
           ls upload_me
 
       - name: Upload APKs to Google Drive
         uses: adityak74/google-drive-upload-git-action@main
         with:
+          # IMPORTANT: This must be the BASE64 encoded version of your JSON key
           credentials: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
           filename: "upload_me/*.apk"
           folderId: ${{ env.PARENT_FOLDER_ID }}
