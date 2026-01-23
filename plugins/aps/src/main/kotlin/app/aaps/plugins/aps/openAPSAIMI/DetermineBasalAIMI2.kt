@@ -5493,7 +5493,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 predictedBg = predictedBg,
                 eventualBg = eventualBG,
                 // Pass Dynamic MaxSMB (High vs Low logic) so Solver knows real limit
-                maxSmb = if (bg > 120 && !honeymoon && mealData.slopeFromMinDeviation >= 1.0) maxSMBHB else maxSMB,
+                maxSmb = if ((bg > 120 && !honeymoon && mealData.slopeFromMinDeviation >= 1.0) || ((mealTime || lunchTime || dinnerTime || highCarbTime) && bg > 100)) maxSMBHB else maxSMB,
                 maxIob = preferences.get(DoubleKey.ApsSmbMaxIob),
                 predictedSmb = predictedSMB,
                 modelValue = modelcal,
@@ -5575,7 +5575,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // 🛡️ PKPD ABSORPTION GUARD (FIX 2025-12-30)
         // Soft guard basé sur physiologie insuline : "Injecter → Laisser agir → Réévaluer"
         // Empêche surcorrection UAM sans bloquer vraies urgences
-        val currentMaxSmb = if (bg > 120 && !honeymoon && mealData.slopeFromMinDeviation >= 1.0) maxSMBHB else maxSMB
+        val currentMaxSmb = if ((bg > 120 && !honeymoon && mealData.slopeFromMinDeviation >= 1.0) || ((mealTime || lunchTime || dinnerTime || highCarbTime) && bg > 100)) maxSMBHB else maxSMB
         
         // Détecter si mode repas actif (ne pas freiner prebolus/TBR modes)
         val anyMealModeForGuard = mealTime || bfastTime || lunchTime || dinnerTime || highCarbTime || snackTime
@@ -5655,11 +5655,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val maxBasalPref = preferences.get(DoubleKey.meal_modes_MaxBasal)
         val rate: Double? = when {
             snackTime && snackrunTime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 4.0, "AI Force basal because Snack Time $snackrunTime.", currenttemp, rT, overrideSafety = true)
-            mealTime && mealruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because mealTime $mealruntime.", currenttemp, rT, overrideSafety = true)
-            bfastTime && bfastruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because Breakfast $bfastruntime.", currenttemp, rT, overrideSafety = true)
-            lunchTime && lunchruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because lunchTime $lunchruntime.", currenttemp, rT, overrideSafety = true)
-            dinnerTime && dinnerruntime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because dinnerTime $dinnerruntime.", currenttemp, rT, overrideSafety = true)
-            highCarbTime && highCarbrunTime in 0..30 && delta < 15 -> calculateRate(maxBasalPref, profile_current_basal, 1.0, "AI Force basal because highcarb $highCarbrunTime.", currenttemp, rT, overrideSafety = true)
+            // 🚫 BLOCAGE 30 MIN SUPPRIMÉ (Lunch/Meal/Dinner/HighCarb)
+            // Ce bloc forçait la basale à 100% (1.0) empêchant toute TBR (High ou Low) ou SMB proactif.
+            // mealTime && mealruntime... -> removed
+            // bfastTime && bfastruntime... -> removed
+            // lunchTime && lunchruntime... -> removed
+            // dinnerTime && dinnerruntime... -> removed
+            // highCarbTime && highCarbrunTime... -> removed
             // 📸 Meal Advisor Forced Basal REMOVED (Duplicate of Pipeline)
             
             // 🔥 Patch Post-Meal Hyper Boost (AIMI 2.0)
@@ -6210,7 +6212,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 smbToGive = smbToGive.toDouble(),
                 zeroSinceMin = zeroSinceMin,
                 minutesSinceLastChange = minutesSinceLastChange,
-                pumpCaps = pumpCaps
+                pumpCaps = pumpCaps,
+                auditorConfidence = (try { app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.AuditorVerdictCache.get(300_000)?.verdict?.confidence } catch (e: Exception) { 0.0 }) ?: 0.0
             )
             val helpers = BasalDecisionEngine.Helpers(
                 calculateRate = { basalValue, currentBasalValue, multiplier, label ->
