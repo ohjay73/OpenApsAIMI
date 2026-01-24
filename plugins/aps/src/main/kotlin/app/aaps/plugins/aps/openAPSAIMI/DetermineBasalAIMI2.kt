@@ -7,7 +7,6 @@ import app.aaps.core.data.model.BS
 import app.aaps.core.data.model.TB
 import app.aaps.core.data.model.TE
 import app.aaps.core.data.model.UE
-
 import app.aaps.core.interfaces.aps.APSResult
 import app.aaps.core.interfaces.aps.AutosensResult
 import app.aaps.core.interfaces.aps.CurrentTemp
@@ -20,8 +19,6 @@ import app.aaps.core.interfaces.aps.RT
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.plugin.ActivePlugin
-import app.aaps.core.interfaces.pump.Pump
-import app.aaps.core.data.pump.defs.PumpDescription
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.stats.TddCalculator
@@ -40,17 +37,11 @@ import app.aaps.plugins.aps.R
 import app.aaps.plugins.aps.openAPSAIMI.basal.BasalDecisionEngine
 import app.aaps.plugins.aps.openAPSAIMI.basal.BasalHistoryUtils
 import app.aaps.plugins.aps.openAPSAIMI.carbs.CarbsAdvisor
-
-import app.aaps.plugins.aps.openAPSAIMI.extensions.asRounded
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.plugins.aps.openAPSAIMI.utils.AimiStorageHelper
 import app.aaps.plugins.aps.openAPSAIMI.model.Constants
-import app.aaps.plugins.aps.openAPSAIMI.model.SmbPlan
-// Imports updated for strict patch
 import app.aaps.core.data.model.HR
-import app.aaps.core.data.model.SC
 import app.aaps.plugins.aps.openAPSAIMI.model.DecisionResult
-
 import app.aaps.plugins.aps.openAPSAIMI.model.LoopContext
 import app.aaps.plugins.aps.openAPSAIMI.model.PumpCaps
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdCsvLogger
@@ -77,7 +68,6 @@ import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkpdAbsorptionGuard
 import app.aaps.plugins.aps.openAPSAIMI.trajectory.StableOrbit  // 🌀 Trajectory Control
 import app.aaps.plugins.aps.openAPSAIMI.trajectory.WarningSeverity  // 🌀 Trajectory Warnings
 import app.aaps.plugins.aps.openAPSAIMI.context.ContextMode  // 🎯 Context Mode
-import app.aaps.plugins.aps.openAPSAIMI.context.ContextSnapshot  // 🎯 Context Snapshot
 import java.io.File
 import java.text.DecimalFormat
 import java.text.SimpleDateFormat
@@ -92,15 +82,101 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.collections.asSequence
-import kotlin.collections.get
 import kotlin.math.abs
 import kotlin.math.exp
-import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
+
+internal data class AimiDecisionContext(
+    val event_id: String,
+    val timestamp: Long,
+    val trigger: String,
+    val baseline_state: BaselineState,
+    val adjustments: Adjustments = Adjustments(),
+    var outcome: Outcome? = null
+) {
+    data class BaselineState(
+        val profile_isf_mgdl: Double,
+        val profile_basal_uph: Double,
+        val current_bg_mgdl: Double,
+        val cob_g: Double,
+        val iob_u: Double
+    )
+    data class Adjustments(
+        var dynamic_isf: DynamicIsf? = null,
+        var basal_safety_cap: BasalCap? = null,
+        var physiological_context: PhysioContext? = null
+    )
+    data class DynamicIsf(
+        var final_value_mgdl: Double = 0.0,
+        val modifiers: MutableList<Modifier> = mutableListOf()
+    )
+    data class Modifier(val source: String, val factor: Double, val clinical_reason: String)
+    data class BasalCap(val status: String, val limit_uph: Double, val safety_reason: String)
+    data class PhysioContext(val hormonal_cycle_phase: String, val physical_activity_mode: String)
+    data class Outcome(val clinical_decision: String, val dosage_u: Double, val target_basal_uph: Double? = null, val narrative_explanation: String)
+
+    fun toMedicalJson(): String {
+        return try {
+            val json = org.json.JSONObject()
+            json.put("event_id", event_id)
+            json.put("timestamp", timestamp)
+            json.put("trigger", trigger)
+
+            val base = org.json.JSONObject()
+            base.put("profile_isf_mgdl", baseline_state.profile_isf_mgdl)
+            base.put("profile_basal_uph", baseline_state.profile_basal_uph)
+            base.put("current_bg_mgdl", baseline_state.current_bg_mgdl)
+            base.put("cob_g", baseline_state.cob_g)
+            base.put("iob_u", baseline_state.iob_u)
+            json.put("baseline_state", base)
+
+            val adj = org.json.JSONObject()
+            adjustments.dynamic_isf?.let { d ->
+                val dJson = org.json.JSONObject()
+                dJson.put("final_value_mgdl", d.final_value_mgdl)
+                val modsIdx = org.json.JSONArray()
+                d.modifiers.forEach { m ->
+                    val mJson = org.json.JSONObject()
+                    mJson.put("source", m.source)
+                    mJson.put("factor", m.factor)
+                    mJson.put("reason", m.clinical_reason)
+                    modsIdx.put(mJson)
+                }
+                dJson.put("modifiers", modsIdx)
+                adj.put("dynamic_isf", dJson)
+            }
+            adjustments.physiological_context?.let { p ->
+                val pJson = org.json.JSONObject()
+                pJson.put("cycle_phase", p.hormonal_cycle_phase)
+                pJson.put("activity_mode", p.physical_activity_mode)
+                adj.put("physio_context", pJson)
+            }
+            // Add Basal Cap if present
+            adjustments.basal_safety_cap?.let { c ->
+                val cJson = org.json.JSONObject()
+                cJson.put("status", c.status)
+                cJson.put("limit_uph", c.limit_uph)
+                cJson.put("reason", c.safety_reason)
+                adj.put("basal_cap", cJson)
+            }
+            json.put("adjustments", adj)
+
+            outcome?.let { o ->
+                val oJson = org.json.JSONObject()
+                oJson.put("decision", o.clinical_decision)
+                oJson.put("amount", o.dosage_u)
+                o.target_basal_uph?.let { oJson.put("target_basal_rate_uph", it) }
+                oJson.put("narrative", o.narrative_explanation)
+                json.put("outcome", oJson)
+            }
+            json.toString()
+        } catch(e: Exception) { "{ \"error\": \"JSON Generation Failed\" }" }
+    }
+}
 
 internal data class PredictionSanityResult(
     val predBg: Double,
@@ -202,7 +278,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private val profileUtil: ProfileUtil,
     private val fabricPrivacy: FabricPrivacy,
     private val preferences: Preferences,
-    private val uiInteraction: app.aaps.core.interfaces.ui.UiInteraction,
+    private val uiInteraction: UiInteraction,
     private val wCycleFacade: WCycleFacade,
     private val wCyclePreferences: WCyclePreferences,
     private val wCycleLearner: WCycleLearner,
@@ -243,6 +319,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     @Inject lateinit var contextManager: app.aaps.plugins.aps.openAPSAIMI.context.ContextManager  // 🎯 Context Module
     @Inject lateinit var contextInfluenceEngine: app.aaps.plugins.aps.openAPSAIMI.context.ContextInfluenceEngine  // 🎯 Context Influence
     @Inject lateinit var physioAdapter: app.aaps.plugins.aps.openAPSAIMI.physio.AIMIInsulinDecisionAdapterMTR  // 🏥 Physiological Modulation
+    
+    // 🌸 Endometriosis Adjuster (Lazy init manually since not in graph yet or use manual passing)
+    private val endoAdjuster by lazy { app.aaps.plugins.aps.openAPSAIMI.wcycle.EndometriosisAdjuster(preferences, aapsLogger) }
+
     // ❌ OLD reactivityLearner removed - UnifiedReactivityLearner is now the only one
     init {
         // Branche l’historique basal (TBR) sur la persistence réelle
@@ -507,8 +587,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             smbFinal: Double,
             audit: PkpdPort.DampingAudit?
         ) {
-            val dateStr  = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).format(java.util.Date(ctx.nowEpochMillis))
-            val epochMin = java.util.concurrent.TimeUnit.MILLISECONDS.toMinutes(ctx.nowEpochMillis)
+            val dateStr  = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(ctx.nowEpochMillis))
+            val epochMin = TimeUnit.MILLISECONDS.toMinutes(ctx.nowEpochMillis)
             PkPdCsvLogger.append(
                 PkPdLogRow(
                     dateStr = dateStr,
@@ -1033,7 +1113,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             val boluses = persistenceLayer
                 .getBolusesFromTime(lookback30min, ascending = false)
                 .blockingGet()
-                .filter { it.type == app.aaps.core.data.model.BS.Type.SMB }
+                .filter { it.type == BS.Type.SMB }
             
             boluses.sumOf { it.amount }
         } catch (e: Exception) {
@@ -1242,7 +1322,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val predDelta = predictedDelta(getRecentDeltas()).toFloat()
         val autodrive = preferences.get(BooleanKey.OApsAIMIautoDrive)
         val isEarlyAutodrive = !night && !isMealMode && autodrive &&
-            bgNow > hypoGuard && bgNow > 110 && detectMealOnset(delta, predDelta, bgacc.toFloat(), predictedBg.toFloat(), profile.target_bg.toFloat())
+            bgNow > hypoGuard && bgNow > 110 && detectMealOnset(delta, predDelta, bgacc.toFloat(), predictedBg, profile.target_bg.toFloat())
 
         // 3) Tendance & ajustement
         val bgTrend = calculateBgTrend(getRecentBGs(), StringBuilder())
@@ -1498,7 +1578,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // 🚀 REACTOR MODE: Full Speed (Safety delegated to applySafetyPrecautions)
         // User Directive: "Garde le moteur à plein régime"
         
-        var effectiveProposed = proposedUnits
+        val effectiveProposed = proposedUnits
 
         // No inline clamping here. 
         // We trust the UnifiedReactivityLearner to provide the correct amplification
@@ -1535,7 +1615,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
          // 🔧 RESTORED: Pass PKPD runtime for tail damping
          // Note: pkpdRuntime is calculated later in determine_basal, so we pass null here
          // and rely on the PKPD tail damping in applySafetyPrecautions for context-aware reduction
-         var safetyCappedUnits = applySafetyPrecautions(
+         val safetyCappedUnits = applySafetyPrecautions(
             mealData = mealData,
             smbToGiveParam = proposedFloat,
             hypoThreshold = hypoThreshold,
@@ -2056,6 +2136,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     }
 
 
+    @SuppressLint("DefaultLocale")
     private fun isAutodriveModeCondition(
         delta: Float,
         autodrive: Boolean,
@@ -3621,6 +3702,20 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         consoleError.clear()
         consoleLog.clear()
         
+        // 🏥 AIMI DECISION CONTEXT INITIALIZATION (For Medical Transparency)
+        val decisionCtx = AimiDecisionContext(
+            event_id = "evt_${currentTime}",
+            timestamp = currentTime,
+            trigger = if (glucose_status.delta > 5) "BG_Rise_Fast" else "Routine_Cycle",
+            baseline_state = AimiDecisionContext.BaselineState(
+                profile_isf_mgdl = profile.sens,
+                profile_basal_uph = profile.current_basal,
+                current_bg_mgdl = glucose_status.glucose,
+                cob_g = mealData.mealCOB,
+                iob_u = iob_data_array.firstOrNull()?.iob ?: 0.0 // Taking first element (Net IOB usually)
+            )
+        )
+        
         var rT = RT(
             algorithm = APSResult.Algorithm.AIMI,
             runningDynamicIsf = dynIsfMode,
@@ -3664,6 +3759,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // 🧬 PHYSIO INTEGRATION: Get SNS Dominance from Adapter
         val physioContext = physioAdapter.getCurrentContext()
         val snsDominance = physioContext?.toSNSDominance() ?: 0.3 // Default Neutral
+        
+        // 🏥 Update Context
+        decisionCtx.adjustments.physiological_context = AimiDecisionContext.PhysioContext(
+            hormonal_cycle_phase = wCycleInfoForRun?.let { "${it.phase.name}_Day${it.dayInCycle}" } ?: "Unknown",
+            physical_activity_mode = if (snsDominance > 0.6) "Stress/Activity" else "Resting"
+        )
 
         // ✅ ETAPE 1: Calculer le Profil d'Action de l'IOB (avec modulation physio)
         val iobActionProfile = InsulinActionProfiler.calculate(iob_data_array, profile, snsDominance)
@@ -5269,6 +5370,31 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
 // --- FIN DE LA NOUVELLE LOGIQUE ---
 
+        // 🌸 ENDOMETRIOSIS & CYCLE LOGIC (MTR)
+        val endoFactors = endoAdjuster.calculateFactors(bg, delta.toDouble())
+        if (endoFactors.reason.isNotEmpty()) {
+            consoleLog.add("Endo: ${endoFactors.reason} (Basal x${endoFactors.basalMult}, SMB x${endoFactors.smbMult}, ISF x${endoFactors.isfMult})")
+            
+            // 1. ISF Adjustment (Stronger ISF means LOWER value, so we DIVIDE by mult > 1, or here isulMult is usually < 1 for resistance?)
+            // In Adjuster: isfMult approx 1.0/basalMult (0.7..1.0). So it acts as Resistance.
+            // variableSensitivity is ISF (mg/dL/U). Lower is stronger.
+            // If isfMult = 0.8 (Resistance), we want ISF to be HIGHER (weaker).
+            // Wait, standard: ISF * factor. If factor < 1, ISF drops -> Stronger.
+            // Let's check logic: EndoAdjuster returns isfMult.
+            //   if basal is 1.3 (high), resistance is high. We need MORE insulin.
+            //   So ISF should be LOWER (e.g. 100 -> 80).
+            //   In Adjuster I did: isfMult = (1.0 / basalMult).coerceIn(0.7, 1.0)
+            //   So if basal 1.3 -> isfMult ~ 0.77.
+            //   NewISF = OldISF * 0.77 (100 -> 77). This is STRONGER insulin. 
+            //   Wait, Endometriosis is INFLAMMATION/RESISTANCE. We need STRONGER insulin.
+            //   So yes, LOWERING the ISF value is correct.
+            this.variableSensitivity *= endoFactors.isfMult.toFloat()
+            
+            // 2. Basal Adjustment (Profile Basal Boost)
+            // We apply it to 'basalaimi' which is the base for calculations
+            this.basalaimi *= endoFactors.basalMult.toFloat()
+        }
+
         // --- 🏃 ACTIVITY MANAGER INTEGRATION ---
         
         // 1. Process Data through Manager
@@ -5610,6 +5736,17 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 consoleLog.add("INTERVAL_ADJUSTED: +${pkpdGuard.intervalAddMin}m → ${intervalsmb}m total")
             }
         }
+
+        // 🌸 ENDOMETRIOSIS SMB DAMPENING
+        if (endoFactors.smbMult < 1.0) {
+            val beforeEndo = smbToGive
+            smbToGive = (smbToGive * endoFactors.smbMult.toFloat()).coerceAtLeast(0f)
+            if (smbToGive < beforeEndo) {
+                consoleLog.add("SMB_ENDO_DAMPEN: ${"%.2f".format(beforeEndo)}U → ${"%.2f".format(smbToGive)}U (x${"%.2f".format(endoFactors.smbMult)})")
+                rT.reason.append(" | EndoDampen x${"%.2f".format(endoFactors.smbMult)}")
+            }
+        }
+
         val beforeCap = smbToGive
         smbToGive = capSmbDose(
             proposedSmb = smbToGive,
@@ -5655,18 +5792,18 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val maxBasalPref = preferences.get(DoubleKey.meal_modes_MaxBasal)
         val rate: Double? = when {
             snackTime && snackrunTime in 0..30 && delta < 15 -> calculateRate(basal, profile_current_basal, 4.0, "AI Force basal because Snack Time $snackrunTime.", currenttemp, rT, overrideSafety = true)
-            // 🚫 BLOCAGE 30 MIN SUPPRIMÉ (Lunch/Meal/Dinner/HighCarb)
-            // Ce bloc forçait la basale à 100% (1.0) empêchant toute TBR (High ou Low) ou SMB proactif.
-            // mealTime && mealruntime... -> removed
-            // bfastTime && bfastruntime... -> removed
-            // lunchTime && lunchruntime... -> removed
-            // dinnerTime && dinnerruntime... -> removed
-            // highCarbTime && highCarbrunTime... -> removed
-            // 📸 Meal Advisor Forced Basal REMOVED (Duplicate of Pipeline)
             
+            // 🚀 RE-ENABLED: 30 MIN INITIAL BOOST (User Request)
+            // Force Max TBR during the first 30 minutes of any meal mode to act as extended prebolus.
+            (mealTime || lunchTime || dinnerTime || highCarbTime || bfastTime) && (listOf(mealruntime, lunchruntime, dinnerruntime, highCarbrunTime, bfastruntime).maxOrNull() ?: 0) in 0..30 -> {
+                val safeMax = if (maxBasalPref > 0.1) maxBasalPref else profile_current_basal * 5.0
+                //val factor = safeMax / profile_current_basal
+                calculateRate(basal, safeMax, 1.0, "Meal Boost 30min (Force MaxBasal)", currenttemp, rT, overrideSafety = true)
+            }
+
             // 🔥 Patch Post-Meal Hyper Boost (AIMI 2.0)
             // Added: Treat Recent Meal Advisor (< 120m) as implicit Meal Mode
-            (mealTime || lunchTime || dinnerTime || highCarbTime || bfastTime || snackTime || (timeSinceEstimateMin <= 120 && estimatedCarbs > 10)) -> {
+            (mealTime || lunchTime || dinnerTime || highCarbTime || bfastTime || snackTime || (timeSinceEstimateMin <= 120 && estimatedCarbs > 10.0)) -> {
                 val runTime = listOf(mealruntime, lunchruntime, dinnerruntime, highCarbrunTime, bfastruntime, snackrunTime).maxOrNull() ?: timeSinceEstimateMin.toInt()
                 val target = target_bg // simplification
                 val rocketStart = delta > 5.0f || bg > target_bg + 40
@@ -6564,6 +6701,59 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     aapsLogger.error(LTag.APS, "AI Auditor exception", e)
                     // Continue with original decision on error
                 }
+            }
+            
+            
+            // 🏥 AIMI SNAPSHOT FINALIZATION
+            val snapshotFusedIsf = pkpdRuntime?.fusedIsf ?: profile.sens
+            val snapshotProfileIsf = profile.sens
+            
+            // Populate Dynamic ISF details
+            decisionCtx.adjustments.dynamic_isf = AimiDecisionContext.DynamicIsf(
+                final_value_mgdl = snapshotFusedIsf,
+                modifiers = mutableListOf<AimiDecisionContext.Modifier>().apply {
+                    // Autosens
+                    if (autosens_data.ratio != 1.0) {
+                        add(AimiDecisionContext.Modifier(
+                            source = "Autosensitivity",
+                            factor = 1.0 / autosens_data.ratio, // Ratio < 1 => Sensitive => ISF increases (Factor > 1)
+                            clinical_reason = "Rolling avg sensitivity: ${"%.2f".format(autosens_data.ratio)}"
+                        ))
+                    }
+                    // ISF Fusion
+                    if (abs(snapshotFusedIsf - (snapshotProfileIsf * (1.0/autosens_data.ratio))) > 1.0) {
+                         add(AimiDecisionContext.Modifier(
+                            source = "PkPd_Fusion",
+                            factor = snapshotFusedIsf / (snapshotProfileIsf * (1.0/autosens_data.ratio)),
+                            clinical_reason = "Fusion with TDD & Profile"
+                        ))
+                    }
+                }
+            )
+            
+            // Populate Outcome
+            // Populate Outcome
+            decisionCtx.outcome = AimiDecisionContext.Outcome(
+                clinical_decision = if ((finalResult.units ?: 0.0) > 0) "SMB_Delivery" else if ((finalResult.rate ?: profile.current_basal) != profile.current_basal) "Basal_Modulation" else "No_Action",
+                dosage_u = finalResult.units ?: 0.0,
+                target_basal_uph = finalResult.rate, 
+                narrative_explanation = finalResult.reason.toString().replace("\n", " | ").take(2048) // Headline
+            )
+            
+            // Log the 'Medical Record'
+            val medicalJson = decisionCtx.toMedicalJson()
+            consoleLog.add("AIMI_SNAPSHOT: $medicalJson")
+            
+            // 💾 PERSISTENCE: Save to Documents/AAPS/AIMI_Decisions.jsonl
+            try {
+                val decisionsFile = File(externalDir, "AIMI_Decisions.jsonl")
+                if (!decisionsFile.exists()) {
+                     decisionsFile.parentFile?.mkdirs()
+                     decisionsFile.createNewFile()
+                }
+                decisionsFile.appendText("$medicalJson\n")
+            } catch (e: Exception) {
+                consoleError.add("Failed to save AIMI Decision JSON: ${e.message}")
             }
             
             return finalResult
