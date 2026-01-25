@@ -278,6 +278,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private val profileUtil: ProfileUtil,
     private val fabricPrivacy: FabricPrivacy,
     private val preferences: Preferences,
+    private val gestationalAutopilot: app.aaps.plugins.aps.openAPSAIMI.advisor.gestation.GestationalAutopilot,
+    private val auditorOrchestrator: app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.AuditorOrchestrator,
     private val uiInteraction: UiInteraction,
     private val wCycleFacade: WCycleFacade,
     private val wCyclePreferences: WCyclePreferences,
@@ -313,7 +315,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             return base * mod
         }
     @Inject lateinit var aapsLogger: AAPSLogger  // 📊 Logger for health monitoring
-    @Inject lateinit var auditorOrchestrator: app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.AuditorOrchestrator  // 🧠 AI Decision Auditor
+
     @Inject lateinit var trajectoryGuard: app.aaps.plugins.aps.openAPSAIMI.trajectory.TrajectoryGuard  // 🌀 Phase-Space Trajectory Controller
     @Inject lateinit var trajectoryHistoryProvider: app.aaps.plugins.aps.openAPSAIMI.trajectory.TrajectoryHistoryProvider  // 🌀 Trajectory History
     @Inject lateinit var contextManager: app.aaps.plugins.aps.openAPSAIMI.context.ContextManager  // 🎯 Context Module
@@ -3701,6 +3703,48 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     ): RT {
         consoleError.clear()
         consoleLog.clear()
+
+        // 🤰 Gestational Autopilot Integration
+        try {
+            if (preferences.get(BooleanKey.OApsAIMIpregnancy)) {
+                val dueDateString = preferences.get(app.aaps.plugins.aps.openAPSAIMI.keys.AimiStringKey.PregnancyDueDateString)
+                if (dueDateString.isNotEmpty()) {
+                    try {
+                        val dueDate = java.time.LocalDate.parse(dueDateString)
+                        val gState = gestationalAutopilot.calculateState(dueDate)
+                        val mult = gestationalAutopilot.getProfileMultipliers(gState)
+                        
+                        val factorBasal = mult["basal"] ?: 1.0
+                        val factorISF = mult["isf"] ?: 1.0
+                        val factorCR = mult["cr"] ?: 1.0
+                        
+                        // Capture old values for logging
+                        val oldBasal = profile.current_basal
+                        val oldISF = profile.sens
+                        val oldCR = profile.carb_ratio
+                        
+                        // Apply to profile (In-Flight Mutation)
+                        profile.current_basal *= factorBasal
+                        profile.sens *= factorISF
+                        profile.carb_ratio *= factorCR
+                        // Also adjust variable_sens (DynISF)
+                        profile.variable_sens *= factorISF
+                        
+                        aapsLogger.debug(LTag.APS, "🤰 Pregnancy Mode Active: Week ${gState.gestationalWeek} (${gState.description}) -> Basal*${factorBasal}, ISF*${factorISF}")
+                        consoleLog.add("🤰 GESTATION ACTIVE: ${gState.gestationalWeek.toInt()} SA (${gState.description})")
+                        consoleLog.add("   └ Factors: Basal x${"%.2f".format(factorBasal)} | ISF x${"%.2f".format(factorISF)} | CR x${"%.2f".format(factorCR)}")
+                        consoleLog.add("   └ Adjusted: Basal ${"%.2f".format(oldBasal)}->${"%.2f".format(profile.current_basal)} | ISF ${oldISF.toInt()}->${profile.sens.toInt()}")
+                    } catch (e: Exception) {
+                        aapsLogger.error(LTag.APS, "Error parsing pregnancy due date: $dueDateString", e)
+                    }
+                } else {
+                    consoleLog.add("🤰 PREGNANCY MODE ON but No Due Date set in WCycle prefs.")
+                }
+            }
+        } catch (e: Exception) {
+            consoleLog.add("🤰 Error in Gestation logic: ${e.message}")
+            e.printStackTrace()
+        }
         
         // 🏥 AIMI DECISION CONTEXT INITIALIZATION (For Medical Transparency)
         val decisionCtx = AimiDecisionContext(
@@ -4277,12 +4321,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     nowMillis = currentTime, historyMinutes = 90, currentBg = bg,
                     currentDelta = delta.toDouble(), currentAccel = bgacc,
                     insulinActivityNow = iobActivityNow, iobNow = iob.toDouble(),
-                    pkpdStage = when (insulinActionState.activityStage) {
-                        app.aaps.plugins.aps.openAPSAIMI.pkpd.ActivityStage.RISING -> app.aaps.plugins.aps.openAPSAIMI.pkpd.InsulinActivityStage.RISING
-                        app.aaps.plugins.aps.openAPSAIMI.pkpd.ActivityStage.PEAK -> app.aaps.plugins.aps.openAPSAIMI.pkpd.InsulinActivityStage.PEAK
-                        app.aaps.plugins.aps.openAPSAIMI.pkpd.ActivityStage.FALLING -> app.aaps.plugins.aps.openAPSAIMI.pkpd.InsulinActivityStage.TAIL
-                        app.aaps.plugins.aps.openAPSAIMI.pkpd.ActivityStage.TAIL -> app.aaps.plugins.aps.openAPSAIMI.pkpd.InsulinActivityStage.EXHAUSTED
-                    },
+                    pkpdStage = insulinActionState.activityStage,
                     timeSinceLastBolus = if (lastBolusAgeMinutes.isFinite()) lastBolusAgeMinutes.toInt() else 120,
                     cobNow = cob.toDouble()
                 )
@@ -6409,6 +6448,116 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 if (phase != app.aaps.plugins.aps.openAPSAIMI.wcycle.CyclePhase.UNKNOWN) {
                      wCycleFacade.updateLearning(phase, autosens_data.ratio)
                 }
+            }
+
+            // 🌀 TRAJECTORY VISUALIZATION (AIMI 2.1)
+            try {
+                // Quick reconstruction of recent states for instant visualization
+                // Note: Ideally we use a full history provider, but for UI feedback we use instantaneous extrapolation
+                val now = System.currentTimeMillis()
+                val currentActivity = (iob_data.iob * 1.0) // simplified activity equivalent
+                val targetOrb = app.aaps.plugins.aps.openAPSAIMI.trajectory.StableOrbit(targetBg = targetBg.toDouble(), targetActivity = 0.0)
+                
+                val history = listOf(
+                    // t-15 min (approx)
+                    app.aaps.plugins.aps.openAPSAIMI.trajectory.PhaseSpaceState(
+                        timestamp = now - 900000,
+                        bg = bg - (shortAvgDelta * 3), 
+                        bgDelta = shortAvgDelta.toDouble(), 
+                        bgAccel = 0.0,
+                        insulinActivity = currentActivity,
+                        iob = iob_data.iob,
+                        pkpdStage = app.aaps.plugins.aps.openAPSAIMI.pkpd.ActivityStage.TAIL,
+                        timeSinceLastBolus = 0
+                    ),
+                    // t-5 min
+                    app.aaps.plugins.aps.openAPSAIMI.trajectory.PhaseSpaceState(
+                        timestamp = now - 300000,
+                        bg = bg - delta, 
+                        bgDelta = delta.toDouble(), 
+                        bgAccel = (delta - shortAvgDelta).toDouble(),
+                        insulinActivity = currentActivity,
+                        iob = iob_data.iob,
+                        pkpdStage = app.aaps.plugins.aps.openAPSAIMI.pkpd.ActivityStage.TAIL,
+                        timeSinceLastBolus = 0
+                    ),
+                    // Current (t)
+                    app.aaps.plugins.aps.openAPSAIMI.trajectory.PhaseSpaceState(
+                        timestamp = now,
+                        bg = bg, 
+                        bgDelta = delta.toDouble(), 
+                        bgAccel = (delta - shortAvgDelta).toDouble(),
+                        insulinActivity = currentActivity,
+                        iob = iob_data.iob,
+                        pkpdStage = app.aaps.plugins.aps.openAPSAIMI.pkpd.ActivityStage.TAIL,
+                        timeSinceLastBolus = 0
+                    )
+                )
+
+                val metrics = app.aaps.plugins.aps.openAPSAIMI.trajectory.TrajectoryMetricsCalculator.calculateAll(history, targetOrb)
+                
+                if (metrics != null) {
+                    val healthPercent = (metrics.healthScore * 100).toInt()
+                    val healthBar = "█".repeat(healthPercent / 10) + "░".repeat(10 - (healthPercent / 10))
+                    
+                    val type = when {
+                        metrics.isStable -> "⭕ Stable Orbit"
+                        metrics.isConverging -> "🔄 Converging"
+                        metrics.isDiverging -> "↗️ Diverging"
+                        metrics.isTightSpiral -> "🌀 Spiral"
+                        else -> "❓ Uncertain"
+                    }
+                    
+                    val etaText = if (metrics.convergenceVelocity > 0) {
+                        val eta = app.aaps.plugins.aps.openAPSAIMI.trajectory.TrajectoryMetricsCalculator.estimateConvergenceTime(history, targetOrb)
+                        if (eta != null) "$eta min to stable orbit" else "Approaching..."
+                    } else {
+                        "Diverging from target"
+                    }
+
+                    // Append ASCII Block to Console Log
+                    consoleLog.add("─────────────────────────────────┐")
+                    consoleLog.add("│ 🌀 TRAJECTORY STATUS            │")
+                    consoleLog.add("├─────────────────────────────────┤")
+                    consoleLog.add("│ Type: %-26s│".format(type))
+                    consoleLog.add("│ Health: %s %d%%          │".format(healthBar, healthPercent))
+                    consoleLog.add("│ ETA: %-27s│".format(etaText))
+                    consoleLog.add("│                                 │")
+                    consoleLog.add("│ Metrics:                        │")
+                    consoleLog.add("│ ├─ Curvature:    %-15s│".format("%.2f".format(metrics.curvature)))
+                    consoleLog.add("│ ├─ Convergence:  %-15s│".format("%+.2f".format(metrics.convergenceVelocity)))
+                    consoleLog.add("│ ├─ Coherence:    %-15s│".format("%.2f".format(metrics.coherence)))
+                    consoleLog.add("│ ├─ Energy:       %-15s│".format("%+.1f".format(metrics.energyBalance)))
+                    
+                    // 🤖 AI Auditor Insight (if available and relevant)
+                    // Check cache for recent verdict (10 min validity)
+                    try {
+                        val cached = app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.AuditorVerdictCache.get(600_000)
+                        if (cached != null) {
+                            // Only show if it matches the current trajectory uncertainty or implies action
+                            consoleLog.add("│                                 │")
+                            val aiIcon = "🤖"
+                            
+                            // Map VerdictType manually to avoid import issues if not available
+                            val verdictEnum = cached.verdict.verdict
+                            val action = verdictEnum.name // CONFIRM, SOFTEN, SHIFT_TO_TBR
+                            
+                            consoleLog.add("│ $aiIcon AI: %-25s│".format("$action (${(cached.verdict.confidence*100).toInt()}%)"))
+                            
+                            // Shorten evidence to fit in box
+                            val evidenceList = cached.verdict.evidence
+                            val evidenceStr = if (evidenceList.isNotEmpty()) evidenceList[0] else ""
+                            val evidence = evidenceStr.replace("\n", " ").take(30)
+                            consoleLog.add("│ > %-30s│".format(evidence))
+                        }
+                    } catch (e: Exception) {
+                        // Ignore cache access errors
+                    }
+
+                    consoleLog.add("└─────────────────────────────────┘")
+                }
+            } catch (e: Exception) {
+                // Silently fail trajectory visualizer to avoid critical loop crash
             }
 
             // 📊 Build learners summary for RT visibility (finalResult.learnersInfo)
