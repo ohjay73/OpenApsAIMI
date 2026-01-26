@@ -9,6 +9,9 @@ on:
   pull_request:
     branches:
       - dev_OAPSAIMI
+  workflow_dispatch:
+      branches:
+      - dev_OAPSAIMI
 
 jobs:
   build-signed:
