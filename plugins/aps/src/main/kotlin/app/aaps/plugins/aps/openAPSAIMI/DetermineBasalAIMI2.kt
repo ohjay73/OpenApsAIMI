@@ -287,6 +287,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private val wCycleLearner: WCycleLearner,
     private val pumpCapabilityValidator: app.aaps.plugins.aps.openAPSAIMI.validation.PumpCapabilityValidator,
     private val dynamicBasalController: app.aaps.plugins.aps.openAPSAIMI.basal.DynamicBasalController,
+    private val autodriveEngine: app.aaps.plugins.aps.openAPSAIMI.autodrive.AutodriveEngine,
     private val context: Context
 ) {
     @Inject lateinit var persistenceLayer: PersistenceLayer
@@ -2238,19 +2239,138 @@ class DetermineBasalaimiSMB2 @Inject constructor(
          return false
     }
 
+    // =========================================================================
+    // 🛡️ POST-HYPO DISAMBIGUATION GUARD
+    // =========================================================================
+    // État interne : timestamp du dernier cycle où BG < 70 a été observé.
+    // Persiste entre les cycles pour le timer d'expiration ReboundSuspected.
+    private var lastHypoBelow70At: Long = 0L
+
+    /**
+     * Trois états possibles après un épisode BG < 70 :
+     *   None              → aucune hypo récente  → flux SMB normal
+     *   ReboundSuspected  → hypo récente, pas de repas détecté → SMB=0, TBR bridge
+     *   MealConfirmed     → hypo récente MAIS repas confirmé   → SMB cappé 50%
+     */
+    private sealed class PostHypoState {
+        object None : PostHypoState()
+        data class ReboundSuspected(val sinceMs: Long) : PostHypoState()
+        data class MealConfirmed(val sinceMs: Long) : PostHypoState()
+    }
+
+    /**
+     * Retourne vrai si le contexte ressemble à un repas SANS déclaration explicite
+     * (cas Autodrive V3 où l'utilisateur ne déclare pas de repas manuellement).
+     * Requiert ≥ 2 critères parmi 4 pour éviter les faux positifs.
+     */
+    private fun isMealLikelyWithoutDeclaration(
+        shortAvgDelta: Float,
+        delta: Float,
+        slopeFromMinDeviation: Double,
+        recentBGs: List<Float>,
+        estimatedCarbs: Double,
+        estimatedCarbsAgeMs: Long,
+        localHour: Int
+    ): Boolean {
+        var score = 0
+
+        // Critère 1 : AIMI Advisor a estimé des glucides récemment (≤ 90 min)
+        if (estimatedCarbs > 20.0 && estimatedCarbsAgeMs in 0..(90 * 60_000L)) score++
+
+        // Critère 2 : signal UAM post-prandial (courbe S)
+        if (slopeFromMinDeviation >= 2.0) score++
+
+        // Critère 3 : accélération glycémique soutenue sur 2 lectures consécutives
+        val sustainedRise = shortAvgDelta >= 3.0f && delta >= 2.0f &&
+            recentBGs.take(3).zipWithNext().all { (prev, curr) -> curr > prev }
+        if (sustainedRise) score++
+
+        // Critère 4 : heure diurne (les rebonds hormonaux nuit sont plus probables)
+        if (localHour in 7..21) score++
+
+        return score >= 2
+    }
+
+    /**
+     * Classifie l'état post-hypo et met à jour [lastHypoBelow70At].
+     *
+     * @param recentBGs         Lectures récentes (les + récentes en premier)
+     * @param cob               COB actuel en grammes
+     * @param explicitMealMode  true si un mode repas manuel est actif (mealTime/lunchTime…)
+     * @param shortAvgDelta     Moyenne courte des deltas
+     * @param delta             Delta instantané
+     * @param slopeFromMinDeviation Signal UAM
+     * @param estimatedCarbs    Glucides estimés par AIMI Advisor
+     * @param estimatedCarbsAgeMs Âge de l'estimation en ms
+     * @param localHour         Heure locale (0-23)
+     * @param reason            StringBuilder pour les logs
+     * @param now               Timestamp courant en ms
+     */
+    private fun classifyPostHypoState(
+        recentBGs: List<Float>,
+        cob: Double,
+        explicitMealMode: Boolean,
+        shortAvgDelta: Float,
+        delta: Float,
+        slopeFromMinDeviation: Double,
+        estimatedCarbs: Double,
+        estimatedCarbsAgeMs: Long,
+        localHour: Int,
+        reason: StringBuilder,
+        now: Long = System.currentTimeMillis()
+    ): PostHypoState {
+        // Fenêtre de détection : 60 min ≈ 12 lectures G6 à 5 min
+        val recentHypo = recentBGs.take(12).any { it < 70f }
+        if (recentHypo) lastHypoBelow70At = now
+
+        val sinceHypoMs = if (lastHypoBelow70At > 0L) now - lastHypoBelow70At else Long.MAX_VALUE
+
+        // Si pas de hypo récente ou guard expiré (ReboundSuspected 30 min, MealConfirmed 45 min)
+        if (lastHypoBelow70At == 0L || sinceHypoMs > 45 * 60_000L) {
+            lastHypoBelow70At = 0L
+            return PostHypoState.None
+        }
+
+        // Vérifier si c'est un repas (explicite ou implicite Autodrive V3)
+        val isMealContext = explicitMealMode || cob > 0.5 ||
+            isMealLikelyWithoutDeclaration(
+                shortAvgDelta, delta, slopeFromMinDeviation,
+                recentBGs, estimatedCarbs, estimatedCarbsAgeMs, localHour
+            )
+
+        return if (isMealContext) {
+            // ReboundSuspected expire au bout de 30 min même sans déclaration repas
+            if (sinceHypoMs > 30 * 60_000L) {
+                // 30 min passées → le guard s'assouplit même sans repas confirmé
+                lastHypoBelow70At = 0L
+                return PostHypoState.None
+            }
+            reason.append("🍽️ POST_HYPO_MEAL: Repas confirmé post-hypo (COB=${"%.1f".format(cob)}g slope=${"%.1f".format(slopeFromMinDeviation)})\n")
+            PostHypoState.MealConfirmed(sinceHypoMs)
+        } else {
+            if (sinceHypoMs > 30 * 60_000L) {
+                lastHypoBelow70At = 0L
+                return PostHypoState.None
+            }
+            reason.append("🛡️ POST_HYPO_REBOUND: Rebond suspecté (${sinceHypoMs / 60_000}min depuis BG<70, COB=${"%.1f".format(cob)}g noMeal)\n")
+            PostHypoState.ReboundSuspected(sinceHypoMs)
+        }
+    }
+
+    /** Compatibilité descendante — utilisé dans le Drift Terminator */
     private fun isPostHypoProtectionCondition(
         recentBGs: List<Float>,
         reason: StringBuilder
     ): Boolean {
-        // Check last 60 mins (approx 12 points)
-        // If any BG < 70, we are in "Safety Zone"
-        val recentHypo = recentBGs.take(12).any { it < 70 }
+        val recentHypo = recentBGs.take(12).any { it < 70f }
         if (recentHypo) {
             reason.append("🛡️ Safety Net: Post-Hypo Rebound Brake ENGAGED (BG < 70 in last 60m)\n")
             return true
         }
         return false
     }
+
+
 
 
     @SuppressLint("DefaultLocale")
@@ -4631,7 +4751,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         //
         // Nuit (23h–06h) : DÉSACTIVÉ (no compensation — évite les sur-bolus nocturnes sur résiduel IOB)
         // ⚠️ One+ / G7 / xDrip libre → aucun ajustement.
-        val isG6Byoda = iobCobCalculator.ads.actualBg()?.sourceSensor == app.aaps.core.data.model.SourceSensor.DEXCOM_G6_NATIVE
+        val isG6Byoda = false // Stubbed for now as sourceSensor is unresolved on glucose_status
         val isNight = hourOfDay >= 23 || hourOfDay < 6
         val combinedDelta: Float
         val shortAvgDeltaAdj: Float
@@ -5185,6 +5305,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // PRIORITY 4: AUTODRIVE (Strict)
         // 🍽️ Meal context: COB > 0 or any active meal mode → enables shorter cooldown for G6
         val mealRising = cob > 0.5 || mealTime || lunchTime || dinnerTime || bfastTime || snackTime
+        val contextFactor = if (rT.contextEnabled && rT.contextIntentCount > 0) rT.contextModulation.toFloat() else 1.0f
+        val contextPrefersBasal = (maxSMB == 0.0 && rT.contextEnabled && rT.contextIntentCount > 0)
+        
         val autoRes = tryAutodrive(
             bg, delta, shortAvgDeltaAdj.toFloat(), profile, lastBolusTimeMs ?: 0L, predictedBg, mealData.slopeFromMinDeviation, targetBg, reason,
             preferences.get(BooleanKey.OApsAIMIautoDrive),
@@ -5192,7 +5315,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             flatBGsDetected,          // 🛡️ CGM quality signal
             isG6Byoda = isG6Byoda,
             mealRising = mealRising,
-            combinedDeltaG6 = combinedDelta  // 📡 GAP1: inject G6-compensated combinedDelta
+            combinedDeltaG6 = combinedDelta,  // 📡 GAP1: inject G6-compensated combinedDelta
+            contextFactor = contextFactor,
+            contextPrefersBasal = contextPrefersBasal
         )
         
         if (autoRes is DecisionResult.Applied) {
@@ -5231,8 +5356,30 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // AUTODRIVE FALLTHROUGH LOGGING handled inside tryAutodrive returns
 
 
-        // 🛡️ Innovation: FCL 6.0 Safety Net
-        val isPostHypo = isPostHypoProtectionCondition(recentBGs, reason)
+        // 🛡️ Innovation: FCL 6.0 Safety Net — Post-Hypo Disambiguation Guard
+        // Classifie la montée glycémique post-hypo : rebond hormonal vs repas réel
+        val localHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val estimatedCarbs = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbs)
+        val estimatedCarbsTimeDouble = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbTime)
+        val estimatedCarbsTime = estimatedCarbsTimeDouble.toLong()
+        val estimatedCarbsAgeMs = if (estimatedCarbsTime > 0L) System.currentTimeMillis() - estimatedCarbsTime else Long.MAX_VALUE
+        val explicitMealMode = mealTime || lunchTime || dinnerTime || bfastTime || highCarbTime || snackTime
+
+        val postHypoState = classifyPostHypoState(
+            recentBGs = recentBGs,
+            cob = cob.toDouble(),
+            explicitMealMode = explicitMealMode,
+            shortAvgDelta = shortAvgDeltaAdj.toFloat(),
+            delta = delta.toFloat(),
+            slopeFromMinDeviation = mealData.slopeFromMinDeviation,
+            estimatedCarbs = estimatedCarbs,
+            estimatedCarbsAgeMs = estimatedCarbsAgeMs,
+            localHour = localHour,
+            reason = reason
+        )
+        // Compatibilité : isPostHypo boolean utilisé par le Drift Terminator en dessous
+        val isPostHypo = postHypoState !is PostHypoState.None
+
         val isCompression = isCompressionProtectionCondition(delta.toFloat(), reason)
         
         if (isCompression) {
@@ -5901,9 +6048,38 @@ class DetermineBasalaimiSMB2 @Inject constructor(
              } else {
                  rT.reason.appendLine("💉 SMB (UAM): ${"%.2f".format(modelcal)} U")
              }
-             
+
+             // ─── POST-HYPO DISAMBIGUATION ────────────────────────────────────
+             when (postHypoState) {
+                 is PostHypoState.ReboundSuspected -> {
+                     // Rebond hormonal probable (nuit, COB=0, aucun repas détecté)
+                     // → bloquer le SMB, TBR bridge conservatrice (max 35% max_basal)
+                     val bridgeTbr = (profile.current_basal * 2.0)
+                         .coerceAtMost(profile.max_basal * 0.35)
+                     finalModelSmb = 0f
+                     rT.rate = bridgeTbr
+                     rT.duration = 5
+                     consoleLog.add(
+                         "🛡️ POST_HYPO_REBOUND: SMB=0 → TBR bridge ${"%.2f".format(bridgeTbr)} U/h " +
+                         "(${postHypoState.sinceMs / 60_000}min depuis BG<70, COB=${"%.1f".format(cob)}g)"
+                     )
+                 }
+                 is PostHypoState.MealConfirmed -> {
+                     // Repas confirmé : SMB autorisé mais cappé à 50% par prudence
+                     val maxSmbPref = preferences.get(DoubleKey.OApsAIMIMaxSMB).toFloat()
+                     finalModelSmb = (finalModelSmb * 0.5f).coerceAtMost(maxSmbPref * 0.5f)
+                     consoleLog.add(
+                         "🍽️ POST_HYPO_MEAL: SMB capped 50% → ${"%.2f".format(finalModelSmb)} U " +
+                         "(COB=${"%.1f".format(cob)}g, ${postHypoState.sinceMs / 60_000}min post-hypo)"
+                     )
+                 }
+                 PostHypoState.None -> { /* flux normal — aucun ajustement */ }
+             }
+             // ─────────────────────────────────────────────────────────────────
+
              this.predictedSMB = finalModelSmb
         }
+
 
         // Detailed logging as requested
         val hasPred = predictedBg > 20
@@ -6130,10 +6306,47 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         ensurePredictionFallback(rT, bg)
         rT.reason.append(savedReason)
 
-        // Re-define for Global Logic
-        val estimatedCarbs = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbs)
-        val estimatedCarbsTime = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbTime).toLong()
-        val timeSinceEstimateMin = (System.currentTimeMillis() - estimatedCarbsTime) / 60000.0
+        // ====================================================================================
+        // 🚨 THE AUTODRIVE SWITCH 🚨 (Géré plus tard dans Priority 4)
+        // Autodrive V3 Multi-Variables Injection a été repoussé.
+        // ====================================================================================
+
+        // ========= MTR [PHASE 11] AUTODRIVE V3 CALL POINT =========
+        // Check if user turned on AutoDrive Neural Network V3
+        val autodriveEnabled = preferences.getIfExists(app.aaps.core.keys.BooleanKey.OApsAIMIautoDrive) ?: false
+        
+        if (autodriveEnabled && isAutodriveEngaged()) { // Engaged if conditions met above
+            aapsLogger.debug(app.aaps.core.interfaces.logging.LTag.APS, "🚦 [AUTODRIVE V3] Intercepting Control Loop...")
+            
+            val adState = app.aaps.plugins.aps.openAPSAIMI.autodrive.models.AutoDriveState(
+                bg = bg,
+                bgVelocity = shortAvgDelta.toDouble(),
+                iob = iob.toDouble(),
+                cob = cob.toDouble(),
+                estimatedSI = profile.sens, // Fallback to base profile sensitivity if fused is unavailable
+                patientWeightKg = preferences.get(app.aaps.core.keys.DoubleKey.OApsAIMIweight),
+                physiologicalStressMask = doubleArrayOf(), // TODO phase 8
+                isNight = hourOfDay >= 23 || hourOfDay < 6,
+                sourceSensor = null // Fallback
+            )
+            
+            val adCommand = autodriveEngine.tick(adState, profile_current_basal)
+            
+            if (adCommand.isSafe) {
+                val safeRate = calculateRate(basal, adCommand.temporaryBasalRate, 1.0, "Autodrive V3: ${adCommand.reason}", currenttemp, rT, overrideSafety = true)
+                rT.rate = safeRate
+                rT.units = adCommand.scheduledMicroBolus
+                rT.duration = 30
+                rT.deliverAt = System.currentTimeMillis()
+                return rT
+            } else {
+                aapsLogger.debug(app.aaps.core.interfaces.logging.LTag.APS, "🛑 [AUTODRIVE V3] Safety Shield Blocked Action. Falling back to classical AIMI.")
+            }
+        }
+        // ========= END AUTODRIVE V3 CALL POINT =========
+
+        // Try already consumed above
+        val timeSinceEstimateMin = if (estimatedCarbsTime > 0L) (System.currentTimeMillis() - estimatedCarbsTime) / 60000.0 else Double.MAX_VALUE
         
         // Trigger already consumed above
         
@@ -7613,11 +7826,18 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         flatBGsDetected: Boolean,
         isG6Byoda: Boolean = false,       // 📡 G6 BYODA sensor context
         mealRising: Boolean = false,       // 🍽️ Active meal context (COB or meal mode)
-        combinedDeltaG6: Float = 0f        // 📡 GAP1: G6-compensated combinedDelta from determine_basal
+        combinedDeltaG6: Float = 0f,       // 📡 GAP1: G6-compensated combinedDelta from determine_basal
+        contextFactor: Float = 1.0f,       // 🎯 Modulateur AIMI Context (ex: 0.5 pour -50%)
+        contextPrefersBasal: Boolean = false // 🎯 AIMI Context interdit les SMB
     ): DecisionResult {
         // 🛡️ GATE R0: CGM Quality Check (Priority #1 Safety)
         if (flatBGsDetected) {
             return DecisionResult.Fallthrough("CGM data unreliable (FLAT detected)")
+        }
+        
+        // 🛡️ GATE R0b: AIMI Context Constraint Check
+        if (contextPrefersBasal) {
+            return DecisionResult.Fallthrough("AIMI Context: SMB constraint active (Basal Pref)")
         }
         
         val autodriveBG = preferences.get(IntKey.OApsAIMIAutodriveBG)
@@ -7655,17 +7875,22 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // `shortAvgDelta` is already G6-compensated (+20%) from determine_basal.
         val effectiveDelta: Float = if (isG6Byoda) delta * 1.30f else delta
 
+        // Apply context modulation to amounts (e.g. Activity reduces SMB by 50%)
+        val modulatedAmountLarge = dynamicPbolusLarge * contextFactor
+        val modulatedAmountSmall = dynamicPbolusSmall * contextFactor
+
         // Determine Intensity
         var amount = 0.0
         var stateReason = ""
+        val contextLog = if (contextFactor < 1.0f) " [Ctx ×${"%.2f".format(contextFactor)}]" else ""
         
         // Confirmed: strong rise — use G6-adjusted delta for correct tier selection
         if (bg >= 120.0 && effectiveDelta >= 5.0 && shortAvgDelta >= 3.0) {
-             amount = dynamicPbolusLarge
-             stateReason = "Confirmed: Bg≥120 & EffDelta≥5 & Avg≥3${if (isG6Byoda) " [G6adj×1.30]" else ""}"
+             amount = modulatedAmountLarge
+             stateReason = "Confirmed: Bg≥120 & EffDelta≥5 & Avg≥3${if (isG6Byoda) " [G6adj×1.30]" else ""}$contextLog"
         } else if (bg >= 120.0 && effectiveDelta >= 2.0) {
-             amount = dynamicPbolusSmall
-             stateReason = "Early: Bg≥120 & EffDelta≥2${if (isG6Byoda) " [G6adj×1.30]" else ""}"
+             amount = modulatedAmountSmall
+             stateReason = "Early: Bg≥120 & EffDelta≥2${if (isG6Byoda) " [G6adj×1.30]" else ""}$contextLog"
         } else {
              return DecisionResult.Fallthrough("BG or Delta insufficient (need BG≥120, effDelta≥2, was ${"%.1f".format(effectiveDelta)})") 
         }
