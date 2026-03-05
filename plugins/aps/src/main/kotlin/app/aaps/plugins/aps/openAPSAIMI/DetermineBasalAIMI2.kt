@@ -5361,7 +5361,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 patientWeightKg = preferences.get(DoubleKey.OApsAIMIweight),
                 physiologicalStressMask = doubleArrayOf(),
                 isNight = hourOfDay >= 23 || hourOfDay < 6,
-                sourceSensor = sourceSensor // ✅ reconnaissance capteur réactivée
+                sourceSensor = app.aaps.core.data.model.SourceSensor.fromString(sourceSensor) // ✅ reconnaissance capteur réactivée
             )
 
             // ⚠️ Shadow mode: si shadow=true veut dire "dry-run", NE PAS hard return.
@@ -5385,12 +5385,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 if (v3Smb > 0) {
                     finalizeAndCapSMB(
                         rT = rT,
-                        bolusIntent = v3Smb,
-                        reasonStr = "Autodrive V3: ${adCommand.reason}",
+                        proposedUnits = v3Smb,
+                        reasonHeader = "Autodrive V3: ${adCommand.reason}",
                         mealData = mealData,
-                        threshold = threshold,
-                        ignoreSafety = false,
-                        source = "AutodriveV3"
+                        hypoThreshold = threshold.toDouble(),
+                        isExplicitUserAction = false,
+                        decisionSource = "AutodriveV3"
                     )
                 }
 
