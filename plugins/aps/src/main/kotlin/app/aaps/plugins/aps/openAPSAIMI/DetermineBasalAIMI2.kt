@@ -6329,10 +6329,14 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 isNight = hourOfDay >= 23 || hourOfDay < 6,
                 sourceSensor = null // Fallback
             )
+
+            autodriveEngine.setShadowMode(true) // Always shadow for logs (invisible comparator)
+            val isAutodriveActive = preferences.get(app.aaps.core.keys.BooleanKey.OApsAIMIautoDrive)
+            autodriveEngine.setIsActive(isAutodriveActive) // Unlock the engine here
             
             val adCommand = autodriveEngine.tick(adState, profile_current_basal)
             
-            if (adCommand.isSafe) {
+            if (isAutodriveActive && adCommand != null && adCommand.isSafe) {
                 val safeRate = calculateRate(basal, adCommand.temporaryBasalRate, 1.0, "Autodrive V3: ${adCommand.reason}", currenttemp, rT, overrideSafety = true)
                 rT.rate = safeRate
                 rT.units = adCommand.scheduledMicroBolus

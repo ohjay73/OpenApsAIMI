@@ -37,6 +37,17 @@ class AutodriveEngine @Inject constructor(
     private val attentionGate: MechanismAttentionGate
 ) {
 
+    private var isActive = false // Feature Toggle pour le monde réel
+    private var isShadowMode = true // Tourne silencieusement
+
+    fun setIsActive(enabled: Boolean) {
+        isActive = enabled
+    }
+
+    fun setShadowMode(enabled: Boolean) {
+        isShadowMode = enabled
+    }
+
     /**
      * Point d'entrée à chaque cycle APS (Toutes les 5 minutes).
      * 
@@ -44,7 +55,8 @@ class AutodriveEngine @Inject constructor(
      * @param profileBasal La basal par défaut configurée pour cette heure de la journée.
      * @return La commande d'injection finale.
      */
-    fun tick(state: AutoDriveState, profileBasal: Double): AutoDriveCommand {
+    fun tick(state: AutoDriveState, profileBasal: Double): AutoDriveCommand? {
+        if (!isActive && !isShadowMode) return null
         
         aapsLogger.debug(LTag.APS, "╭━━[ AUTODRIVE ENGINE V3 STARTED ]━━")
         
@@ -107,7 +119,7 @@ class AutodriveEngine @Inject constructor(
 
         aapsLogger.debug(LTag.APS, "╰━[ AUTODRIVE ENGINE V3 FINISHED ]━")
 
-        return filteredSafeCommand
+        return if (isActive) filteredSafeCommand else null
     }
     
     // Fonction utilitaire locale pour l'affichage des floats à X décimales
