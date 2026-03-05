@@ -684,6 +684,39 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             headroomSlotCap = slotCap
         )
     }
+        /**
+     * Extracts CGM source sensor in a backward-compatible way.
+     * Some branches expose `sourceSensor` on GlucoseStatusAIMI, others don't.
+     * We use reflection to avoid compile break and keep behavior stable.
+     */
+    private fun extractSourceSensor(glucoseStatus: GlucoseStatusAIMI?): String? {
+        if (glucoseStatus == null) return null
+
+        // 1) Try direct property via reflection: "sourceSensor"
+        runCatching {
+            val f = glucoseStatus.javaClass.getDeclaredField("sourceSensor")
+            f.isAccessible = true
+            val v = f.get(glucoseStatus) as? String
+            if (!v.isNullOrBlank()) return v
+        }
+
+        // 2) Alternate naming (some forks): "sensor" / "cgmSource"
+        runCatching {
+            val f = glucoseStatus.javaClass.getDeclaredField("sensor")
+            f.isAccessible = true
+            val v = f.get(glucoseStatus) as? String
+            if (!v.isNullOrBlank()) return v
+        }
+
+        runCatching {
+            val f = glucoseStatus.javaClass.getDeclaredField("cgmSource")
+            f.isAccessible = true
+            val v = f.get(glucoseStatus) as? String
+            if (!v.isNullOrBlank()) return v
+        }
+
+        return null
+    }
     /**
      * Prédit l’évolution de la glycémie sur un horizon donné (en minutes),
      * avec des pas de 5 minutes.
@@ -4751,7 +4784,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         //
         // Nuit (23h–06h) : DÉSACTIVÉ (no compensation — évite les sur-bolus nocturnes sur résiduel IOB)
         // ⚠️ One+ / G7 / xDrip libre → aucun ajustement.
-        val isG6Byoda = false // Stubbed for now as sourceSensor is unresolved on glucose_status
+        val sourceSensor = extractSourceSensor(glucoseStatus)
+        // Heuristic: BYODA / Dexcom G6 native naming. Adjust strings if your branch uses a different label.
+        val isG6Byoda = sourceSensor?.contains("DEXCOM_G6", ignoreCase = true) == true &&
+                        (sourceSensor.contains("NATIVE", ignoreCase = true) || sourceSensor.contains("BYODA", ignoreCase = true))
+        if (!sourceSensor.isNullOrBlank()) consoleLog.add("📡 CGM_SOURCE=$sourceSensor (isG6Byoda=$isG6Byoda)")                
         val isNight = hourOfDay >= 23 || hourOfDay < 6
         val combinedDelta: Float
         val shortAvgDeltaAdj: Float
@@ -5307,7 +5344,76 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val mealRising = cob > 0.5 || mealTime || lunchTime || dinnerTime || bfastTime || snackTime
         val contextFactor = if (rT.contextEnabled && rT.contextIntentCount > 0) rT.contextModulation.toFloat() else 1.0f
         val contextPrefersBasal = (maxSMB == 0.0 && rT.contextEnabled && rT.contextIntentCount > 0)
-        
+                // -----------------------------------------------------
+        // PRIORITY 4: AIMI AUTODRIVE (V3 Engine -> V2 Fallback)
+        val autodriveEnabled = preferences.get(BooleanKey.OApsAIMIautoDrive)
+
+        if (autodriveEnabled) {
+            aapsLogger.debug(app.aaps.core.interfaces.logging.LTag.APS, "🚦 [AUTODRIVE V3] Intercepting Control Loop...")
+
+            // Finest-resolution state for V3
+            val adState = app.aaps.plugins.aps.openAPSAIMI.autodrive.models.AutoDriveState(
+                bg = bg,
+                bgVelocity = shortAvgDeltaAdj.toDouble(), // ✅ delta court compensé G6 si applicable
+                iob = iob.toDouble(),
+                cob = cob.toDouble(),
+                estimatedSI = (variableSensitivity.toDouble() / 10000.0), // ✅ ISF dynamique ultime
+                patientWeightKg = preferences.get(DoubleKey.OApsAIMIweight),
+                physiologicalStressMask = doubleArrayOf(),
+                isNight = hourOfDay >= 23 || hourOfDay < 6,
+                sourceSensor = sourceSensor // ✅ reconnaissance capteur réactivée
+            )
+
+            // ⚠️ Shadow mode: si shadow=true veut dire "dry-run", NE PAS hard return.
+            // Si shadow=true veut dire "log mais apply", OK.
+            autodriveEngine.setShadowMode(false)
+            autodriveEngine.setIsActive(true)
+
+            val adCommand = autodriveEngine.tick(adState, profile.current_basal)
+
+            if (adCommand != null && adCommand.isSafe) {
+
+                // 1) Apply temp basal if V3 proposes it
+                // adCommand.temporaryBasalRate expected in U/h
+                val v3TbrRate = adCommand.temporaryBasalRate
+                if (v3TbrRate != null && v3TbrRate > 0) {
+                    setTempBasal(v3TbrRate, 30, profile, rT, currenttemp, overrideSafetyLimits = true)
+                }
+
+                // 2) Apply SMB intent if scheduled
+                val v3Smb = adCommand.scheduledMicroBolus ?: 0.0
+                if (v3Smb > 0) {
+                    finalizeAndCapSMB(
+                        rT = rT,
+                        bolusIntent = v3Smb,
+                        reasonStr = "Autodrive V3: ${adCommand.reason}",
+                        mealData = mealData,
+                        threshold = threshold,
+                        ignoreSafety = false,
+                        source = "AutodriveV3"
+                    )
+                }
+
+                // 3) Effective action guard (same philosophy as V2 applied)
+                val effectiveBolus = rT.insulinReq ?: 0.0
+                val effectiveDuration = rT.duration ?: 0
+
+                if (effectiveBolus > 0.05 || effectiveDuration > 0) {
+                    lastAutodriveActionTime = System.currentTimeMillis()
+                    consoleLog.add("🚀 AUTODRIVE_V3_APPLIED intent=$v3Smb actual=$effectiveBolus")
+                    logDecisionFinal("AUTODRIVE_V3", rT, bg, delta)
+                    return rT // 🛑 HARD RETURN: V3 take-over
+                } else {
+                    consoleLog.add("🚀 AUTODRIVE_V3_NOOP_FALLBACK (capped/no temp)")
+                    // continue -> V2 fallback
+                    rT.insulinReq = 0.0
+                }
+            } else {
+                aapsLogger.debug(app.aaps.core.interfaces.logging.LTag.APS, "🛑 [AUTODRIVE V3] Safety Shield Blocked Action. Falling back to V2.")
+            }
+        }
+        // -----------------------------------------------------
+        // FALLBACK : LEGACY AUTODRIVE V2 (tryAutodrive) continues below
         val autoRes = tryAutodrive(
             bg, delta, shortAvgDeltaAdj.toFloat(), profile, lastBolusTimeMs ?: 0L, predictedBg, mealData.slopeFromMinDeviation, targetBg, reason,
             preferences.get(BooleanKey.OApsAIMIautoDrive),
@@ -6307,47 +6413,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         rT.reason.append(savedReason)
 
         // ====================================================================================
-        // 🚨 THE AUTODRIVE SWITCH 🚨 (Géré plus tard dans Priority 4)
-        // Autodrive V3 Multi-Variables Injection a été repoussé.
-        // ====================================================================================
-
-        // ========= MTR [PHASE 11] AUTODRIVE V3 CALL POINT =========
-        // Check if user turned on AutoDrive Neural Network V3
-        val autodriveEnabled = preferences.getIfExists(app.aaps.core.keys.BooleanKey.OApsAIMIautoDrive) ?: false
-        
-        if (autodriveEnabled && isAutodriveEngaged()) { // Engaged if conditions met above
-            aapsLogger.debug(app.aaps.core.interfaces.logging.LTag.APS, "🚦 [AUTODRIVE V3] Intercepting Control Loop...")
-            
-            val adState = app.aaps.plugins.aps.openAPSAIMI.autodrive.models.AutoDriveState(
-                bg = bg,
-                bgVelocity = shortAvgDelta.toDouble(),
-                iob = iob.toDouble(),
-                cob = cob.toDouble(),
-                estimatedSI = profile.sens, // Fallback to base profile sensitivity if fused is unavailable
-                patientWeightKg = preferences.get(app.aaps.core.keys.DoubleKey.OApsAIMIweight),
-                physiologicalStressMask = doubleArrayOf(), // TODO phase 8
-                isNight = hourOfDay >= 23 || hourOfDay < 6,
-                sourceSensor = null // Fallback
-            )
-
-            autodriveEngine.setShadowMode(true) // Always shadow for logs (invisible comparator)
-            val isAutodriveActive = preferences.get(app.aaps.core.keys.BooleanKey.OApsAIMIautoDrive)
-            autodriveEngine.setIsActive(isAutodriveActive) // Unlock the engine here
-            
-            val adCommand = autodriveEngine.tick(adState, profile_current_basal)
-            
-            if (isAutodriveActive && adCommand != null && adCommand.isSafe) {
-                val safeRate = calculateRate(basal, adCommand.temporaryBasalRate, 1.0, "Autodrive V3: ${adCommand.reason}", currenttemp, rT, overrideSafety = true)
-                rT.rate = safeRate
-                rT.units = adCommand.scheduledMicroBolus
-                rT.duration = 30
-                rT.deliverAt = System.currentTimeMillis()
-                return rT
-            } else {
-                aapsLogger.debug(app.aaps.core.interfaces.logging.LTag.APS, "🛑 [AUTODRIVE V3] Safety Shield Blocked Action. Falling back to classical AIMI.")
-            }
-        }
-        // ========= END AUTODRIVE V3 CALL POINT =========
 
         // Try already consumed above
         val timeSinceEstimateMin = if (estimatedCarbsTime > 0L) (System.currentTimeMillis() - estimatedCarbsTime) / 60000.0 else Double.MAX_VALUE
