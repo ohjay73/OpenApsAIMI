@@ -11,7 +11,7 @@ import app.aaps.plugins.aps.openAPSAIMI.autodrive.learning.OnlineLearner // 🎓
 import app.aaps.plugins.aps.openAPSAIMI.autodrive.learning.AutodriveDataLake // 🗂️ Data Lake
 import app.aaps.plugins.aps.openAPSAIMI.autodrive.learning.AutodriveDataBackfiller // 🧹 Backfiller
 import app.aaps.plugins.aps.openAPSAIMI.autodrive.learning.MechanismAttentionGate // 🚪 Attention Gate
-import app.aaps.plugins.aps.openAPSAIMI.autodrive.advisor.AutodriveAuditor // 👨‍🏫 Auditor
+import app.aaps.plugins.aps.openAPSAIMI.autodrive.learning.AutodriveAuditor // 👨‍🏫 Auditor
 import app.aaps.plugins.aps.openAPSAIMI.model.*
 import app.aaps.core.keys.interfaces.PreferenceKey
 import javax.inject.Inject
