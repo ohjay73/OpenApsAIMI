@@ -30,11 +30,11 @@ class T3cNeuralTrainerWorker(
         aapsLogger.debug(LTag.APS, "🧠 T3C Neural Trainer: Starting training session")
         
         val externalDir = applicationContext.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS + "/AAPS") ?: applicationContext.filesDir
-        val csvFile = File(externalDir, "t3c_records.csv")
+        val csvFile = File(externalDir, "basal_adaptive_records.csv")
         val weightsFile = File(externalDir, "t3c_brain_weights.json")
 
         if (!csvFile.exists()) {
-            aapsLogger.debug(LTag.APS, "🧠 T3C CSV not found. Aborting.")
+            aapsLogger.debug(LTag.APS, "🧠 Basal Adaptive CSV not found. Aborting.")
             return Result.success()
         }
 
@@ -59,7 +59,7 @@ class T3cNeuralTrainerWorker(
         val iDuraMin = header.indexOf("duraMin")
         val iDuraAvg = header.indexOf("duraAvg")
         val iIob = header.indexOf("iob")
-        val iCurrentAgg = header.indexOf("currentAggFactor")
+        val iCurrentAgg = header.indexOf("t3cAgg")
 
         for (line in dataLines) {
             val cols = line.split(",")
