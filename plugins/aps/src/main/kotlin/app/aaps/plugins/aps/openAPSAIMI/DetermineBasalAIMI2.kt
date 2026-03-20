@@ -5180,7 +5180,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                         currentState = t3cShadowState,
                         profileBasal = profile.current_basal,
                         profileIsf = profile.sens,
-                        lgsThreshold = min(90.0, threshold.toDouble()),
+                        lgsThreshold = minOf(90.0, (profile.lgsThreshold?.toDouble() ?: 70.0).coerceAtLeast(70.0)),
                         hour = hourOfDay,
                         steps = snapshot.stepsLast15m,
                         hr = snapshot.hrNow,
