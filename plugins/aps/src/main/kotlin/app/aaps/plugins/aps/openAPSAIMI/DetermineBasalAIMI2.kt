@@ -348,6 +348,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private val inflammationAdjuster by lazy { 
         app.aaps.plugins.aps.openAPSAIMI.inflammatory.InflammationAdjuster(wCyclePreferences) 
     }
+    
+    private var adaptiveMult: Double = 1.0
 
     // 🦋 Thyroid (Basedow) Module
     private val thyroidPreferences by lazy { app.aaps.plugins.aps.openAPSAIMI.physio.thyroid.ThyroidPreferences(preferences) }
@@ -4563,7 +4565,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         this.bgacc = accel
         
         // 🧬 Calculate Universal Adaptive Multiplier early to use in all setTempBasal calls
-        val adaptiveMult = if (preferences.get(BooleanKey.OApsAIMIT3cAdaptiveBasalEnabled)) {
+        adaptiveMult = if (preferences.get(BooleanKey.OApsAIMIT3cAdaptiveBasalEnabled)) {
             basalNeuralLearner.getUniversalBasalMultiplier(
                 bg = glucose_status.glucose,
                 basal = profile.current_basal,
