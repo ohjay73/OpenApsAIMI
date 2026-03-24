@@ -81,13 +81,12 @@ class ControlBarrierShield @Inject constructor(
             nominalGamma
         }
 
-        // Context-aware relaxation:
-        // In explicit meal-like strong rise contexts, keep CBF hard bounds but avoid over-braking.
-        // This only widens the admissible command slightly when the trajectory is clearly upward.
+        // Meal-priority context relaxation:
+        // confirmed rise can start before 180 mg/dL; avoid over-braking while keeping hard bounds.
         val strongMealRiseContext =
-            state.bg >= 160.0 &&
-                state.bgVelocity >= 0.5 &&
-                (state.cob >= 10.0 || state.uamConfidence >= 0.65 || state.combinedDelta >= 3.2)
+            state.bg >= 145.0 &&
+                state.bgVelocity >= 0.2 &&
+                (state.cob >= 6.0 || state.uamConfidence >= 0.45 || state.combinedDelta >= 2.0)
 
         if (strongMealRiseContext && activeGamma >= nominalGamma) {
             val boosted = (activeGamma * mealRiseGammaBoost).coerceAtMost(mealRiseGammaBoostMax)
@@ -95,7 +94,7 @@ class ControlBarrierShield @Inject constructor(
                 activeGamma = boosted
                 aapsLogger.debug(
                     LTag.APS,
-                    "🛡️ [CBF SHIELD] Meal-rise adaptive relaxation active. Gamma=${activeGamma.format(3)} BG=${state.bg.format(1)} dBG=${state.bgVelocity.format(2)} COB=${state.cob.format(1)} uam=${state.uamConfidence.format(2)} cDelta=${state.combinedDelta.format(2)}"
+                    "🛡️ [CBF SHIELD] Meal-priority relaxation active. Gamma=${activeGamma.format(3)} BG=${state.bg.format(1)} dBG=${state.bgVelocity.format(2)} COB=${state.cob.format(1)} UAM=${state.uamConfidence.format(2)} cΔ=${state.combinedDelta.format(2)}"
                 )
             }
         }
