@@ -146,6 +146,12 @@ class LoopPlugin @Inject constructor(
 
     private var handler: Handler? = null
 
+    /**
+     * Wall-clock time of last successful [invoke] from the glucose worker (`Calculation for … cause=EventNewBG` / History).
+     * Skips AIMI periodic autodrive when a glucose-driven loop already ran recently; periodic fallback still runs if BG stalls.
+     */
+    private var lastGlucoseWorkerLoopWallClock: Long = 0L
+
     override fun onStart() {
         createNotificationChannel()
         super.onStart()
@@ -159,56 +165,46 @@ class LoopPlugin @Inject constructor(
         // Démarrage du déclenchement périodique
         startPeriodicLoop()
     }
-    /*private fun startPeriodicLoop() {
-        // On récupère la valeur ApsMaxSmbFrequency en minutes
-        val freqMinutes = preferences.get(IntKey.ApsMaxSmbFrequency).toLong()
-        // On convertit en millisecondes
-        val freqMs = T.mins(freqMinutes).msecs()
 
-        // Définition du Runnable qui relancera votre loop, puis se replanifiera
+    private fun startPeriodicLoop() {
         val periodicRunnable = object : Runnable {
             override fun run() {
-                // On relance le loop
-                invoke("PeriodicApsMaxSmbFrequency", true)
-
-                // On reprogramme le prochain run dans freqMs
+                val freqMs = T.mins(preferences.get(IntKey.ApsMaxSmbFrequency).toLong()).msecs()
+                val autodrive = preferences.get(BooleanKey.OApsAIMIautoDrive)
+                if (autodrive) {
+                    val now = dateUtil.now()
+                    val sinceGlucoseMs =
+                        if (lastGlucoseWorkerLoopWallClock == 0L) Long.MAX_VALUE
+                        else (now - lastGlucoseWorkerLoopWallClock).coerceAtLeast(0L)
+                    if (sinceGlucoseMs < freqMs) {
+                        val bg = glucoseStatusProvider.glucoseStatusData?.glucose
+                        aapsLogger.debug(
+                            LTag.APS,
+                            "Periodic autodrive skipped (glucose-driven loop ${sinceGlucoseMs}ms ago < period ${freqMs}ms, BG=$bg)"
+                        )
+                    } else {
+                        val bg = glucoseStatusProvider.glucoseStatusData?.glucose
+                        aapsLogger.debug(
+                            LTag.APS,
+                            "Periodic autodrive fallback (last glucose-driven loop ${sinceGlucoseMs}ms ago, period ${freqMs}ms, BG=$bg)"
+                        )
+                        invoke("PeriodicApsMaxSmbFrequency", true)
+                    }
+                } else {
+                    aapsLogger.debug(LTag.APS, "Pas de loop périodique : autodrive=$autodrive.")
+                }
                 handler?.postDelayed(this, freqMs)
             }
         }
-
-        // On lance la première fois maintenant
-        handler?.postDelayed(periodicRunnable, freqMs)
-    }*/
-    private fun startPeriodicLoop() {
-    // Récupère l'intervalle (en minutes) pour la planification
-    val freqMinutes = preferences.get(IntKey.ApsMaxSmbFrequency).toLong()
-    val freqMs = T.mins(freqMinutes).msecs()
-
-    val periodicRunnable = object : Runnable {
-        override fun run() {
-            // 1) Vérifie l'option autodrive
-            val autodrive = preferences.get(BooleanKey.OApsAIMIautoDrive)
-
-            // 2) Récupère la glycémie (pour les logs)
-            val currentBG = glucoseStatusProvider.glucoseStatusData?.glucose
-
-            // 3) Condition : autodrive activé
-            if (autodrive) {
-                aapsLogger.debug(LTag.APS, "OApsAIMIautoDrive=$autodrive => on lance le loop périodique de fallback (BG=$currentBG).")
-                invoke("PeriodicApsMaxSmbFrequency", true)
-            } else {
-                // Sinon, on logge qu'on ne fait rien
-                aapsLogger.debug(LTag.APS, "Pas de loop périodique : autodrive=$autodrive.")
-            }
-
-            // Replanifie le prochain cycle
-            handler?.postDelayed(this, freqMs)
-        }
+        val initialFreqMs = T.mins(preferences.get(IntKey.ApsMaxSmbFrequency).toLong()).msecs()
+        handler?.postDelayed(periodicRunnable, initialFreqMs)
     }
 
-    // Lance la première exécution
-    handler?.postDelayed(periodicRunnable, freqMs)
-}
+    /** Matches InvokeLoopWorker initiator: `Calculation for … (cause=EventNewBG)` etc. */
+    private fun isGlucoseWorkerInitiator(initiator: String): Boolean =
+        initiator.startsWith("Calculation for ") &&
+            (initiator.contains("cause=EventNewBG") || initiator.contains("cause=EventNewHistoryData"))
+
     private fun createNotificationChannel() {
         val mNotificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         @SuppressLint("WrongConstant") val channel = NotificationChannel(
@@ -537,6 +533,10 @@ class LoopPlugin @Inject constructor(
             if (apsResult == null) {
                 rxBus.send(EventLoopSetLastRunGui(rh.gs(R.string.no_aps_selected)))
                 return
+            }
+
+            if (isGlucoseWorkerInitiator(initiator)) {
+                lastGlucoseWorkerLoopWallClock = dateUtil.now()
             }
 
             // Store calculations to DB
