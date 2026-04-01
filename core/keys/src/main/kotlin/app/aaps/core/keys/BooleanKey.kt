@@ -140,6 +140,12 @@ enum class BooleanKey(
     OApsAIMITrajectoryGuardEnabled("key_aimi_trajectory_guard_enabled", false),  // 🌀 Phase-Space Trajectory Control
     OApsAIMIContextEnabled("key_aimi_context_enabled", false),  // 🎯 Context Module
     OApsAIMIContextLLMEnabled("key_aimi_context_llm_enabled", false),  // 🤖 LLM-powered context parsing
+    OApsAIMIT3cBrittleMode("key_aimi_t3c_brittle_mode", false),
+
+    
+    // 🦋 Thyroid / Basedow Module (MTR)
+    OApsAIMIThyroidEnabled("key_aimi_thyroid_enabled", false),
+    OApsAIMIThyroidLogVerbosity("key_aimi_thyroid_debug", false),
     
     // 🏥 AIMI Physiological Assistant (MTR)
     AimiPhysioAssistantEnable("aimi_physio_assistant_enable", false),
@@ -153,4 +159,10 @@ enum class BooleanKey(
     AimiEndometriosisHormonalSuppression("aimi_endo_suppression", false),
     AimiEndometriosisPainFlare("aimi_endo_flare", false),
     OApsAIMIMealAdvisorTrigger("aimi_meal_advisor_trigger", false), // Trigger for one-shot MAX-SMB bypass
+    
+    // 🌀 Adaptive Kernel Bank (Cosine Gate)
+    AimiCosineGateEnabled("aimi_cosine_gate_enabled", true),
+    
+    // 🚨 Emergency SOS (Hypo)
+    AimiEmergencySosEnable("aimi_emergency_sos_enable", false),
 }
