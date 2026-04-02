@@ -4,7 +4,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 @Suppress("ConstPropertyName")
 object Versions {
 
-    const val appVersion = "3.4.1.0-Master.AIMI.020426"
+    const val appVersion = "3.4.2.1-Master.AIMI.020426"
     const val versionCode = 1500
 
     const val compileSdk = 36  // Back to original - SDK 34 breaks omnipod and other modules
