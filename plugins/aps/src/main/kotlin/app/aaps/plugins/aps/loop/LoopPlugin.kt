@@ -146,6 +146,12 @@ class LoopPlugin @Inject constructor(
 
     private var handler: Handler? = null
 
+    /**
+     * Wall-clock time of last successful [invoke] from the glucose worker (`Calculation for … cause=EventNewBG` / History).
+     * Skips AIMI periodic autodrive when a glucose-driven loop already ran recently; periodic fallback still runs if BG stalls.
+     */
+    private var lastGlucoseWorkerLoopWallClock: Long = 0L
+
     override fun onStart() {
         createNotificationChannel()
         super.onStart()
@@ -159,56 +165,46 @@ class LoopPlugin @Inject constructor(
         // Démarrage du déclenchement périodique
         startPeriodicLoop()
     }
-    /*private fun startPeriodicLoop() {
-        // On récupère la valeur ApsMaxSmbFrequency en minutes
-        val freqMinutes = preferences.get(IntKey.ApsMaxSmbFrequency).toLong()
-        // On convertit en millisecondes
-        val freqMs = T.mins(freqMinutes).msecs()
 
-        // Définition du Runnable qui relancera votre loop, puis se replanifiera
+    private fun startPeriodicLoop() {
         val periodicRunnable = object : Runnable {
             override fun run() {
-                // On relance le loop
-                invoke("PeriodicApsMaxSmbFrequency", true)
-
-                // On reprogramme le prochain run dans freqMs
+                val freqMs = T.mins(preferences.get(IntKey.ApsMaxSmbFrequency).toLong()).msecs()
+                val autodrive = preferences.get(BooleanKey.OApsAIMIautoDrive)
+                if (autodrive) {
+                    val now = dateUtil.now()
+                    val sinceGlucoseMs =
+                        if (lastGlucoseWorkerLoopWallClock == 0L) Long.MAX_VALUE
+                        else (now - lastGlucoseWorkerLoopWallClock).coerceAtLeast(0L)
+                    if (sinceGlucoseMs < freqMs) {
+                        val bg = glucoseStatusProvider.glucoseStatusData?.glucose
+                        aapsLogger.debug(
+                            LTag.APS,
+                            "Periodic autodrive skipped (glucose-driven loop ${sinceGlucoseMs}ms ago < period ${freqMs}ms, BG=$bg)"
+                        )
+                    } else {
+                        val bg = glucoseStatusProvider.glucoseStatusData?.glucose
+                        aapsLogger.debug(
+                            LTag.APS,
+                            "Periodic autodrive fallback (last glucose-driven loop ${sinceGlucoseMs}ms ago, period ${freqMs}ms, BG=$bg)"
+                        )
+                        invoke("PeriodicApsMaxSmbFrequency", true)
+                    }
+                } else {
+                    aapsLogger.debug(LTag.APS, "Pas de loop périodique : autodrive=$autodrive.")
+                }
                 handler?.postDelayed(this, freqMs)
             }
         }
-
-        // On lance la première fois maintenant
-        handler?.postDelayed(periodicRunnable, freqMs)
-    }*/
-    private fun startPeriodicLoop() {
-    // Récupère l'intervalle (en minutes) pour la planification
-    val freqMinutes = preferences.get(IntKey.ApsMaxSmbFrequency).toLong()
-    val freqMs = T.mins(freqMinutes).msecs()
-
-    val periodicRunnable = object : Runnable {
-        override fun run() {
-            // 1) Vérifie l'option autodrive
-            val autodrive = preferences.get(BooleanKey.OApsAIMIautoDrive)
-
-            // 2) Récupère la glycémie (pour les logs)
-            val currentBG = glucoseStatusProvider.glucoseStatusData?.glucose
-
-            // 3) Condition : autodrive activé
-            if (autodrive) {
-                aapsLogger.debug(LTag.APS, "OApsAIMIautoDrive=$autodrive => on lance le loop périodique de fallback (BG=$currentBG).")
-                invoke("PeriodicApsMaxSmbFrequency", true)
-            } else {
-                // Sinon, on logge qu'on ne fait rien
-                aapsLogger.debug(LTag.APS, "Pas de loop périodique : autodrive=$autodrive.")
-            }
-
-            // Replanifie le prochain cycle
-            handler?.postDelayed(this, freqMs)
-        }
+        val initialFreqMs = T.mins(preferences.get(IntKey.ApsMaxSmbFrequency).toLong()).msecs()
+        handler?.postDelayed(periodicRunnable, initialFreqMs)
     }
 
-    // Lance la première exécution
-    handler?.postDelayed(periodicRunnable, freqMs)
-}
+    /** Matches InvokeLoopWorker initiator: `Calculation for … (cause=EventNewBG)` etc. */
+    private fun isGlucoseWorkerInitiator(initiator: String): Boolean =
+        initiator.startsWith("Calculation for ") &&
+            (initiator.contains("cause=EventNewBG") || initiator.contains("cause=EventNewHistoryData"))
+
     private fun createNotificationChannel() {
         val mNotificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         @SuppressLint("WrongConstant") val channel = NotificationChannel(
@@ -539,6 +535,10 @@ class LoopPlugin @Inject constructor(
                 return
             }
 
+            if (isGlucoseWorkerInitiator(initiator)) {
+                lastGlucoseWorkerLoopWallClock = dateUtil.now()
+            }
+
             // Store calculations to DB
             disposable += persistenceLayer.insertOrUpdateApsResult(apsResult).subscribe()
 
@@ -685,6 +685,15 @@ class LoopPlugin @Inject constructor(
                                         applySMBRequest(resultAfterConstraints, object : Callback() {
                                             override fun run() {
                                                 // Callback is only called if a bolus was actually requested
+                                                aapsLogger.debug(
+                                                    LTag.APS,
+                                                    "SMB enact result: requested=%.2fU enacted=%s success=%s comment=%s".format(
+                                                        resultAfterConstraints.smb,
+                                                        result.enacted,
+                                                        result.success,
+                                                        result.comment ?: ""
+                                                    )
+                                                )
                                                 if (result.enacted || result.success) {
                                                     lastRun.smbSetByPump = result
                                                     lastRun.lastSMBRequest = lastRun.lastAPSRun
@@ -913,8 +922,19 @@ class LoopPlugin @Inject constructor(
     private fun applySMBRequest(request: APSResult, callback: Callback?) {
         val pump = activePlugin.activePump
         val lastBolusTime = persistenceLayer.getNewestBolus()?.timestamp ?: 0L
-        if (lastBolusTime != 0L && lastBolusTime + T.mins(preferences.get(IntKey.ApsMaxSmbFrequency).toLong()).msecs() > dateUtil.now()) {
-            aapsLogger.debug(LTag.APS, "SMB requested but still in ${preferences.get(IntKey.ApsMaxSmbFrequency)} min interval")
+        val now = dateUtil.now()
+        val smbIntervalMin = preferences.get(IntKey.ApsMaxSmbFrequency)
+        val lastBolusAgeSec = if (lastBolusTime > 0L) ((now - lastBolusTime).coerceAtLeast(0L) / 1000.0) else Double.NaN
+        if (lastBolusTime != 0L && lastBolusTime + T.mins(smbIntervalMin.toLong()).msecs() > now) {
+            aapsLogger.debug(
+                LTag.APS,
+                "SMB blocked by interval: requested=%.2fU lastBolusAge=%.0fs interval=%dm deliverAt=%s".format(
+                    request.smb,
+                    lastBolusAgeSec,
+                    smbIntervalMin,
+                    request.deliverAt?.let { dateUtil.dateAndTimeAndSecondsString(it) } ?: "n/a"
+                )
+            )
             callback?.result(
                 pumpEnactResultProvider.get()
                     .comment(R.string.smb_frequency_exceeded)
@@ -932,7 +952,15 @@ class LoopPlugin @Inject constructor(
             callback?.result(pumpEnactResultProvider.get().comment(app.aaps.core.ui.R.string.pumpsuspended).enacted(false).success(false))?.run()
             return
         }
-        aapsLogger.debug(LTag.APS, "applySMBRequest: $request")
+        aapsLogger.debug(
+            LTag.APS,
+            "applySMBRequest: requested=%.2fU deliverAt=%s lastBolusAge=%.0fs pumpStep=%.3fU".format(
+                request.smb,
+                request.deliverAt?.let { dateUtil.dateAndTimeAndSecondsString(it) } ?: "n/a",
+                lastBolusAgeSec,
+                pump.pumpDescription.bolusStep
+            )
+        )
 
         // deliver SMB
         val detailedBolusInfo = DetailedBolusInfo()

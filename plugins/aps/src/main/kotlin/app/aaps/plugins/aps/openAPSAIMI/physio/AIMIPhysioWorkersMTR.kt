@@ -20,14 +20,10 @@ class PhysioRealtimeWorker(
         try {
             val manager = AIMIPhysioManagerMTR.instance
             if (manager == null) return@withContext Result.retry()
-            
-            val hcRepo = manager.repo.getHcRepo() // We need to expose this or add method in Repo
-            // Ideally Repo handles everything.
-            
-            // Trigger Snapshot Update (The Repo handles step/hr fetch internally if we moved logic there)
-            // But verify: HealthContextRepository.fetchSnapshot() currently calls hcRepo internally.
-            
-            manager.repo.fetchSnapshot()
+            if (!manager.isPhysioAssistantEnabled()) return@withContext Result.success()
+
+            // performUpdate() ends with HealthContextRepository.fetchSnapshot() (FC/steps from DB + HC merge)
+            manager.performUpdate(daysBack = 1, runLLM = false)
             
             Result.success()
         } catch (e: Exception) {
@@ -49,8 +45,9 @@ class PhysioMetabolicWorker(
         try {
             val manager = AIMIPhysioManagerMTR.instance
             if (manager == null) return@withContext Result.retry()
+            if (!manager.isPhysioAssistantEnabled()) return@withContext Result.success()
 
-            manager.repo.fetchSnapshot()
+            manager.performUpdate(daysBack = 3, runLLM = false)
             Result.success()
         } catch (e: Exception) {
             e.printStackTrace()
@@ -71,19 +68,43 @@ class PhysioDailyWorker(
         try {
             val manager = AIMIPhysioManagerMTR.instance
             if (manager == null) return@withContext Result.retry()
-            
-            // We need access to underlying HC repo to force heavy fetch
-            // Or add a "forceRefresh" method to HealthContextRepository
-            // For now, let's just fetchSnapshot, which does 1 day lookback.
-            // If we want 7 days history updated, we need access to hcRepo.
-            
-            manager.repo.forceHeavyRefresh()
+            if (!manager.isPhysioAssistantEnabled()) return@withContext Result.success()
+
+            manager.performUpdate(daysBack = 7, runLLM = true)
             
             Result.success()
         } catch (e: Exception) {
             e.printStackTrace()
             Result.retry()
         }
+    }
+}
+
+/**
+ * Verifies DB + HC + merged snapshot; triggers HC sync and physio refresh when degraded.
+ */
+class PhysioPipelineWatchdogWorker(
+    context: Context,
+    params: WorkerParameters
+) : CoroutineWorker(context, params) {
+
+    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        try {
+            val manager = AIMIPhysioManagerMTR.instance
+            if (manager == null) return@withContext Result.retry()
+            if (!manager.isPhysioAssistantEnabled()) return@withContext Result.success()
+
+            val watchdog = AIMIPhysioPipelineWatchdogMTR.instance
+            if (watchdog == null) return@withContext Result.retry()
+            watchdog.runCheckAndRecover()
+            Result.success()
+        } catch (e: Exception) {
+            return@withContext if (runAttemptCount < 3) Result.retry() else Result.failure()
+        }
+    }
+
+    companion object {
+        const val WORK_NAME = "AIMI_PHYSIO_PIPELINE_WATCHDOG"
     }
 }
 

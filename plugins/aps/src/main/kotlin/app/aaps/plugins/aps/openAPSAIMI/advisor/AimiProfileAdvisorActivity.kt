@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.openAPSAIMI.advisor
 
+import app.aaps.plugins.aps.openAPSAIMI.model.*
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
@@ -27,6 +28,7 @@ import app.aaps.core.keys.interfaces.BooleanPreferenceKey
 import app.aaps.core.keys.interfaces.PreferenceKey
 import app.aaps.core.keys.interfaces.StringPreferenceKey
 import android.content.Intent
+import java.util.Locale
 
 
 /**
@@ -64,7 +66,8 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             rh = rh, 
             unifiedReactivityLearner = unifiedReactivityLearner,
             tddCalculator = tddCalculator,
-            tirCalculator = tirCalculator
+            tirCalculator = tirCalculator,
+            aapsLogger = aapsLogger
         )
         historyRepo = app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository(this)
         title = rh.gs(R.string.aimi_advisor_title)
@@ -117,8 +120,8 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                     rootLayout.addView(createMetricsGrid(report.metrics, cardColor))
                     
                     // 3. Section: Observations & Recommendations
-                    val standardRecs = report.recommendations.filter { it.domain != RecommendationDomain.PKPD }
-                    val pkpdRecs = report.recommendations.filter { it.domain == RecommendationDomain.PKPD }
+                    val standardRecs = report.recommendations.filter { it.domain != AimiDomain.Pkpd }
+                    val pkpdRecs = report.recommendations.filter { it.domain == AimiDomain.Pkpd }
 
                     if (standardRecs.isNotEmpty()) {
                         rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_adv_section_obs)))
@@ -222,7 +225,83 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                 }
             }
             addView(settingsBtn)
+
+            // Basal Proposal Button (Preview/Export only, no auto-apply)
+            val basalProposalBtn = TextView(this@AimiProfileAdvisorActivity).apply {
+                text = "🧪"
+                textSize = 22f
+                setPadding(24, 0, 0, 0)
+                setOnClickListener {
+                    showBasalProposalDialog()
+                }
+            }
+            addView(basalProposalBtn)
         }
+    }
+
+    private fun showBasalProposalDialog() {
+        android.widget.Toast.makeText(this, "Generating basal proposal...", android.widget.Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val proposal = advisorService.generateBasalProfileProposal(periodDays = 7)
+                val preview = buildBasalProposalPreview(proposal)
+                val exportText = advisorService.exportBasalProfileProposalText(proposal)
+
+                withContext(Dispatchers.Main) {
+                    androidx.appcompat.app.AlertDialog.Builder(this@AimiProfileAdvisorActivity)
+                        .setTitle("Basal Proposal (Preview)")
+                        .setMessage(preview)
+                        .setPositiveButton("Export") { _, _ ->
+                            shareBasalProposal(exportText)
+                        }
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        this@AimiProfileAdvisorActivity,
+                        "Basal proposal failed: ${e.localizedMessage}",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun buildBasalProposalPreview(proposal: AimiAdvisorService.BasalProfileProposal): String {
+        if (proposal.rows.isEmpty()) {
+            return "No profile data available.\nNo proposal generated."
+        }
+        val firstRows = proposal.rows.take(6).joinToString("\n") { row ->
+            val deltaPct = if (row.current > 0.0) ((row.proposed / row.current) - 1.0) * 100.0 else 0.0
+            String.format(
+                Locale.US,
+                "%02dh  %.2f -> %.2f U/h (%+.1f%%)",
+                row.hour,
+                row.current,
+                row.proposed,
+                deltaPct
+            )
+        }
+        return buildString {
+            appendLine("This is a proposal only. No automatic profile update.")
+            appendLine("Strategy: ${proposal.strategy}")
+            appendLine("Factor: ${"%.3f".format(Locale.US, proposal.scalingFactor)}")
+            appendLine("Rationale: ${proposal.rationale}")
+            appendLine()
+            appendLine("Preview (first 6 hours):")
+            appendLine(firstRows)
+        }
+    }
+
+    private fun shareBasalProposal(content: String) {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "AIMI Basal Proposal")
+            putExtra(Intent.EXTRA_TEXT, content)
+        }
+        startActivity(Intent.createChooser(intent, "Export basal proposal"))
     }
 
     private fun showSupportDialog() {
@@ -591,7 +670,7 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         })
         
         // Add dynamic actions overview if present
-        if (rec.action != null && rec.action is AdvisorAction.UpdatePreference) {
+        if (rec.action != null && rec.action is AimiAction.PreferenceUpdate) {
             val actionBtn = TextView(this).apply {
                 text = rh.gs(R.string.aimi_adv_apply_btn)
                 textSize = 14f
@@ -600,7 +679,7 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                 gravity = Gravity.END
                 setPadding(0, 16, 0, 0)
                 setOnClickListener {
-                    showApplyActionDialog(rec.action as AdvisorAction.UpdatePreference)
+                    showApplyActionDialog(rec.action as AimiAction.PreferenceUpdate)
                 }
             }
             textLayout.addView(actionBtn)
@@ -611,14 +690,13 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         return card
     }
 
-    private fun showApplyActionDialog(action: AdvisorAction.UpdatePreference) {
+    private fun showApplyActionDialog(action: AimiAction.PreferenceUpdate) {
         val sb = StringBuilder()
         sb.append(rh.gs(R.string.aimi_adv_apply_dialog_prefix))
         
-        action.changes.forEach { change ->
-             sb.append("• ${change.keyName}: ${change.oldValue} ➔ ${change.newValue}\n")
-             sb.append("  ${change.explanation}\n\n")
-        }
+        // Single preference update in the new model vs list in old
+        sb.append("• ${action.key.key}: ➔ ${action.newValue}\n")
+        sb.append("  ${action.reason}\n\n")
 
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle(rh.gs(R.string.aimi_adv_apply_dialog_title))
@@ -630,34 +708,34 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             .show()
     }
 
-    private fun applyAction(action: AdvisorAction.UpdatePreference) {
+    private fun applyAction(action: AimiAction.PreferenceUpdate) {
         try {
-            var appliedCount = 0
-            
-            action.changes.forEach { change ->
-                var applied = false
-                if (change.newValue is Double && change.key is DoublePreferenceKey) {
-                     val key = change.key as DoublePreferenceKey
-                     preferences.put(key, change.newValue as Double)
-                     logAction(change)
-                     applied = true
-                } else if (change.newValue is Int && change.key is IntPreferenceKey) {
-                     val key = change.key as IntPreferenceKey
-                     preferences.put(key, change.newValue as Int)
-                     logAction(change)
-                     applied = true
-                } else if (change.newValue is Boolean && change.key is BooleanPreferenceKey) {
-                     val key = change.key as BooleanPreferenceKey
-                     preferences.put(key, change.newValue as Boolean)
-                     logAction(change)
-                     applied = true
+            var applied = false
+            val newValue = action.newValue
+            val key = action.key
+
+            when {
+                newValue is Double && key is DoublePreferenceKey -> {
+                    preferences.put(key, newValue)
+                    applied = true
                 }
-                
-                if (applied) appliedCount++
+                newValue is Int && key is IntPreferenceKey -> {
+                    preferences.put(key, newValue)
+                    applied = true
+                }
+                newValue is Boolean && key is BooleanPreferenceKey -> {
+                    preferences.put(key, newValue)
+                    applied = true
+                }
+                newValue is String && key is StringPreferenceKey -> {
+                    preferences.put(key, newValue)
+                    applied = true
+                }
             }
 
-            if (appliedCount > 0) {
-                 android.widget.Toast.makeText(this, rh.gs(R.string.aimi_adv_success_msg, appliedCount), android.widget.Toast.LENGTH_SHORT).show()
+            if (applied) {
+                 logAction(action)
+                 android.widget.Toast.makeText(this, rh.gs(R.string.aimi_adv_success_msg, 1), android.widget.Toast.LENGTH_SHORT).show()
                  recreate()
             } else {
                  android.widget.Toast.makeText(this, rh.gs(R.string.aimi_adv_no_change_msg), android.widget.Toast.LENGTH_SHORT).show()
@@ -668,16 +746,15 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         }
     }
 
-    private fun logAction(change: AdvisorAction.Prediction) {
-        // Extract key string from Key object if possible
-        val keyStr = (change.key as? app.aaps.core.keys.interfaces.PreferenceKey)?.key ?: change.keyName
+    private fun logAction(action: AimiAction.PreferenceUpdate) {
+        val keyStr = action.key.key
 
          historyRepo.logAction(
                 app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository.ActionType.PREFERENCE_CHANGE,
                 keyStr, 
-                change.explanation,
-                change.oldValue.toString(),
-                change.newValue.toString()
+                action.reason,
+                "OLD", // New model doesn't strictly store old value, but we could find it if needed
+                action.newValue.toString()
             )
     }
 
@@ -852,16 +929,17 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
     }
     
     private fun getScoreColor(severity: AdvisorSeverity): Int = when (severity) {
-        AdvisorSeverity.GOOD -> Color.parseColor("#4ADE80")  // Green
-        AdvisorSeverity.WARNING -> Color.parseColor("#FACC15")  // Warning
-        AdvisorSeverity.CRITICAL -> Color.parseColor("#F87171") // Red
+        AdvisorSeverity.Good -> Color.parseColor("#4ADE80")  // Green
+        AdvisorSeverity.Warning -> Color.parseColor("#FACC15")  // Warning
+        AdvisorSeverity.Critical -> Color.parseColor("#F87171") // Red
     }
     
-    private fun getPriorityEmoji(priority: RecommendationPriority): String = when (priority) {
-        RecommendationPriority.CRITICAL -> "⚠️"
-        RecommendationPriority.HIGH -> "📈"
-        RecommendationPriority.MEDIUM -> "ℹ️"
-        RecommendationPriority.LOW -> "✅"
+    private fun getPriorityEmoji(priority: AimiPriority): String = when (priority) {
+        AimiPriority.Critical -> "⚠️"
+        AimiPriority.High -> "📈"
+        AimiPriority.Medium -> "ℹ️"
+        AimiPriority.Low -> "✅"
+        else -> "ℹ️"
     }
     
     // Extension for dp to px

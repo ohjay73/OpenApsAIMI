@@ -69,6 +69,8 @@
     <string name="smscommunicator_suspend_reply_with_code">To suspend loop for %1$d minutes reply with code %2$s</string>
     <string name="smscommunicator_loop_resume_reply_with_code">To resume loop reply with code %1$s</string>
     <string name="smscommunicator_loop_disable_reply_with_code">To disable loop reply with code %1$s</string>
+    <string name="smscommunicator_restart_reply_with_code">To restart AAPS reply with code %1$s</string>
+    <string name="smscommunicator_restarting">AAPS is restarting</string>
     <string name="smscommunicator_tempbasal_set">Temp basal %1$.2fU/h for %2$d min started successfully</string>
     <string name="smscommunicator_extended_set">Extended bolus %1$.2fU for %2$d min started successfully</string>
     <string name="smscommunicator_carbs_set">Carbs %1$d  g entered successfully</string>
@@ -97,6 +99,10 @@
     <string name="smscommunicator_set_closed_loop_reply_with_code">In order to switch Loop mode to Closed loop reply with code %1$s</string>
     <string name="smscommunicator_current_loop_mode">Current loop mode: %1$s</string>
     <string name="wrong_format">Wrong format</string>
+    <string name="smscommunicator_otp_key_load_failed">Could not create OTP secret. Try again or use Reset Authenticator.</string>
+    <string name="smscommunicator_otp_uri_build_failed">Could not build provisioning link for QR. Check patient name in settings and try Reset Authenticator.</string>
+    <string name="smscommunicator_otp_qr_generation_failed">Could not draw QR code on this device. Use long-press on the QR area to copy the secret manually.</string>
+    <string name="smscommunicator_otp_secret_auto_repaired">OTP secret was reset because stored data was invalid. Scan the new QR code — old authenticator entries no longer work.</string>
     <string name="sms_actual_bg">BG:</string>
     <string name="sms_last_bg">Last BG:</string>
     <string name="sms_delta">Delta:</string>
@@ -408,8 +414,33 @@
     <!-- Circle-Top Hybrid Dashboard -->
     <string name="advisor_button">Advisor</string>
     <string name="adjust_button">Adjust</string>
+    <string name="dashboard_run_loop">Run loop</string>
+    <string name="dashboard_loop_run_requested">Loop run requested</string>
+    <string name="dashboard_tir_today">Time in range - today</string>
+    <string name="dashboard_tir_stats_placeholder">Avg -- - A1C --</string>
+    <string name="dashboard_tir_stats_format">Avg %1$.0f - A1C %2$.1f%%</string>
     <string name="prefs_button">Prefs</string>
     <string name="stats_button">Stats</string>
+    <string name="dashboard_cd_chip_aimi_advisor">Open AIMI advisor recommendations</string>
+    <string name="dashboard_cd_chip_adjust">Open adjustment controls and loop actions</string>
+    <string name="dashboard_cd_chip_meal_mode">Open meal mode and preferences</string>
+    <string name="dashboard_cd_chip_aimi_context">Open AIMI context and statistics</string>
+    <string name="dashboard_chip_state_selected">selected</string>
+    <string name="dashboard_chip_state_not_selected">not selected</string>
+    <string name="dashboard_chip_announced_advisor_opened">Advisor opened</string>
+    <string name="dashboard_chip_announced_adjust_opened">Adjustments opened</string>
+    <string name="dashboard_chip_announced_meal_mode_opened">Meal mode opened</string>
+    <string name="dashboard_chip_announced_context_opened">AIMI context opened</string>
+    <string name="dashboard_aimi_pulse_title">Last AIMI run</string>
+    <string name="dashboard_aimi_pulse_title_with_age">Last AIMI run · %1$s</string>
+    <string name="dashboard_aimi_pulse_summary_none">No APS output yet. Run the loop or wait for the next glucose reading.</string>
+    <string name="dashboard_aimi_pulse_fallback">SMB %1$s U · scheduled basal %2$s U/h</string>
+    <string name="dashboard_aimi_pulse_hypo_prefix">Hypo risk —</string>
+    <string name="dashboard_aimi_pulse_meta">SMB %1$s U · demand %2$s · AutoSens %3$s%%</string>
+    <string name="dashboard_aimi_pulse_hint">Tap for full rationale and trajectory</string>
+    <string name="dashboard_aimi_telemetry_label">Trajectory layer</string>
+    <string name="dashboard_cd_aimi_pulse">Last AIMI loop summary. Double tap to open full details.</string>
+    <string name="dashboard_chip_announced_aimi_pulse_details">Loop details opened</string>
     <string name="closed_loop">Closed Loop</string>
     <string name="trend">Trend</string>
     <string name="aimi_context">AIMI Context</string>
@@ -420,5 +451,16 @@
     <string name="last_sensor_value">Last sensor</string>
     <string name="activity_pct">Activity</string>
     <string name="basal">Basal</string>
+
+    <!-- Adaptive Smoothing Quality badge (phase 1 informational) -->
+    <string name="adaptive_smoothing_quality_badge_a11y">Adaptive smoothing quality</string>
+    <string name="adaptive_smoothing_quality_badge_ok">Adaptive smoothing confidence: OK</string>
+    <string name="adaptive_smoothing_quality_badge_uncertain">Adaptive smoothing confidence: uncertain</string>
+    <string name="adaptive_smoothing_quality_badge_bad">Adaptive smoothing confidence: low</string>
+
+    <string name="adaptive_smoothing_quality_dialog_title">Adaptive smoothing confidence</string>
+    <string name="adaptive_smoothing_quality_dialog_ok">Adaptive smoothing confidence: OK (R=%1$.0f, outliers=%2$d%%, compression=%3$d%%)</string>
+    <string name="adaptive_smoothing_quality_dialog_uncertain">Adaptive smoothing confidence: uncertain (R=%1$.0f, outliers=%2$d%%, compression=%3$d%%)</string>
+    <string name="adaptive_smoothing_quality_dialog_bad">Adaptive smoothing confidence: low (R=%1$.0f, outliers=%2$d%%, compression=%3$d%%)</string>
 </resources>
 

@@ -28,7 +28,7 @@ class CosineTrajectoryGateTest {
         mockSp = MockSP()
         mockLogger = MockLogger()
         gate = CosineTrajectoryGate(mockSp, mockLogger)
-
+        
         // Defaults
         mockSp.setBoolean(BooleanKey.AimiCosineGateEnabled, true)
         mockSp.setDouble(DoubleKey.AimiCosineGateAlpha, 2.0)
@@ -56,7 +56,7 @@ class CosineTrajectoryGateTest {
             physioState = PhysioStateMTR.OPTIMAL
         )
         val result = gate.compute(input)
-
+        
         // Near 1.0 / 0
         assertEquals(1.0, result.effectiveSensitivityMultiplier, 0.05)
         assertEquals(0, result.peakTimeShiftMinutes)
@@ -73,7 +73,7 @@ class CosineTrajectoryGateTest {
             hr = 100
         )
         val result = gate.compute(input)
-
+        
         // STRESS base: Sens 0.8, Shift 10
         assertEquals(KernelType.STRESS, result.dominantKernel)
         assertTrue("Sens < 1.0 for stress", result.effectiveSensitivityMultiplier < 0.95)
@@ -89,7 +89,7 @@ class CosineTrajectoryGateTest {
             physioState = PhysioStateMTR.ACTIVITY_DETECTED
         )
         val result = gate.compute(input)
-
+       
         // ACTIVITY base: Sens 1.3, Shift 0
         assertEquals(KernelType.ACTIVITY, result.dominantKernel)
         assertTrue("Sens > 1.0 for activity", result.effectiveSensitivityMultiplier > 1.1)
@@ -99,7 +99,7 @@ class CosineTrajectoryGateTest {
     fun `test Data Quality Fallback`() {
         val input = createInput(dataQuality = 0.1)
         val result = gate.compute(input)
-
+        
         assertEquals(1.0, result.effectiveSensitivityMultiplier, 0.01)
         assertTrue(result.debug.contains("Low Quality"))
     }
@@ -134,7 +134,7 @@ class CosineTrajectoryGateTest {
         fun setBoolean(key: BooleanPreferenceKey, value: Boolean) { bools[key.key] = value }
         fun setDouble(key: DoublePreferenceKey, value: Double) { doubles[key.key] = value }
         fun setInt(key: IntPreferenceKey, value: Int) { ints[key.key] = value }
-
+        
         // Needed by CosineTrajectoryGate
         override fun getBoolean(key: BooleanPreferenceKey): Boolean = bools[key.key] ?: false
         override fun getDouble(key: DoublePreferenceKey, defaultValue: Double): Double = doubles[key.key] ?: defaultValue
@@ -150,7 +150,7 @@ class CosineTrajectoryGateTest {
         override fun getLong(key: String, defaultValue: Int): Long = 0L
         // Add others if compilation fails, assume minimal SP interface here for "Mock"
     }
-
+    
     class MockLogger : AAPSLogger {
         override fun debug(tag: String, msg: String) { println("DEBUG: $msg") }
         override fun info(tag: String, msg: String) { println("INFO: $msg") }

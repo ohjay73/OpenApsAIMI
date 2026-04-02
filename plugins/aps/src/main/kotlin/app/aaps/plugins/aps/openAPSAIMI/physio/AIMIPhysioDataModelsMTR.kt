@@ -76,13 +76,19 @@ data class RawPhysioDataMTR(
     val hrv: List<HRVDataMTR> = emptyList(),
     val rhr: List<RHRDataMTR> = emptyList(),
     val steps: Int = 0,
-    val fetchTimestamp: Long = System.currentTimeMillis()
+    val fetchTimestamp: Long = System.currentTimeMillis(),
+    /** Vitals from PersistenceLayer via UnifiedActivityProvider (Wear / HealthConnect sync / phone) when HC-native fetch is empty. */
+    val ambientHeartRateBpm: Int = 0,
+    /** Approximate step signal from unified DB window (e.g. last 24h sum of 5m buckets). */
+    val ambientStepsAggregated: Int = 0
 ) {
-    fun hasAnyData(): Boolean = 
-        (sleep?.hasValidData() == true) || 
-        hrv.any { it.hasValidData() } || 
+    fun hasAnyData(): Boolean =
+        (sleep?.hasValidData() == true) ||
+        hrv.any { it.hasValidData() } ||
         rhr.any { it.hasValidData() } ||
-        steps > 0
+        steps > 0 ||
+        ambientHeartRateBpm > 0 ||
+        ambientStepsAggregated > 0
     
     companion object {
         val EMPTY = RawPhysioDataMTR()
@@ -422,6 +428,7 @@ data class PhysioMultipliersMTR(
     val smbFactor: Double = 1.0,      // SMB multiplier (0.90 - 1.10)
     val reactivityFactor: Double = 1.0, // Reactivity modulation (0.90 - 1.10)
     val peakShiftMinutes: Int = 0,    // 🌀 Phase Shift (Cosine Gate)
+    val trajectoryRelevanceScore: Double = 0.0, // 🌀 Relevance Score (0.0 - 1.0)
     val confidence: Double = 0.0,     // Confidence in these multipliers
     val appliedCaps: String = "",     // Description of applied limits
     val source: String = "Deterministic", // "Deterministic" or "LLM-Assisted"
