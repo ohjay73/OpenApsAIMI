@@ -8804,7 +8804,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         // Fetch T3C Preferences
         val activationThreshold = preferences.get(DoubleKey.OApsAIMIT3cActivationThreshold)
-        val aggressiveness = basalNeuralLearner.getT3cAdaptiveFactor(
+
+        // ── [ML ALIGNMENT] Option 2: Fuse adaptiveMult into aggressiveness ──────
+        // adaptiveMult encodes the Universal Adaptive Basal scaling learned from
+        // hyper/hypo episodes (hMult × nMult). By blending it here we give the
+        // T3C PI controller the same resistance/sensitivity awareness as the
+        // standard AIMI path — without exposing it to the raw learner values.
+        val rawAggressiveness = basalNeuralLearner.getT3cAdaptiveFactor(
             bg = bg,
             basal = baseBasal,
             accel = accel,
@@ -8812,6 +8818,16 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             duraAvg = duraISFaverage,
             iob = iob.iob
         )
+        // Clamp the blend so adaptiveMult never turns T3C hyper-aggressive:
+        //  - Resistance (adaptiveMult > 1.0): amplify up to 40% extra
+        //  - Sensitivity (adaptiveMult < 1.0): allow full reduction (safety first)
+        val adaptiveBoost = if (adaptiveMult > 1.0) {
+            (adaptiveMult - 1.0).coerceAtMost(0.40) // max +40%
+        } else {
+            adaptiveMult - 1.0 // full reduction
+        }
+        val aggressiveness = (rawAggressiveness + rawAggressiveness * adaptiveBoost)
+            .coerceIn(0.3, 2.0) // hard bounds
 
         // 🧠 Predictive PI Controller — 1000% scale, predictedBg as error term
         val computedRate = DynamicBasalController.computeT3c(
@@ -8844,18 +8860,27 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             targetRate
         }
 
-        rT.rate = safeRate
+        // ── [ML ALIGNMENT] Option 1: Apply adaptiveMult to final T3C rate ───────
+        // This mirrors what setTempBasal() does on the standard path (L.1475-1478)
+        // but is applied *after* the progressive ramp so the safety ramp stays intact.
+        val t3cFinalRate = if (safeRate > 0.0 && Math.abs(adaptiveMult - 1.0) > 0.01) {
+            (safeRate * adaptiveMult).coerceIn(0.0, maxBasalCap)
+        } else {
+            safeRate
+        }
+
+        rT.rate = t3cFinalRate
         rT.duration = 30
         rT.reason.append(
-            "🛡️T3c | Thresh: ${activationThreshold.toInt()} | Agg: ${"%.1f".format(aggressiveness)} | " +
-                "PI: ${"%.2f".format(safeRate)}U/h (target=${"%.2f".format(targetRate)} cap=${"%.2f".format(maxBasalCap)} stepUp=${"%.2f".format(maxStepUp)})"
+            "🛡️T3c | Thresh: ${activationThreshold.toInt()} | Agg: ${"%.1f".format(aggressiveness)} (raw=${"%.1f".format(rawAggressiveness)} AML=${"%.2f".format(adaptiveMult)}) | " +
+                "PI: ${"%.2f".format(t3cFinalRate)}U/h (target=${"%.2f".format(targetRate)} cap=${"%.2f".format(maxBasalCap)} stepUp=${"%.2f".format(maxStepUp)})"
         )
 
         // 🧬 Adaptive Learning Update
         basalNeuralLearner.updateLearning(
             bgBefore = bg,
-            bgAfter = eventualBg, // Using eventualBg as a proxy for the post-correction state in this tick
-            basalDelivered = safeRate,
+            bgAfter = eventualBg,
+            basalDelivered = t3cFinalRate,
             targetBg = targetBg,
             accel = accel,
             duraISFminutes = duraISFminutes,
