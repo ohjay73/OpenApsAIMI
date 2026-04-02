@@ -11,6 +11,8 @@ import app.aaps.plugins.aps.openAPSAIMI.context.ui.ContextActivity
 import dagger.Binds
 import dagger.Module
 import dagger.android.ContributesAndroidInjector
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
 
 @Module(
     includes = [
@@ -22,7 +24,7 @@ import dagger.android.ContributesAndroidInjector
         ApsModule.Bindings::class
     ]
 )
-
+@InstallIn(SingletonComponent::class)
 @Suppress("unused")
 abstract class ApsModule {
 
@@ -33,6 +35,7 @@ abstract class ApsModule {
     @ContributesAndroidInjector abstract fun contributesContextActivity(): ContextActivity
 
     @Module
+    @InstallIn(SingletonComponent::class)
     interface Bindings {
 
         @Binds fun bindLoop(loopPlugin: LoopPlugin): Loop

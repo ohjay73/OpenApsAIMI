@@ -14,11 +14,6 @@
         app:showAsAction="never"
         android:title="@string/nav_plugin_preferences" />
     <item
-        android:id="@+id/nav_treatments"
-        android:orderInCategory="1"
-        app:showAsAction="never"
-        android:title="@string/treatments" />
-    <item
         android:id="@+id/nav_historybrowser"
         android:orderInCategory="1"
         app:showAsAction="never"

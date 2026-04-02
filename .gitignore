@@ -35,3 +35,4 @@ wear/full/
 .claude/settings.local.json
 .claude/CLAUDE_COMMANDS.md
 .aider*
+tmpclaude-*

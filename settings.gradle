@@ -1,3 +1,6 @@
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
 pluginManagement {
     repositories {
         mavenCentral()
@@ -25,7 +28,6 @@ include ':plugins:aps'
 include ':plugins:automation'
 include ':plugins:configuration'
 include ':plugins:constraints'
-include ':plugins:insulin'
 include ':plugins:main'
 include ':plugins:sensitivity'
 include ':plugins:smoothing'
@@ -36,11 +38,13 @@ include ':pump:combov2'
 include ':pump:combov2:comboctl'
 include ':pump:dana'
 include ':pump:danar'
+include ':pump:danar-emulator'
 include ':pump:danars'
+include ':pump:danars-emulator'
 include ':pump:diaconn'
 include ':pump:eopatch'
-include ':pump:eopatch:core'
 include ':pump:equil'
+include ':pump:equil-emulator'
 include ':pump:insight'
 include ':pump:medtrum'
 include ':pump:medtronic'

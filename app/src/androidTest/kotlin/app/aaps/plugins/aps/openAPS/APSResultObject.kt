@@ -18,6 +18,7 @@ import app.aaps.core.interfaces.aps.RT
 import app.aaps.core.interfaces.constraints.Constraint
 import app.aaps.core.interfaces.constraints.ConstraintsChecker
 import app.aaps.core.interfaces.db.ProcessedTbrEbData
+import app.aaps.core.interfaces.insulin.ConcentrationHelper
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.plugin.ActivePlugin
@@ -31,6 +32,7 @@ import app.aaps.core.objects.extensions.convertedToPercent
 import app.aaps.core.ui.R
 import app.aaps.core.utils.HtmlHelper
 import dagger.android.HasAndroidInjector
+import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import javax.inject.Inject
 import kotlin.math.abs
@@ -50,6 +52,7 @@ open class APSResultObject(protected val injector: HasAndroidInjector) : APSResu
     @Inject lateinit var profileFunction: ProfileFunction
     @Inject lateinit var rh: ResourceHelper
     @Inject lateinit var decimalFormatter: DecimalFormatter
+    @Inject lateinit var ch: ConcentrationHelper
     override fun with(result: RT): APSResult = this
 
     init {
@@ -95,7 +98,7 @@ open class APSResultObject(protected val injector: HasAndroidInjector) : APSResu
     override var oapsProfileAimi: app.aaps.core.interfaces.aps.OapsProfileAimi? = null
 
     override fun predictions(): Predictions? = null
-    override fun rawData(): Any = Object()
+    override fun rawData(): Any = Any()
 
     override val carbsRequiredText: String
         get() = rh.gs(R.string.carbsreq, carbsReq, carbsReqWithin)
@@ -106,9 +109,9 @@ open class APSResultObject(protected val injector: HasAndroidInjector) : APSResu
             // rate
             var ret: String = if (rate == 0.0 && duration == 0) "${rh.gs(R.string.cancel_temp)} "
             else if (rate == -1.0) "${rh.gs(R.string.let_temp_basal_run)}\n"
-            else if (usePercent) "${rh.gs(R.string.rate)}: ${decimalFormatter.to2Decimal(percent.toDouble())}% (${decimalFormatter.to2Decimal(percent * pump.baseBasalRate / 100.0)} U/h) " +
+            else if (usePercent) "${rh.gs(R.string.rate)}: ${decimalFormatter.to2Decimal(percent.toDouble())}% (${decimalFormatter.to2Decimal(percent * ch.fromPump(pump.baseBasalRate) / 100.0)} U/h) " +
                 "${rh.gs(R.string.duration)}: ${decimalFormatter.to2Decimal(duration.toDouble())} min "
-            else "${rh.gs(R.string.rate)}: ${decimalFormatter.to2Decimal(rate)} U/h (${decimalFormatter.to2Decimal(rate / pump.baseBasalRate * 100)}%) " +
+            else "${rh.gs(R.string.rate)}: ${decimalFormatter.to2Decimal(rate)} U/h (${decimalFormatter.to2Decimal(rate / ch.fromPump(pump.baseBasalRate) * 100)}%) " +
                 "${rh.gs(R.string.duration)}: ${decimalFormatter.to2Decimal(duration.toDouble())} min "
             // smb
             if (smb != 0.0) ret += "SMB: ${decimalFormatter.toPumpSupportedBolus(smb, activePlugin.activePump.pumpDescription.bolusStep)} "
@@ -141,7 +144,8 @@ open class APSResultObject(protected val injector: HasAndroidInjector) : APSResu
         this.targetBG = targetBG
     }*/
 
-    override fun resultAsSpanned(): Spanned {
+    override fun resultAsSpanned(): Spanned = HtmlHelper.fromHtml(resultAsHtmlString())
+    override fun resultAsHtmlString(): String {
         val pump = activePlugin.activePump
         if (isChangeRequested) {
             // rate
@@ -149,10 +153,10 @@ open class APSResultObject(protected val injector: HasAndroidInjector) : APSResu
                 if (rate == 0.0 && duration == 0) rh.gs(R.string.cancel_temp) + "<br>"
                 else if (rate == -1.0) rh.gs(R.string.let_temp_basal_run) + "<br>"
                 else if (usePercent) "<b>" + rh.gs(R.string.rate) + "</b>: " + decimalFormatter.to2Decimal(percent.toDouble()) + "% " +
-                    "(" + decimalFormatter.to2Decimal(percent * pump.baseBasalRate / 100.0) + " U/h)<br>" +
+                    "(" + decimalFormatter.to2Decimal(percent * ch.fromPump(pump.baseBasalRate) / 100.0) + " U/h)<br>" +
                     "<b>" + rh.gs(R.string.duration) + "</b>: " + decimalFormatter.to2Decimal(duration.toDouble()) + " min<br>"
                 else "<b>" + rh.gs(R.string.rate) + "</b>: " + decimalFormatter.to2Decimal(rate) + " U/h " +
-                    "(" + decimalFormatter.to2Decimal(rate / pump.baseBasalRate * 100.0) + "%) <br>" +
+                    "(" + decimalFormatter.to2Decimal(rate / ch.fromPump(pump.baseBasalRate) * 100.0) + "%) <br>" +
                     "<b>" + rh.gs(R.string.duration) + "</b>: " + decimalFormatter.to2Decimal(duration.toDouble()) + " min<br>"
 
             // smb
@@ -163,11 +167,10 @@ open class APSResultObject(protected val injector: HasAndroidInjector) : APSResu
 
             // reason
             ret += "<b>" + rh.gs(R.string.reason) + "</b>: " + reason.replace("<", "&lt;").replace(">", "&gt;")
-            return HtmlHelper.fromHtml(ret)
+            return ret
         }
-        return if (isCarbsRequired) {
-            HtmlHelper.fromHtml(carbsRequiredText)
-        } else HtmlHelper.fromHtml(rh.gs(R.string.nochangerequested))
+        return if (isCarbsRequired) carbsRequiredText
+        else rh.gs(R.string.nochangerequested)
     }
 
     override fun newAndClone(): APSResult {
@@ -310,7 +313,7 @@ open class APSResultObject(protected val injector: HasAndroidInjector) : APSResu
             val now = System.currentTimeMillis()
             val activeTemp = processedTbrEbData.getTempBasalIncludingConvertedExtended(now)
             val pump = activePlugin.activePump
-            val profile = profileFunction.getProfile()
+            val profile = runBlocking { profileFunction.getProfile() }
             if (profile == null) {
                 aapsLogger.error("FALSE: No Profile")
                 return false
@@ -344,7 +347,7 @@ open class APSResultObject(protected val injector: HasAndroidInjector) : APSResu
                 val highThreshold = 1 + percentMinChangeChange
                 var change = percent / 100.0
                 if (activeTemp != null) change = percent / activeTemp.convertedToPercent(now, profile).toDouble()
-                if (change < lowThreshold || change > highThreshold) {
+                if (change !in lowThreshold..highThreshold) {
                     aapsLogger.debug(LTag.APS, "TRUE: Outside allowed range " + change * 100.0 + "%")
                     true
                 } else {
@@ -352,7 +355,7 @@ open class APSResultObject(protected val injector: HasAndroidInjector) : APSResu
                     false
                 }
             } else {
-                if (activeTemp == null && rate == pump.baseBasalRate) {
+                if (activeTemp == null && rate == ch.fromPump(pump.baseBasalRate)) {
                     aapsLogger.debug(LTag.APS, "FALSE: No temp running, asking cancel temp")
                     return false
                 }
@@ -380,7 +383,7 @@ open class APSResultObject(protected val injector: HasAndroidInjector) : APSResu
                 val highThreshold = 1 + percentMinChangeChange
                 var change = rate / profile.getBasal()
                 if (activeTemp != null) change = rate / activeTemp.convertedToAbsolute(now, profile)
-                if (change < lowThreshold || change > highThreshold) {
+                if (change !in lowThreshold..highThreshold) {
                     aapsLogger.debug(LTag.APS, "TRUE: Outside allowed range " + change * 100.0 + "%")
                     true
                 } else {

@@ -1,7 +1,7 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.ksp)
-    id("kotlin-android")
+    alias(libs.plugins.compose.compiler)
     id("android-module-dependencies")
     id("test-module-dependencies")
     id("jacoco-module-dependencies")
@@ -10,9 +10,6 @@ plugins {
 
 android {
     namespace = "app.aaps.plugins.aps"
-    buildFeatures {
-        viewBinding = true
-    }
 }
 
 dependencies {
@@ -28,7 +25,7 @@ dependencies {
     implementation ("org.tensorflow:tensorflow-lite-metadata:0.1.0")
     implementation ("org.tensorflow:tensorflow-lite-gpu:2.3.0")
     implementation("androidx.core:core-i18n:1.0.0-alpha01")
-    
+
     // 🏥 Health Connect - MTR Steps Integration (Android 14+)
     implementation("androidx.health.connect:connect-client:1.1.0-alpha07")
 
@@ -46,12 +43,14 @@ dependencies {
     //Logger
     api(libs.org.slf4j.api)
 
+    ksp(libs.com.google.dagger.compiler)
+    ksp(libs.com.google.dagger.hilt.compiler)
     testImplementation("io.mockk:mockk:1.13.8")
     ksp(libs.com.google.dagger.android.processor)
-    
+
     // Quality & Performance (Truth & JMH)
     testImplementation(libs.com.google.truth)
-    
+
     // 📺 Jitsi Screen Share: no SDK needed — handled via Android Intent deep-link
     // The app opens meet.jit.si room via browser or the Jitsi Meet app if installed.
 }
