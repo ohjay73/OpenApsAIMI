@@ -12,6 +12,7 @@ import app.aaps.core.interfaces.constraints.PluginConstraints
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.plugin.PluginDescription
+import app.aaps.core.interfaces.pump.BolusProgressData
 import app.aaps.core.interfaces.pump.DetailedBolusInfo
 import app.aaps.core.interfaces.pump.Pump
 import app.aaps.core.interfaces.pump.PumpEnactResult
@@ -29,7 +30,6 @@ import app.aaps.core.interfaces.rx.AapsSchedulers
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventAppExit
 import app.aaps.core.interfaces.rx.events.EventCustomActionsChanged
-import app.aaps.core.interfaces.rx.events.EventOverviewBolusProgress
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
@@ -49,7 +49,6 @@ import app.aaps.pump.common.sync.PumpSyncStorage
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import kotlinx.coroutines.flow.StateFlow
 import javax.inject.Provider
-import app.aaps.core.ui.R as Rc
 
 /**
  * Created by andy on 23.04.18.
@@ -72,7 +71,8 @@ abstract class PumpPluginAbstract protected constructor(
     val pumpDriverConfigurationInternal: PumpDriverConfiguration,
     var decimalFormatter: DecimalFormatter,
     var dateUtil: DateUtil,
-    protected val pumpEnactResultProvider: Provider<PumpEnactResult>
+    protected val pumpEnactResultProvider: Provider<PumpEnactResult>,
+    var bolusProgressData: BolusProgressData
 ) : PumpPluginBase(
     pluginDescription = pluginDescription,
     ownPreferences = ownPreferences,
@@ -301,16 +301,12 @@ abstract class PumpPluginAbstract protected constructor(
                 // no bolus required, carb only treatment
                 pumpSyncStorage.addCarbs(PumpDbEntryCarbs(detailedBolusInfo, this))
 
-                val bolusingEvent = EventOverviewBolusProgress(
-                    rh = rh, id = detailedBolusInfo.id, percent = 100
-                )
-                // bolusingEvent.t = EventOverviewBolusProgress.Treatment(0.0, detailedBolusInfo.carbs.toInt(), detailedBolusInfo.bolusType === BS.Type.SMB, detailedBolusInfo.id)
-                // bolusingEvent.percent = 100
-                rxBus.send(bolusingEvent)
+                val totalInsulin = bolusProgressData.state.value?.insulin ?: 0.0
+                bolusProgressData.updateProgress(100, rh.gs(app.aaps.core.interfaces.R.string.bolus_delivered_successfully, totalInsulin), totalInsulin)
                 aapsLogger.debug(LTag.PUMP, "deliverTreatment: Carb only treatment.")
                 pumpEnactResultProvider.get().success(true).enacted(true)
                     .bolusDelivered(0.0)
-                    .comment(Rc.string.ok)
+                    .comment(app.aaps.core.ui.R.string.ok)
             }
         } finally {
             triggerUIChange()
