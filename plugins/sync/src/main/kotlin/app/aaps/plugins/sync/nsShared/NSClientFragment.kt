@@ -14,54 +14,60 @@ import androidx.core.text.toSpanned
 import androidx.core.view.MenuCompat
 import androidx.core.view.MenuProvider
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import app.aaps.core.data.ue.Action
 import app.aaps.core.data.ue.Sources
-import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.logging.UserEntryLogger
+import app.aaps.core.interfaces.nsclient.NSClientLog
+import app.aaps.core.interfaces.nsclient.NSClientRepository
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.interfaces.plugin.PluginFragment
 import app.aaps.core.interfaces.resources.ResourceHelper
-import app.aaps.core.interfaces.rx.AapsSchedulers
 import app.aaps.core.interfaces.rx.bus.RxBus
-import app.aaps.core.interfaces.rx.events.EventNSClientNewLog
 import app.aaps.core.interfaces.rx.events.EventNSClientRestart
-import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
+import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.ui.dialogs.OKDialog
 import app.aaps.core.utils.HtmlHelper
 import app.aaps.plugins.sync.R
 import app.aaps.plugins.sync.databinding.NsClientFragmentBinding
 import app.aaps.plugins.sync.databinding.NsClientLogItemBinding
-import app.aaps.plugins.sync.nsShared.events.EventNSClientUpdateGuiData
-import app.aaps.plugins.sync.nsShared.events.EventNSClientUpdateGuiQueue
-import app.aaps.plugins.sync.nsShared.events.EventNSClientUpdateGuiStatus
-import app.aaps.plugins.sync.nsclientV3.NSClientV3Plugin
+import app.aaps.plugins.sync.nsclientV3.keys.NsclientBooleanKey
 import dagger.android.support.DaggerFragment
-import io.reactivex.rxjava3.core.Completable
-import io.reactivex.rxjava3.disposables.CompositeDisposable
-import io.reactivex.rxjava3.kotlin.plusAssign
-import io.reactivex.rxjava3.kotlin.subscribeBy
-import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
+
+private fun NSClientLog.toPreparedHtml(dateUtil: DateUtil): StringBuilder {
+    val sb = StringBuilder()
+    sb.append(dateUtil.timeStringWithSeconds(date))
+    sb.append(" <b>").append(action).append("</b> ")
+    sb.append(logText ?: "")
+    if (json != null) sb.append(" {...}")
+    sb.append("<br>")
+    return sb
+}
 
 class NSClientFragment : DaggerFragment(), MenuProvider, PluginFragment {
 
     @Inject lateinit var preferences: Preferences
     @Inject lateinit var rh: ResourceHelper
     @Inject lateinit var rxBus: RxBus
-    @Inject lateinit var fabricPrivacy: FabricPrivacy
-    @Inject lateinit var aapsSchedulers: AapsSchedulers
     @Inject lateinit var uel: UserEntryLogger
     @Inject lateinit var aapsLogger: AAPSLogger
     @Inject lateinit var activePlugin: ActivePlugin
-    @Inject lateinit var config: Config
     @Inject lateinit var persistenceLayer: PersistenceLayer
+    @Inject lateinit var nsClientRepository: NSClientRepository
+    @Inject lateinit var dateUtil: DateUtil
 
     companion object {
 
@@ -74,8 +80,6 @@ class NSClientFragment : DaggerFragment(), MenuProvider, PluginFragment {
     override var plugin: PluginBase? = null
     private val nsClientPlugin
         get() = activePlugin.activeNsClient
-
-    private val disposable = CompositeDisposable()
 
     private var _binding: NsClientFragmentBinding? = null
     private lateinit var logAdapter: RecyclerViewAdapter
@@ -100,13 +104,13 @@ class NSClientFragment : DaggerFragment(), MenuProvider, PluginFragment {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        binding.paused.isChecked = preferences.get(NSClientV3Plugin.NsclientBooleanKey.NsPaused)
+        binding.paused.isChecked = preferences.get(NsclientBooleanKey.NsPaused)
         binding.paused.setOnCheckedChangeListener { _, isChecked ->
             uel.log(action = if (isChecked) Action.NS_PAUSED else Action.NS_RESUME, source = Sources.NSClient)
             nsClientPlugin?.pause(isChecked)
         }
 
-        logAdapter = RecyclerViewAdapter(nsClientPlugin?.listLog ?: emptyList())
+        logAdapter = RecyclerViewAdapter(nsClientRepository.logList.value)
         binding.recyclerview.layoutManager = FixedLinearLayoutManager(context)
         binding.recyclerview.adapter = logAdapter
     }
@@ -122,14 +126,8 @@ class NSClientFragment : DaggerFragment(), MenuProvider, PluginFragment {
     override fun onMenuItemSelected(item: MenuItem): Boolean =
         when (item.itemId) {
             ID_MENU_CLEAR_LOG -> {
-                nsClientPlugin?.listLog?.let {
-                    synchronized(it) {
-                        val size = it.size
-                        binding.recyclerview.adapter?.notifyItemRangeRemoved(0, size)
-                        it.clear()
-                        updateLog()
-                    }
-                }
+                nsClientRepository.clearLog()
+                _binding?.recyclerview?.swapAdapter(RecyclerViewAdapter(emptyList()), true)
                 true
             }
 
@@ -144,42 +142,54 @@ class NSClientFragment : DaggerFragment(), MenuProvider, PluginFragment {
             }
 
             ID_MENU_FULL_SYNC -> {
-                var result = ""
-                context?.let { context ->
-                    OKDialog.showConfirmation(
-                        context, rh.gs(R.string.ns_client), rh.gs(R.string.full_sync_comment),
-                        Runnable {
-                            OKDialog.showConfirmation(requireContext(), rh.gs(R.string.ns_client), rh.gs(app.aaps.core.ui.R.string.cleanup_db_confirm_sync), Runnable {
-                                disposable += Completable.fromAction { result = persistenceLayer.cleanupDatabase(93, deleteTrackedChanges = true) }
-                                    .subscribeOn(aapsSchedulers.io)
-                                    .observeOn(aapsSchedulers.main)
-                                    .subscribeBy(
-                                        onError = { aapsLogger.error("Error cleaning up databases", it) },
-                                        onComplete = {
-                                            if (result.isNotEmpty())
-                                                OKDialog.show(
-                                                    requireContext(),
-                                                    rh.gs(app.aaps.core.ui.R.string.result),
-                                                    HtmlHelper.fromHtml("<b>" + rh.gs(app.aaps.core.ui.R.string.cleared_entries) + "</b><br>" + result)
-                                                        .toSpanned()
-                                                )
-                                            aapsLogger.info(LTag.CORE, "Cleaned up databases with result: $result")
-                                            handler.post {
-                                                nsClientPlugin?.resetToFullSync()
-                                                nsClientPlugin?.resend("FULL_SYNC")
-                                            }
+                OKDialog.showConfirmation(
+                    requireActivity(),
+                    rh.gs(R.string.ns_client),
+                    rh.gs(R.string.full_sync_comment),
+                    Runnable {
+                        OKDialog.showConfirmation(
+                            requireActivity(),
+                            rh.gs(R.string.ns_client),
+                            rh.gs(app.aaps.core.ui.R.string.cleanup_db_confirm_sync),
+                            Runnable {
+                                viewLifecycleOwner.lifecycleScope.launch {
+                                    try {
+                                        val result = withContext(Dispatchers.IO) {
+                                            persistenceLayer.cleanupDatabase(93, deleteTrackedChanges = true)
                                         }
-                                    )
+                                        if (result.isNotEmpty()) {
+                                            OKDialog.show(
+                                                requireActivity(),
+                                                rh.gs(app.aaps.core.ui.R.string.result),
+                                                HtmlHelper.fromHtml("<b>" + rh.gs(app.aaps.core.ui.R.string.cleared_entries) + "</b><br>" + result)
+                                                    .toSpanned(),
+                                                true,
+                                                null
+                                            )
+                                        }
+                                        aapsLogger.info(LTag.CORE, "Cleaned up databases with result: $result")
+                                        withContext(Dispatchers.IO) {
+                                            nsClientPlugin?.resetToFullSync()
+                                        }
+                                        nsClientPlugin?.resend("FULL_SYNC")
+                                    } catch (e: Exception) {
+                                        aapsLogger.error("Error cleaning up databases", e)
+                                    }
+                                }
                                 uel.log(action = Action.CLEANUP_DATABASES, source = Sources.NSClient)
-                            }, Runnable {
-                                handler.post {
-                                    nsClientPlugin?.resetToFullSync()
+                            },
+                            Runnable {
+                                viewLifecycleOwner.lifecycleScope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        nsClientPlugin?.resetToFullSync()
+                                    }
                                     nsClientPlugin?.resend("FULL_SYNC")
                                 }
-                            })
-                        }
-                    )
-                }
+                            }
+                        )
+                    },
+                    Runnable { }
+                )
                 true
             }
 
@@ -189,66 +199,62 @@ class NSClientFragment : DaggerFragment(), MenuProvider, PluginFragment {
     @Synchronized
     override fun onDestroyView() {
         super.onDestroyView()
-        binding.recyclerview.adapter = null // avoid leaks
+        _binding?.recyclerview?.adapter = null
         _binding = null
     }
 
     @Synchronized
     override fun onResume() {
         super.onResume()
-        disposable += rxBus
-            .toObservable(EventNSClientUpdateGuiData::class.java)
-            .observeOn(aapsSchedulers.main)
-            .subscribe(
-                {
-                    _binding?.recyclerview?.swapAdapter(RecyclerViewAdapter(nsClientPlugin?.listLog ?: arrayListOf()), true)
-                }, fabricPrivacy::logException
-            )
-        disposable += rxBus
-            .toObservable(EventNSClientUpdateGuiQueue::class.java)
-            .observeOn(aapsSchedulers.main)
-            .subscribe({ updateQueue() }, fabricPrivacy::logException)
-        disposable += rxBus
-            .toObservable(EventNSClientUpdateGuiStatus::class.java)
-            .debounce(3L, TimeUnit.SECONDS)
-            .observeOn(aapsSchedulers.main)
-            .subscribe({ updateStatus() }, fabricPrivacy::logException)
-        updateStatus()
-        updateQueue()
-        updateLog()
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                launch {
+                    nsClientRepository.logList.collect { list ->
+                        _binding?.recyclerview?.swapAdapter(RecyclerViewAdapter(list), true)
+                    }
+                }
+                launch {
+                    nsClientRepository.queueSize.collect { size ->
+                        _binding?.queue?.text =
+                            if (size >= 0) size.toString() else rh.gs(app.aaps.core.ui.R.string.value_unavailable_short)
+                    }
+                }
+                launch {
+                    nsClientRepository.statusUpdate
+                        .debounce(3000L)
+                        .collect { status ->
+                            if (_binding != null) {
+                                binding.status.text = status
+                            }
+                        }
+                }
+                launch {
+                    nsClientRepository.urlUpdate.collect { url ->
+                        if (_binding != null) {
+                            binding.url.text = url
+                        }
+                    }
+                }
+            }
+        }
+        if (_binding != null) {
+            binding.paused.isChecked = preferences.get(NsclientBooleanKey.NsPaused)
+        }
     }
 
     @Synchronized
     override fun onPause() {
         super.onPause()
-        disposable.clear()
         handler.removeCallbacksAndMessages(null)
     }
 
-    private fun updateQueue() {
-        val size = nsClientPlugin?.dataSyncSelector?.queueSize() ?: 0L
-        _binding?.queue?.text = if (size >= 0) size.toString() else rh.gs(app.aaps.core.ui.R.string.value_unavailable_short)
-    }
-
-    private fun updateStatus() {
-        if (_binding == null) return
-        binding.paused.isChecked = preferences.get(NSClientV3Plugin.NsclientBooleanKey.NsPaused)
-        binding.url.text = nsClientPlugin?.address
-        binding.status.text = nsClientPlugin?.status
-    }
-
-    private fun updateLog() {
-        _binding?.recyclerview?.recycledViewPool?.clear()
-        _binding?.recyclerview?.swapAdapter(RecyclerViewAdapter(nsClientPlugin?.listLog ?: arrayListOf()), true)
-    }
-
-    private inner class RecyclerViewAdapter(private var logList: List<EventNSClientNewLog>) : RecyclerView.Adapter<RecyclerViewAdapter.NsClientLogViewHolder>() {
+    private inner class RecyclerViewAdapter(private var logList: List<NSClientLog>) : RecyclerView.Adapter<RecyclerViewAdapter.NsClientLogViewHolder>() {
 
         override fun onCreateViewHolder(viewGroup: ViewGroup, viewType: Int): NsClientLogViewHolder =
             NsClientLogViewHolder(LayoutInflater.from(viewGroup.context).inflate(R.layout.ns_client_log_item, viewGroup, false))
 
         override fun onBindViewHolder(holder: NsClientLogViewHolder, position: Int) {
-            holder.binding.logText.text = HtmlHelper.fromHtml(logList[position].toPreparedHtml().toString())
+            holder.binding.logText.text = HtmlHelper.fromHtml(logList[position].toPreparedHtml(dateUtil).toString())
         }
 
         override fun getItemCount() = logList.size

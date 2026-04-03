@@ -1,7 +1,10 @@
 package app.aaps
 
+import android.content.Context
 import android.content.Intent
 import android.graphics.Rect
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.PersistableBundle
@@ -29,6 +32,7 @@ import app.aaps.activities.PreferencesActivity
 import app.aaps.core.data.ue.Action
 import app.aaps.core.data.ue.Sources
 import app.aaps.core.interfaces.aps.Loop
+import app.aaps.core.interfaces.insulin.Insulin
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.configuration.ConfigBuilder
 import app.aaps.core.interfaces.notifications.NotificationManager
@@ -40,6 +44,7 @@ import app.aaps.core.interfaces.notifications.Notification
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.interfaces.profile.ProfileFunction
+import app.aaps.core.interfaces.protection.ExportPasswordDataStore
 import app.aaps.core.interfaces.protection.ProtectionCheck
 import app.aaps.core.interfaces.rx.AapsSchedulers
 import app.aaps.core.interfaces.rx.events.EventAppExit
@@ -50,16 +55,21 @@ import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.BooleanNonKey
 import app.aaps.core.keys.StringKey
+import app.aaps.core.objects.crypto.CryptoUtil
 import app.aaps.core.ui.UIRunnable
 import app.aaps.core.ui.locale.LocaleHelper
+import app.aaps.core.ui.toast.ToastUtils
 import app.aaps.core.utils.isRunningRealPumpTest
 import app.aaps.databinding.ActivityMainBinding
 import app.aaps.plugins.configuration.activities.DaggerAppCompatActivityWithResult
 import app.aaps.plugins.configuration.activities.SingleFragmentActivity
 import app.aaps.plugins.configuration.maintenance.MaintenancePlugin
 import app.aaps.plugins.configuration.setupwizard.SetupWizardActivity
+import app.aaps.plugins.constraints.signatureVerifier.SignatureVerifierPlugin
 import app.aaps.ui.tabs.TabPageAdapter
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.tabs.TabLayoutMediator
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.joanzapata.iconify.Iconify
 import com.joanzapata.iconify.fonts.FontAwesomeModule
 import dagger.hilt.android.AndroidEntryPoint
@@ -72,6 +82,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import java.util.Locale
 import javax.inject.Inject
 import android.provider.Settings
 
@@ -92,6 +103,12 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
     @Inject lateinit var profileFunction: ProfileFunction
     @Inject lateinit var configBuilder: ConfigBuilder
     @Inject lateinit var notificationManager: NotificationManager
+    @Inject lateinit var constraintChecker: ConstraintsChecker
+    @Inject lateinit var signatureVerifierPlugin: SignatureVerifierPlugin
+    @Inject lateinit var fileListProvider: FileListProvider
+    @Inject lateinit var cryptoUtil: CryptoUtil
+    @Inject lateinit var exportPasswordDataStore: ExportPasswordDataStore
+    @Inject lateinit var insulin: Insulin
 
     private lateinit var actionBarDrawerToggle: ActionBarDrawerToggle
     private var pluginPreferencesMenuItem: MenuItem? = null
@@ -351,7 +368,7 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
                 v.getGlobalVisibleRect(outRect)
                 if (!outRect.contains(event.rawX.toInt(), event.rawY.toInt())) {
                     v.clearFocus()
-                    val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
                     imm.hideSoftInputFromWindow(v.windowToken, 0)
                 }
             }
@@ -458,7 +475,7 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
         activePlugin.activeBgSource.let { fabricPrivacy.setUserProperty("BgSource", it::class.java.simpleName) }
         fabricPrivacy.setUserProperty("Profile", activePlugin.activeProfileSource.javaClass.simpleName)
         activePlugin.activeSensitivity.let { fabricPrivacy.setUserProperty("Sensitivity", it::class.java.simpleName) }
-        activePlugin.activeInsulin.let { fabricPrivacy.setUserProperty("Insulin", it::class.java.simpleName) }
+        fabricPrivacy.setUserProperty("Insulin", insulin::class.java.simpleName)
         // Add to crash log too
         FirebaseCrashlytics.getInstance().setCustomKey("HEAD", BuildConfig.HEAD)
         FirebaseCrashlytics.getInstance().setCustomKey("Version", config.VERSION_NAME)
@@ -466,7 +483,9 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
         FirebaseCrashlytics.getInstance().setCustomKey("BuildFlavor", config.FLAVOR)
         FirebaseCrashlytics.getInstance().setCustomKey("Remote", remote)
         FirebaseCrashlytics.getInstance().setCustomKey("Committed", config.COMMITTED)
-        FirebaseCrashlytics.getInstance().setCustomKey("Hash", hashes[0])
+        if (hashes.isNotEmpty()) {
+            FirebaseCrashlytics.getInstance().setCustomKey("Hash", hashes[0])
+        }
         FirebaseCrashlytics.getInstance().setCustomKey("Email", preferences.get(StringKey.MaintenanceIdentification))
     }
 

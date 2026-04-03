@@ -1,11 +1,13 @@
 package app.aaps.plugins.configuration.di
 
+import app.aaps.core.interfaces.androidPermissions.AndroidPermission
 import app.aaps.core.interfaces.configuration.ConfigBuilder
 import app.aaps.core.interfaces.maintenance.CloudDirectoryManager
 import app.aaps.core.interfaces.maintenance.FileListProvider
 import app.aaps.core.interfaces.maintenance.ImportExportPrefs
 import app.aaps.core.interfaces.maintenance.Maintenance
 import app.aaps.core.nssdk.interfaces.RunningConfiguration
+import app.aaps.plugins.configuration.AndroidPermissionImpl
 import app.aaps.plugins.configuration.configBuilder.ConfigBuilderFragment
 import app.aaps.plugins.configuration.configBuilder.ConfigBuilderPlugin
 import app.aaps.plugins.configuration.configBuilder.RunningConfigurationImpl
@@ -55,5 +57,6 @@ abstract class ConfigurationModule {
         @Binds fun bindImportExportPrefsInterface(importExportPrefs: ImportExportPrefsImpl): ImportExportPrefs
         @Binds fun bindMaintenanceInterface(maintenancePlugin: MaintenancePlugin): Maintenance
         @Binds fun bindCloudDirectoryManager(impl: CloudDirectoryManagerImpl): CloudDirectoryManager
+        @Binds fun bindAndroidPermission(impl: AndroidPermissionImpl): AndroidPermission
     }
 }

@@ -18,20 +18,18 @@ import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.interfaces.nsclient.NSClientRepository
 import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.interfaces.plugin.PluginFragment
 import app.aaps.core.interfaces.resources.ResourceHelper
-import app.aaps.core.interfaces.rx.AapsSchedulers
-import app.aaps.core.interfaces.rx.bus.RxBus
-import app.aaps.core.interfaces.rx.events.EventNSClientNewLog
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
 import app.aaps.core.ui.dialogs.OKDialog
 import app.aaps.plugins.sync.R
 import app.aaps.plugins.sync.databinding.FragmentRemoteControlBinding
 import dagger.android.support.DaggerFragment
-import io.reactivex.rxjava3.disposables.CompositeDisposable
-import io.reactivex.rxjava3.kotlin.plusAssign
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
@@ -50,9 +48,8 @@ class RemoteControlFragment : DaggerFragment(), PluginFragment {
     @Inject lateinit var rh: ResourceHelper
     @Inject lateinit var aapsLogger: AAPSLogger
     @Inject lateinit var fabricPrivacy: FabricPrivacy
-    @Inject lateinit var rxBus: RxBus
-    @Inject lateinit var aapsSchedulers: AapsSchedulers
     @Inject lateinit var persistenceLayer: PersistenceLayer
+    @Inject lateinit var nsClientRepository: NSClientRepository
     @Inject lateinit var dateUtil: DateUtil
     @Inject lateinit var pinManager: NSClientPinManager
     @Inject lateinit var contextManager: app.aaps.plugins.aps.openAPSAIMI.context.ContextManager
@@ -64,7 +61,6 @@ class RemoteControlFragment : DaggerFragment(), PluginFragment {
 
     private var _binding: FragmentRemoteControlBinding? = null
     private val binding get() = _binding!!
-    private val disposable = CompositeDisposable()
 
     private lateinit var modesAdapter: ModesAdapter
     private lateinit var activeModesAdapter: ActiveModesAdapter
@@ -413,19 +409,23 @@ class RemoteControlFragment : DaggerFragment(), PluginFragment {
         )
 
         aapsLogger.info(LTag.NSCLIENT, "[RemoteControl] Sending MEAL/CONTROL via TherapyEvent: '$aimiCommand'")
-        
-        disposable += persistenceLayer.insertOrUpdateTherapyEvent(aimiNote)
-            .subscribeOn(aapsSchedulers.io)
-            .observeOn(aapsSchedulers.main)
-            .subscribe(
-                { 
-                    sendCarePortalNote(carePortalTE, mode, durationMin)
-                },
-                { error ->
-                    aapsLogger.error(LTag.NSCLIENT, "Failed to send AIMI command", error)
-                    showError("Erreur: ${error.message}")
+
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    persistenceLayer.insertOrUpdateTherapyEvent(aimiNote)
                 }
-            )
+                withContext(Dispatchers.IO) {
+                    persistenceLayer.insertOrUpdateTherapyEvent(carePortalTE)
+                }
+                logCommandSent(mode, durationMin)
+                showSuccess("✅ ${mode.displayName} activé ($durationMin min)")
+                refreshActiveModes()
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.NSCLIENT, "Failed to send MEAL/CONTROL via TherapyEvent", e)
+                showError("Erreur: ${e.message}")
+            }
+        }
     }
     
     /**
@@ -457,51 +457,28 @@ class RemoteControlFragment : DaggerFragment(), PluginFragment {
     }
 
 
-    private fun sendCarePortalNote(note: TE, mode: ModePreset, durationMin: Int) {
-        disposable += persistenceLayer.insertOrUpdateTherapyEvent(note)
-            .subscribeOn(aapsSchedulers.io)
-            .observeOn(aapsSchedulers.main)
-            .subscribe(
-                {
-                    logCommandSent(mode, durationMin)
-                    showSuccess("✅ ${mode.displayName} activé ($durationMin min)")
-                    
-                    // Refresh active modes immediately
-                    refreshActiveModes()
-                },
-                { error ->
-                    aapsLogger.error(LTag.NSCLIENT, "Failed to send CarePortal note", error)
-                    showError("Erreur: ${error.message}")
-                }
-            )
-    }
-
     /**
      * Refresh active modes from TherapyEvents.
      */
     private fun refreshActiveModes() {
         // Safety check: only refresh if view is attached
         if (_binding == null) return
-        
+
         val fromTime = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(1)
-        
-        disposable += persistenceLayer.getTherapyEventDataFromTime(fromTime, true)
-            .subscribeOn(aapsSchedulers.io)
-            .observeOn(aapsSchedulers.main)
-            .subscribe(
-                { events ->
-                    // Safety check again (fragment might be destroyed during async call)
-                    if (_binding == null) return@subscribe
-                    
-                    val activeModes = parseActiveModes(events)
-                    
-                    // Update adapter - visibility handled by tab layout
-                    activeModesAdapter.updateModes(activeModes)
-                },
-                { error ->
-                    aapsLogger.error(LTag.NSCLIENT, "Failed to refresh active modes", error)
+
+        lifecycleScope.launch {
+            try {
+                val events = withContext(Dispatchers.IO) {
+                    persistenceLayer.getTherapyEventDataFromTime(fromTime, true)
                 }
-            )
+                if (_binding == null) return@launch
+
+                val activeModes = parseActiveModes(events)
+                activeModesAdapter.updateModes(activeModes)
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.NSCLIENT, "Failed to refresh active modes", e)
+            }
+        }
     }
 
     /**
@@ -581,7 +558,7 @@ class RemoteControlFragment : DaggerFragment(), PluginFragment {
     }
 
     private fun logCommandSent(mode: ModePreset, durationMin: Int) {
-        rxBus.send(EventNSClientNewLog("► REMOTE", "${mode.displayName} activé ($durationMin min)"))
+        nsClientRepository.addLog("► REMOTE", "${mode.displayName} activé ($durationMin min)")
     }
 
     private fun showSuccess(message: String) {
@@ -631,11 +608,6 @@ class RemoteControlFragment : DaggerFragment(), PluginFragment {
         super.onDestroyView()
         refreshHandler.removeCallbacks(refreshRunnable)
         _binding = null
-    }
-
-    override fun onPause() {
-        super.onPause()
-        disposable.clear()
     }
 
     override fun onResume() {

@@ -30,7 +30,6 @@ import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.objects.extensions.convertedToPercent
-import io.reactivex.rxjava3.disposables.CompositeDisposable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -59,8 +58,6 @@ class LoopHubImpl @Inject constructor(
     private val dateUtil: DateUtil,
     @ApplicationScope private val appScope: CoroutineScope
 ) : LoopHub {
-
-    val disposable = CompositeDisposable()
 
     @VisibleForTesting
     var clock: Clock = Clock.systemUTC()
@@ -182,31 +179,35 @@ class LoopHubImpl @Inject constructor(
 
     override fun postTempTarget(target: Double, duration: Int) {
         if (target == 0.0 || duration == 0) {
-            disposable += persistenceLayer.cancelCurrentTemporaryTargetIfAny(
-                timestamp = dateUtil.now(),
-                action = Action.TT,
-                source = Sources.TTDialog,
-                note = null,
-                listValues = listOf()
-            ).subscribe()
-        } else {
-            disposable += persistenceLayer.insertAndCancelCurrentTemporaryTarget(
-                temporaryTarget = TT(
+            appScope.launch {
+                persistenceLayer.cancelCurrentTemporaryTargetIfAny(
                     timestamp = dateUtil.now(),
-                    duration = TimeUnit.MINUTES.toMillis(duration.toLong()),
-                    reason = TT.Reason.WEAR,
-                    lowTarget = profileUtil.convertToMgdl(target, profileUtil.units),
-                    highTarget = profileUtil.convertToMgdl(target, profileUtil.units)
-                ),
-                action = Action.TT,
-                source = Sources.Garmin,
-                note = null,
-                listValues = listOf(
-                    ValueWithUnit.TETTReason(TT.Reason.AUTOMATION),
-                    ValueWithUnit.Mgdl(target),
-                    ValueWithUnit.Minute(duration)
-                ).filterNotNull()
-            ).subscribe()
+                    action = Action.TT,
+                    source = Sources.TTDialog,
+                    note = null,
+                    listValues = listOf()
+                )
+            }
+        } else {
+            appScope.launch {
+                persistenceLayer.insertAndCancelCurrentTemporaryTarget(
+                    temporaryTarget = TT(
+                        timestamp = dateUtil.now(),
+                        duration = TimeUnit.MINUTES.toMillis(duration.toLong()),
+                        reason = TT.Reason.WEAR,
+                        lowTarget = profileUtil.convertToMgdl(target, profileUtil.units),
+                        highTarget = profileUtil.convertToMgdl(target, profileUtil.units)
+                    ),
+                    action = Action.TT,
+                    source = Sources.Garmin,
+                    note = null,
+                    listValues = listOf(
+                        ValueWithUnit.TETTReason(TT.Reason.AUTOMATION),
+                        ValueWithUnit.Mgdl(target),
+                        ValueWithUnit.Minute(duration)
+                    ).filterNotNull()
+                )
+            }
         }
     }
     // end mod
@@ -252,16 +253,20 @@ class LoopHubImpl @Inject constructor(
             device = device ?: "Garmin",
             dateCreated = clock.millis(),
         )
-        disposable += persistenceLayer.insertOrUpdateStepsCount(sc).subscribe(
-            { result ->
+        appScope.launch {
+            try {
+                val result: PersistenceLayer.TransactionResult<SC> = persistenceLayer.insertOrUpdateStepsCount(sc)
                 val id = result.inserted.firstOrNull()?.id ?: result.updated.firstOrNull()?.id
-                aapsLogger.info(app.aaps.core.interfaces.logging.LTag.GARMIN,
-                    "✅ Steps stored in DB: ID=$id, 5min=$steps5min, timestamp=${java.util.Date(samplingEnd.toEpochMilli())}")
-            },
-            { error ->
-                aapsLogger.error(app.aaps.core.interfaces.logging.LTag.GARMIN,
-                    "❌ Failed to store steps: ${error.message}")
+                aapsLogger.info(
+                    LTag.GARMIN,
+                    "✅ Steps stored in DB: ID=$id, 5min=$steps5min, timestamp=${java.util.Date(samplingEnd.toEpochMilli())}"
+                )
+            } catch (error: Exception) {
+                aapsLogger.error(
+                    LTag.GARMIN,
+                    "❌ Failed to store steps: ${error.message}"
+                )
             }
-        )
+        }
     }
 }

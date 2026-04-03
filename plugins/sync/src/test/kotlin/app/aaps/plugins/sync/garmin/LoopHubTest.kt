@@ -35,6 +35,7 @@ import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.shared.tests.TestBase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
@@ -85,7 +86,7 @@ class LoopHubTest : TestBase() {
         }
         loopHub = LoopHubImpl(
             aapsLogger, commandQueue, constraints, iobCobCalculator, loop,
-            profileFunction, profileUtil, persistenceLayer, userEntryLogger, preferences, processedTbrEbData, testScope, dateUtil
+            profileFunction, profileUtil, persistenceLayer, userEntryLogger, preferences, processedTbrEbData, dateUtil, testScope
         )
         loopHub.clock = clock
     }
@@ -332,7 +333,7 @@ class LoopHubTest : TestBase() {
     }
 
     @Test
-    fun testStoreStepsCount() {
+    fun testStoreStepsCount() = runTest {
         val samplingStart = Instant.ofEpochMilli(1_001_000)
         val samplingEnd = Instant.ofEpochMilli(1_301_000)
         val sc = SC(
@@ -347,9 +348,7 @@ class LoopHubTest : TestBase() {
             device = "Test Device",
             dateCreated = clock.millis(),
         )
-        whenever(persistenceLayer.insertOrUpdateStepsCount(sc)).thenReturn(
-            Single.just(PersistenceLayer.TransactionResult())
-        )
+        whenever(persistenceLayer.insertOrUpdateStepsCount(sc)).thenReturn(PersistenceLayer.TransactionResult())
         loopHub.storeStepsCount(
             samplingStart,
             samplingEnd,
@@ -361,6 +360,7 @@ class LoopHubTest : TestBase() {
             60,
             "Test Device",
         )
+        delay(100)
         verify(persistenceLayer).insertOrUpdateStepsCount(sc)
     }
 }

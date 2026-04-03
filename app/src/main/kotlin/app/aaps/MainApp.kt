@@ -82,11 +82,6 @@ import app.aaps.implementation.receivers.NetworkChangeReceiver
 import app.aaps.plugins.configuration.keys.ConfigurationBooleanComposedKey
 import app.aaps.plugins.constraints.objectives.keys.ObjectivesLongComposedKey
 import app.aaps.plugins.aps.openAPSAIMI.StepService
-import app.aaps.plugins.main.general.overview.notifications.NotificationStore
-import app.aaps.plugins.main.general.themes.ThemeSwitcherPlugin
-import app.aaps.plugins.main.profile.keys.ProfileComposedBooleanKey
-import app.aaps.plugins.main.profile.keys.ProfileComposedDoubleKey
-import app.aaps.plugins.main.profile.keys.ProfileComposedStringKey
 import app.aaps.plugins.constraints.signatureVerifier.SignatureVerifierPlugin
 import app.aaps.receivers.BTReceiver
 import app.aaps.receivers.ChargingStateReceiver
@@ -300,7 +295,6 @@ class MainApp : Application(), HasAndroidInjector {
         } catch (e: Exception) {
             aapsLogger.error("StepService registration failed", e)
         }
-        config.appInitialized = true
         aapsLogger.debug("doInit end")
     }
 

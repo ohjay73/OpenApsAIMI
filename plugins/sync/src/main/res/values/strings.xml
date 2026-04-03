@@ -39,6 +39,7 @@
     <string name="queue">Queue:</string>
     <string name="status">Status:</string>
     <string name="clear_log">Clear log</string>
+    <string name="restart">Restart</string>
     <string name="full_sync">Full synchronization</string>
     <string name="full_sync_comment">Full synchronization? It may take many hours and until finish you\'ll not see new data in NS.</string>
     <string name="ns_sync_options">Synchronization</string>
@@ -236,6 +237,10 @@
     <string name="smscommunicator_otp_verification_ivalid_size">INVALID SIZE!</string>
     <string name="smscommunicator_otp_verification_wrong_pin">WRONG PIN</string>
     <string name="smscommunicator_otp_verification_wrong_otp">WRONG OTP</string>
+    <string name="smscommunicator_otp_key_load_failed">Could not load OTP provisioning key. QR setup is unavailable.</string>
+    <string name="smscommunicator_otp_secret_auto_repaired">OTP secret was repaired automatically. Scan the QR code again if needed.</string>
+    <string name="smscommunicator_otp_uri_build_failed">Could not build OTP setup link. Try resetting authenticators from settings.</string>
+    <string name="smscommunicator_otp_qr_generation_failed">Could not generate QR code for OTP setup.</string>
     <string name="sms_wrong_code">Wrong code. Command cancelled.</string>
     <string name="sms_timeout_while_waiting">Timeout while waiting for finish of previous pump communication</string>
     <string name="smscommunicator_bolus_reply_with_code">To deliver bolus %1$.2fU reply with code %2$s</string>
