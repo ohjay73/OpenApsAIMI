@@ -10,6 +10,8 @@ import app.aaps.plugins.aps.openAPSAIMI.pkpd.ActivityStage
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.max
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 
 /**
  * Trajectory History Provider
@@ -56,26 +58,27 @@ class TrajectoryHistoryProvider @Inject constructor(
         pkpdStage: ActivityStage,
         timeSinceLastBolus: Int,
         cobNow: Double = 0.0
-    ): List<PhaseSpaceState> {
-        
+    ): List<PhaseSpaceState> = runBlocking(Dispatchers.Default) {
+
         val history = mutableListOf<PhaseSpaceState>()
         val fromMillis = nowMillis - (historyMinutes * 60_000L)
-        
+
         try {
             // Get BG history from iobCobCalculator (bucketed data)
             val bgReadings = iobCobCalculator.ads.getBucketedDataTableCopy() ?: emptyList()
-            
+
             val filteredBgReadings = bgReadings
                 .filter { it.timestamp >= fromMillis }
                 .sortedBy { it.timestamp }
-            
+
             if (filteredBgReadings.isEmpty()) {
                 aapsLogger.warn(LTag.APS, "TrajectoryHistory: No BG readings found in last $historyMinutes min")
-                // Return only current state
-                return listOf(createCurrentState(
-                    nowMillis, currentBg, currentDelta, currentAccel,
-                    insulinActivityNow, iobNow, pkpdStage, timeSinceLastBolus, cobNow
-                ))
+                return@runBlocking listOf(
+                    createCurrentState(
+                        nowMillis, currentBg, currentDelta, currentAccel,
+                        insulinActivityNow, iobNow, pkpdStage, timeSinceLastBolus, cobNow
+                    )
+                )
             }
             
             // Sample at 5-minute intervals
@@ -98,7 +101,7 @@ class TrajectoryHistoryProvider @Inject constructor(
                         null
                     }
                     
-                    val iob = iobResult?.iob?.toDouble() ?: 0.0
+                    val iob = iobResult?.iob ?: 0.0
                     
                     // Estimate insulin activity (simplified - would need full PKPD for precision)
                     val activity = estimateInsulinActivity(iob, delta)
@@ -140,15 +143,16 @@ class TrajectoryHistoryProvider @Inject constructor(
             
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "Error building trajectory history: ${e.message}")
-            // Return minimal history with just current state
-            return listOf(createCurrentState(
-                nowMillis, currentBg, currentDelta, currentAccel,
-                insulinActivityNow, iobNow, pkpdStage, timeSinceLastBolus, cobNow
-            ))
+            return@runBlocking listOf(
+                createCurrentState(
+                    nowMillis, currentBg, currentDelta, currentAccel,
+                    insulinActivityNow, iobNow, pkpdStage, timeSinceLastBolus, cobNow
+                )
+            )
         }
-        
+
         aapsLogger.debug(LTag.APS, "TrajectoryHistory: Built ${history.size} states over $historyMinutes min")
-        return history
+        history
     }
     
     /**
@@ -273,13 +277,13 @@ class TrajectoryHistoryProvider @Inject constructor(
      * 
      * TODO: Use actual bolus history
      */
-    private fun estimateTimeSinceLastBolus(timestamp: Long): Int {
+    private suspend fun estimateTimeSinceLastBolus(timestamp: Long): Int {
         try {
             val boluses = persistenceLayer.getBolusesFromTime(
-                timestamp - (4 * 3600_000L), // Last 4 hours
-                false
-            ).blockingGet()
-            
+                timestamp - (4 * 3600_000L),
+                ascending = false
+            )
+
             val lastBolus = boluses
                 .filter { it.timestamp <= timestamp && it.amount > 0.1 }
                 .maxByOrNull { it.timestamp }

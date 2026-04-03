@@ -12,8 +12,6 @@ import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sharedPreferences.SP
-import io.reactivex.rxjava3.disposables.CompositeDisposable
-import io.reactivex.rxjava3.schedulers.Schedulers
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
@@ -76,8 +74,7 @@ class AIMIHealthConnectSyncServiceMTR @Inject constructor(
         private const val PREF_KEY_ENABLED = "aimi_health_connect_steps_enable"
         private const val PREF_KEY_LAST_SYNC = "aimi_health_connect_last_sync_ms"
     }
-    
-    private val disposable = CompositeDisposable()
+
     // Timer removed in favor of WorkManager
     private var lastSyncTimestamp: Long = 0
     
@@ -138,7 +135,6 @@ class AIMIHealthConnectSyncServiceMTR @Inject constructor(
     fun stop() {
         // We do not cancel WorkManager on stop(), as we want background sync to persist
         // only cancel if explicitly disabled
-        disposable.clear()
         aapsLogger.info(LTag.APS, "[$TAG] Service stopped (WorkManager remains active)")
     }
     
@@ -208,21 +204,17 @@ class AIMIHealthConnectSyncServiceMTR @Inject constructor(
                 device = SOURCE_DEVICE // "HealthConnect"
             )
 
-            disposable.add(
-                persistenceLayer.insertOrUpdateStepsCount(sc)
-                    .subscribeOn(Schedulers.io())
-                    .subscribe(
-                        { 
-                            aapsLogger.info(
-                                LTag.APS,
-                                "[$TAG] ✅ Synced HC steps: 5min=${stepsData.steps5min}, 30min=${stepsData.steps30min}. Source=$SOURCE_DEVICE"
-                            )
-                        },
-                        { error ->
-                            aapsLogger.error(LTag.APS, "[$TAG] ❌ Steps DB insert failed", error)
-                        }
+            runBlocking(Dispatchers.IO) {
+                try {
+                    persistenceLayer.insertOrUpdateStepsCount(sc)
+                    aapsLogger.info(
+                        LTag.APS,
+                        "[$TAG] ✅ Synced HC steps: 5min=${stepsData.steps5min}, 30min=${stepsData.steps30min}. Source=$SOURCE_DEVICE"
                     )
-            )
+                } catch (e: Exception) {
+                    aapsLogger.error(LTag.APS, "[$TAG] ❌ Steps DB insert failed", e)
+                }
+            }
         }
     }
 
@@ -237,21 +229,17 @@ class AIMIHealthConnectSyncServiceMTR @Inject constructor(
                 device = SOURCE_DEVICE
             )
             
-            disposable.add(
-                persistenceLayer.insertOrUpdateHeartRate(hr)
-                    .subscribeOn(Schedulers.io())
-                    .subscribe(
-                        { 
-                            aapsLogger.info(
-                                LTag.APS,
-                                "[$TAG] ✅ Synced HC Heart Rate: ${hr.beatsPerMinute} bpm. Source=$SOURCE_DEVICE"
-                            )
-                        },
-                        { error ->
-                            aapsLogger.error(LTag.APS, "[$TAG] ❌ HR DB insert failed", error)
-                        }
+            runBlocking(Dispatchers.IO) {
+                try {
+                    persistenceLayer.insertOrUpdateHeartRate(hr)
+                    aapsLogger.info(
+                        LTag.APS,
+                        "[$TAG] ✅ Synced HC Heart Rate: ${hr.beatsPerMinute} bpm. Source=$SOURCE_DEVICE"
                     )
-            )
+                } catch (e: Exception) {
+                    aapsLogger.error(LTag.APS, "[$TAG] ❌ HR DB insert failed", e)
+                }
+            }
         }
     }
 
@@ -356,7 +344,9 @@ class AIMIHealthConnectSyncServiceMTR @Inject constructor(
     )
     private fun logExistingSources(startMs: Long, endMs: Long) {
         try {
-            val recentSteps = persistenceLayer.getStepsCountFromTimeToTime(startMs, endMs)
+            val recentSteps = runBlocking(Dispatchers.IO) {
+                persistenceLayer.getStepsCountFromTimeToTime(startMs, endMs)
+            }
             val otherSources = recentSteps.map { it.device }.distinct().filter { it != SOURCE_DEVICE }
             
             if (otherSources.isNotEmpty()) {

@@ -11,7 +11,9 @@ import app.aaps.core.interfaces.sync.DataSyncSelectorXdrip
 import app.aaps.core.interfaces.sync.XDripBroadcast
 import app.aaps.plugins.sync.garmin.LoopHub
 import app.aaps.plugins.sync.garmin.LoopHubImpl
+import app.aaps.plugins.sync.nsShared.NSClientFragment
 import app.aaps.plugins.sync.nsShared.StoreDataForDbImpl
+import app.aaps.plugins.sync.wear.activities.CwfInfosActivity
 import app.aaps.plugins.sync.nsShared.compose.NSClientRepositoryImpl
 import app.aaps.plugins.sync.nsclient.data.NSSettingsStatusImpl
 import app.aaps.plugins.sync.nsclient.data.ProcessedDeviceStatusDataImpl

@@ -9,6 +9,7 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.annotation.RequiresApi
 import androidx.fragment.app.viewModels
+import androidx.lifecycle.lifecycleScope
 import app.aaps.core.interfaces.automation.Automation
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.aps.Loop
@@ -57,6 +58,7 @@ import dagger.android.support.DaggerFragment
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorStatusLiveData
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorNotificationManager
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorStatusIndicator
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Provider
 import app.aaps.plugins.main.general.dashboard.views.CircleTopActionListener
@@ -222,13 +224,13 @@ class DashboardFragment : DaggerFragment() {
         }
         binding.adjustmentStatus.setOnRunLoopClickListener {
             app.aaps.core.ui.toast.ToastUtils.infoToast(context, resourceHelper.gs(R.string.dashboard_loop_run_requested))
-            Thread {
+            viewLifecycleOwner.lifecycleScope.launch {
                 try {
                     loop.invoke("Dashboard", true)
                 } catch (e: Exception) {
-                    aapsLogger.error(app.aaps.core.interfaces.logging.LTag.APS, "Error invoking loop from dashboard", e)
+                    aapsLogger.error(LTag.APS, "Error invoking loop from dashboard", e)
                 }
-            }.start()
+            }
         }
 
         binding.statusCard.isClickable = true

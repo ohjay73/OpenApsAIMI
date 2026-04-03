@@ -9,7 +9,7 @@ import app.aaps.core.keys.interfaces.StringValidator
 enum class StringKey(
     override val key: String,
     override val defaultValue: String,
-    override val titleResId: Int,
+    override val titleResId: Int = 0,
     override val summaryResId: Int? = null,
     override val preferenceType: PreferenceType = PreferenceType.TEXT_FIELD,
     override val entries: Map<String, Int> = emptyMap(),

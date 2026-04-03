@@ -100,6 +100,7 @@ import app.aaps.core.objects.extensions.round
 import app.aaps.core.objects.profile.ProfileSealed
 import app.aaps.core.objects.wizard.QuickWizard
 import app.aaps.core.ui.UIRunnable
+import app.aaps.core.ui.dialogs.OKDialog
 import app.aaps.core.ui.elements.SingleClickButton
 import app.aaps.core.ui.extensions.runOnUiThread
 import app.aaps.core.ui.extensions.toVisibility
@@ -108,6 +109,7 @@ import app.aaps.plugins.main.R
 import app.aaps.plugins.main.databinding.OverviewFragmentBinding
 import app.aaps.plugins.main.databinding.OverviewNotificationItemBinding
 import app.aaps.plugins.main.general.overview.graphData.GraphData
+import app.aaps.plugins.main.general.overview.notifications.NotificationUiBinder
 import app.aaps.plugins.main.general.overview.ui.StatusLightHandler
 import app.aaps.plugins.main.skins.SkinProvider
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorStatusIndicator
@@ -1081,9 +1083,10 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
      * - Trend arrow
      */
     private fun updateModernCircleDashboard() {
-        runOnUiThread {
-            _binding ?: return@runOnUiThread
-            val profile = profileFunction.getProfile() ?: return@runOnUiThread
+        viewLifecycleOwner.lifecycleScope.launch {
+            val profile = profileFunction.getProfile() ?: return@launch
+            runOnUiThread {
+                _binding ?: return@runOnUiThread
 
             // Get current data from providers (same as updateBg)
             val lastBg = lastBgData.lastBg()
@@ -1234,6 +1237,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
                 val formattedRate = String.format("%.2f", basalRate.basal)
                 tv.text = "TBR: $formattedRate U/h"
             }
+            }
         }
     }
 
@@ -1250,17 +1254,6 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
                         else app.aaps.core.ui.R.attr.ribbonDefaultColor
                     } else app.aaps.core.ui.R.attr.ribbonDefaultColor
                 } ?: app.aaps.core.ui.R.attr.ribbonCriticalColor
-
-        val profile = profileFunction.getProfile()
-        runOnUiThread {
-            _binding ?: return@runOnUiThread
-            val profileBackgroundColor = profile?.let {
-                if (it is ProfileSealed.EPS) {
-                    if (it.value.originalPercentage != 100 || it.value.originalTimeshift != 0L || it.value.originalDuration != 0L)
-                        app.aaps.core.ui.R.attr.ribbonWarningColor
-                    else app.aaps.core.ui.R.attr.ribbonDefaultColor
-                } else app.aaps.core.ui.R.attr.ribbonDefaultColor
-            } ?: app.aaps.core.ui.R.attr.ribbonCriticalColor
 
                 val profileTextColor = profile?.let {
                     if (it is ProfileSealed.EPS) {

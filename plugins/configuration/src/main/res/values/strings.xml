@@ -20,6 +20,10 @@
     <string name="need_location_permission">Application needs location permission for BT scan and WiFi identification</string>
     <string name="need_background_location_permission">Application needs background location permission for automations</string>
     <string name="need_storage_permission">Application needs storage permission to store log files and export settings (legacy Android versions only)</string>
+    <string name="need_whitelisting">%1$s needs to be excluded from battery optimization for correct operation</string>
+    <string name="import_setting">Import settings</string>
+    <string name="aaps_directory">AAPS directory</string>
+    <string name="select_aaps_directory">Select the AAPS directory for exports, configurations, and related data.</string>
     <string name="askforpermission">Ask for permission</string>
     <string name="storedsettingsfound">Stored settings found</string>
     <string name="master_password_summary">Master password is used for backup encryption and to override security in application. Remember it or store on a safe place.</string>

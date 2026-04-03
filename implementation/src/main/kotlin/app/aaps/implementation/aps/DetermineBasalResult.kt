@@ -254,7 +254,6 @@ class DetermineBasalResult @Inject constructor(
                             trendArrow = TrendArrow.NONE
                         )
                     )
-                    array.add(gv)
                 }
             }
             predictions?.COB?.let { cob ->
@@ -269,7 +268,6 @@ class DetermineBasalResult @Inject constructor(
                             trendArrow = TrendArrow.NONE
                         )
                     )
-                    array.add(gv)
                 }
             }
             predictions?.UAM?.let { uam ->
@@ -284,7 +282,6 @@ class DetermineBasalResult @Inject constructor(
                             trendArrow = TrendArrow.NONE
                         )
                     )
-                    array.add(gv)
                 }
             }
             predictions?.ZT?.let { zt ->
@@ -299,7 +296,6 @@ class DetermineBasalResult @Inject constructor(
                             trendArrow = TrendArrow.NONE
                         )
                     )
-                    array.add(gv)
                 }
             }
             return array
@@ -332,9 +328,7 @@ class DetermineBasalResult @Inject constructor(
             val now = System.currentTimeMillis()
             val activeTemp = processedTbrEbData.getTempBasalIncludingConvertedExtended(now)
             val pump = activePlugin.activePump
-            val profile = runBlocking { profileFunction.getProfile() }
-
-            val profile = profileFunction.getProfile() ?: run {
+            val profile = runBlocking { profileFunction.getProfile() } ?: run {
                 aapsLogger.error("FALSE: No Profile")
                 return false
             }

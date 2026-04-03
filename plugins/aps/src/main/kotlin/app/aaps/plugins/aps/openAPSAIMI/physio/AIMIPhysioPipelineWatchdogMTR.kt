@@ -45,17 +45,20 @@ class AIMIPhysioPipelineWatchdogMTR @Inject constructor(
         val now = System.currentTimeMillis()
         val start = now - DB_LOOKBACK_MS
 
-        val hrCount = try {
-            persistenceLayer.getHeartRatesFromTimeToTime(start, now).size
-        } catch (e: Exception) {
-            aapsLogger.warn(LTag.APS, "[$TAG] HR DB query failed: ${e.message}")
-            -1
-        }
-        val scCount = try {
-            persistenceLayer.getStepsCountFromTimeToTime(start, now).size
-        } catch (e: Exception) {
-            aapsLogger.warn(LTag.APS, "[$TAG] Steps DB query failed: ${e.message}")
-            -1
+        val (hrCount, scCount) = runBlocking(Dispatchers.IO) {
+            val hr = try {
+                persistenceLayer.getHeartRatesFromTimeToTime(start, now).size
+            } catch (e: Exception) {
+                aapsLogger.warn(LTag.APS, "[$TAG] HR DB query failed: ${e.message}")
+                -1
+            }
+            val sc = try {
+                persistenceLayer.getStepsCountFromTimeToTime(start, now).size
+            } catch (e: Exception) {
+                aapsLogger.warn(LTag.APS, "[$TAG] Steps DB query failed: ${e.message}")
+                -1
+            }
+            hr to sc
         }
 
         val hcPermsOk = runBlocking(Dispatchers.IO) {

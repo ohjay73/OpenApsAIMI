@@ -12,6 +12,7 @@ import app.aaps.core.data.ue.Sources
 import app.aaps.core.interfaces.constraints.Constraint
 import app.aaps.core.interfaces.constraints.ConstraintsChecker
 import app.aaps.core.interfaces.db.PersistenceLayer
+import app.aaps.core.interfaces.iob.GlucoseStatusProvider
 import app.aaps.core.interfaces.logging.UserEntryLogger
 import app.aaps.core.interfaces.nsclient.ProcessedDeviceStatusData
 import app.aaps.core.interfaces.plugin.PluginDescription
@@ -55,6 +56,7 @@ class LoopPluginTest : TestBaseWithProfile() {
     @Mock lateinit var uiInteraction: UiInteraction
     @Mock lateinit var processedDeviceStatusData: ProcessedDeviceStatusData
     @Mock lateinit var pumpStatusProvider: PumpStatusProvider
+    @Mock lateinit var glucoseStatusProvider: GlucoseStatusProvider
     @Mock lateinit var glucoseStatusCalculatorAimi: GlucoseStatusCalculatorAimi
 
     private lateinit var loopPlugin: LoopPlugin
@@ -65,7 +67,7 @@ class LoopPluginTest : TestBaseWithProfile() {
         preferenceManager = PreferenceManager(context)
         loopPlugin = LoopPlugin(
             aapsLogger, rxBus, preferences, config,
-            constraintChecker, rh, profileFunction, context, commandQueue, activePlugin, iobCobCalculator, processedTbrEbData, receiverStatusStore, fabricPrivacy, dateUtil, uel,
+            constraintChecker, rh, profileFunction, context, commandQueue, activePlugin, iobCobCalculator, glucoseStatusProvider, processedTbrEbData, receiverStatusStore, fabricPrivacy, dateUtil, uel,
             persistenceLayer, runningConfiguration, uiInteraction, notificationManager, pumpEnactResultProvider, processedDeviceStatusData, pumpStatusProvider, decimalFormatter, ch, testScope
         )
         whenever(activePlugin.activePump).thenReturn(virtualPumpPlugin)

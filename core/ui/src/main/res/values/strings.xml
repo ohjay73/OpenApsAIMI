@@ -854,6 +854,7 @@
 
     <!-- BluetoothDevicePreference -->
     <string name="need_connect_permission">Application needs bluetooth permission</string>
+    <string name="smscommunicator_missingsmspermission">Missing SMS permission</string>
 
     <!--    Combo-->
     <string name="user_request" comment="26 characters max for translation">User request</string>

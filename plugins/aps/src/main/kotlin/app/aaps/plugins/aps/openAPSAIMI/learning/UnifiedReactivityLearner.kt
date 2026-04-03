@@ -7,6 +7,7 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.keys.interfaces.Preferences
+import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import java.io.File
 import java.io.FileWriter
@@ -130,12 +131,10 @@ class UnifiedReactivityLearner @Inject constructor(
         val start = now - (24 * 60 * 60 * 1000L)
         
         try {
-            // Récupérer toutes les valeurs BG des 24 dernières heures
-            // getBgReadingsDataFromTime retourne Single<List<GV>>, donc on utilise blockingGet()
-            val bgReadingsList = persistenceLayer.getBgReadingsDataFromTime(start, false)
-                .blockingGet()
-            
-            // Extraire les valeurs et filtrer
+            val bgReadingsList = runBlocking {
+                persistenceLayer.getBgReadingsDataFromTime(start, ascending = false)
+            }
+
             val bgReadings = bgReadingsList
                 .mapNotNull { gv ->
                     // GV type a la propriété 'value' de type Double
@@ -370,9 +369,10 @@ class UnifiedReactivityLearner @Inject constructor(
         val start = now - (2 * 60 * 60 * 1000L)  // 2 hours
         
         try {
-            val bgReadingsList = persistenceLayer.getBgReadingsDataFromTime(start, false)
-                .blockingGet()
-            
+            val bgReadingsList = runBlocking {
+                persistenceLayer.getBgReadingsDataFromTime(start, ascending = false)
+            }
+
             val bgReadings = bgReadingsList
                 .mapNotNull { gv -> if (gv.value > 39.0) gv.value else null }
             

@@ -1,5 +1,7 @@
 package app.aaps.plugins.aps.openAPSAIMI.advisor.auditor
 
+import app.aaps.core.data.model.BS
+import app.aaps.core.data.model.TB
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.aps.GlucoseStatusAIMI
 import app.aaps.core.interfaces.aps.OapsProfileAimi
@@ -14,6 +16,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.roundToInt
 import kotlin.math.abs
+import kotlinx.coroutines.runBlocking
 
 /**
  * ============================================================================
@@ -321,47 +324,41 @@ class AuditorDataCollector @Inject constructor(
     /**
      * Build last delivery snapshot from database
      */
-    private fun buildLastDeliverySnapshot(now: Long): LastDeliverySnapshot {
+    private fun buildLastDeliverySnapshot(now: Long): LastDeliverySnapshot = runBlocking {
         val lookbackMs = 60 * 60 * 1000L // 1 hour
         val fromTime = now - lookbackMs
-        
-        // Last bolus
-        val boluses = try {
+
+        val boluses: List<BS> = try {
             persistenceLayer.getBolusesFromTime(fromTime, ascending = false)
-                .blockingGet()
-                .filter { it.type != app.aaps.core.data.model.BS.Type.SMB }
+                .filter { it.type != BS.Type.SMB }
         } catch (e: Exception) {
             aapsLogger.debug(app.aaps.core.interfaces.logging.LTag.APS, "Failed to fetch boluses: ${e.message}")
             emptyList()
         }
         val lastBolus = boluses.firstOrNull()
-        
-        // Last SMB
-        val smbs = try {
+
+        val smbs: List<BS> = try {
             persistenceLayer.getBolusesFromTime(fromTime, ascending = false)
-                .blockingGet()
-                .filter { it.type == app.aaps.core.data.model.BS.Type.SMB }
+                .filter { it.type == BS.Type.SMB }
         } catch (e: Exception) {
             aapsLogger.debug(app.aaps.core.interfaces.logging.LTag.APS, "Failed to fetch SMBs: ${e.message}")
             emptyList()
         }
         val lastSmb = smbs.firstOrNull()
-        
-        // Last TBR
-        val tbrs = try {
+
+        val tbrs: List<TB> = try {
             persistenceLayer.getTemporaryBasalsStartingFromTime(fromTime, ascending = false)
-                .blockingGet()
-                .filter { it.duration.toInt() != 0 } // Filter out CANCELs
+                .filter { it.duration != 0L }
         } catch (e: Exception) {
             emptyList()
         }
         val lastTbr = tbrs.firstOrNull()
-        
-        return LastDeliverySnapshot(
-            lastBolusU = lastBolus?.let { it.amount },
-            lastBolusTime = lastBolus?.let { it.timestamp },
-            lastSmbU = lastSmb?.let { it.amount },
-            lastSmbTime = lastSmb?.let { it.timestamp },
+
+        LastDeliverySnapshot(
+            lastBolusU = lastBolus?.amount,
+            lastBolusTime = lastBolus?.timestamp,
+            lastSmbU = lastSmb?.amount,
+            lastSmbTime = lastSmb?.timestamp,
             lastTbrRate = lastTbr?.rate,
             lastTbrTime = lastTbr?.timestamp
         )
@@ -415,29 +412,24 @@ class AuditorDataCollector @Inject constructor(
     /**
      * Build 7-day stats from TIR calculator
      */
-    private fun buildStats7d(now: Long): Stats7d {
-        val sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000L
-        
-        // Get TIR stats (using 7 days with standard thresholds)
+    private fun buildStats7d(now: Long): Stats7d = runBlocking {
         val tirData = try {
-            tirCalculator.calculate(7, 70.0, 180.0)
+            tirCalculator.calculate(7L, 70.0, 180.0)
         } catch (e: Exception) {
             null
         }
-        
-        // Average the TIR data
+
         val tirStats = tirData?.let { tirCalculator.averageTIR(it) }
-        
-        // Get TDD stats
+
         val tdd7d = try {
             tddCalculator.averageTDD(
-                tddCalculator.calculate(7, allowMissingDays = true)
+                tddCalculator.calculate(7L, allowMissingDays = true)
             )?.data?.totalAmount ?: 0.0
         } catch (e: Exception) {
             0.0
         }
-        
-        return Stats7d(
+
+        Stats7d(
             tir = tirStats?.let { it.inRangePct() } ?: 0.0,
             hypoPct = tirStats?.let { it.belowPct() } ?: 0.0,
             hyperPct = tirStats?.let { it.abovePct() } ?: 0.0,

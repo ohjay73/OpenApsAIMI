@@ -1,4 +1,4 @@
-import org.gradle.kotlin.dsl.android
+
 import org.gradle.kotlin.dsl.debugImplementation
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -13,8 +13,8 @@ plugins {
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.hilt)
     id("com.android.application")
-    kotlin("android")
-    kotlin("kapt")
+    // kotlin("android")
+    // kotlin("kapt")
     //alias(libs.plugins.ksp)
     id("com.google.gms.google-services")
     id("com.google.firebase.crashlytics")

@@ -8,7 +8,7 @@ enum class DoubleKey(
     override val defaultValue: Double,
     override val min: Double,
     override val max: Double,
-    override val titleResId: Int,
+    override val titleResId: Int = 0,
     override val summaryResId: Int? = null,
     override val preferenceType: PreferenceType = PreferenceType.TEXT_FIELD,
     override val defaultedBySM: Boolean = false,

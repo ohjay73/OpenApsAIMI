@@ -1,5 +1,7 @@
 package app.aaps.plugins.aps.openAPSAIMI.advisor
 
+import app.aaps.core.interfaces.profile.EffectiveProfile
+import kotlinx.coroutines.runBlocking
 import kotlin.math.roundToInt
 import app.aaps.plugins.aps.R
 import kotlin.math.max
@@ -130,16 +132,17 @@ class AimiAdvisorService {
         val metrics = calculateMetrics(periodDays)
 
         // 2. Snapshot Profile
-        val profile = profileFunction.getProfile()
+        val profile = runBlocking { profileFunction.getProfile() }
         val profileSnapshot = if (profile != null) {
             val totalBasalCalc = (0 until 24).sumOf { h -> profile.getBasal((h * 3600).toLong()) }
-            
+            val dia = (profile as? EffectiveProfile)?.iCfg?.dia ?: 5.0
+
             AimiProfileSnapshot(
                 nightBasal = profile.getBasal(0L), // 00:00 basal
                 icRatio = calculateWeightedAverage(profile.getIcsValues()),
                 isf = calculateWeightedAverage(profile.getIsfsMgdlValues()),
                 targetBg = calculateWeightedAverage(profile.getSingleTargetsMgdl()),
-                dia = profile.dia,
+                dia = dia,
                 totalBasal = totalBasalCalc
             )
         } else {
@@ -198,7 +201,7 @@ class AimiAdvisorService {
         return if (totalDuration > 0) totalWeightedValue / totalDuration else 0.0
     }
 
-    private fun calculateMetrics(days: Int): AdvisorMetrics {
+    private fun calculateMetrics(days: Int): AdvisorMetrics = runBlocking {
         // Fallback defaults
         var tir70_180 = 0.65
         var tir70_140 = 0.40
@@ -328,7 +331,7 @@ class AimiAdvisorService {
             android.util.Log.w("AIMI_ADVISOR", "⚠️ PersistenceLayer is null, cannot calculate mean BG. Using fallback $meanBg")
         }
 
-        return AdvisorMetrics(
+        AdvisorMetrics(
             periodLabel = "Last $days days",
             tir70_180 = tir70_180,
             tir70_140 = tir70_140,
@@ -393,8 +396,6 @@ class AimiAdvisorService {
      * Generate recommendations based on Context using the Plugin System.
      */
     fun generateRecommendations(ctx: AdvisorContext, history: List<app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository.AdvisorActionLog>): List<AimiRecommendation> {
-        val currentProfile = profileFunction?.getProfile()
-        
         if (preferences == null) return emptyList()
 
         val loopCtx = app.aaps.plugins.aps.openAPSAIMI.model.AimiPluginContext(
@@ -603,7 +604,7 @@ class AimiAdvisorService {
 
     fun generateBasalProfileProposal(periodDays: Int = 7): BasalProfileProposal {
         val metrics = calculateMetrics(periodDays)
-        val profile = profileFunction?.getProfile()
+        val profile = profileFunction?.let { runBlocking { it.getProfile() } }
         if (profile == null) {
             return BasalProfileProposal(
                 generatedAt = System.currentTimeMillis(),
@@ -726,8 +727,9 @@ class AimiAdvisorService {
             val fromTime = now - (periodDays * 24 * 3600 * 1000L)
             
             val bgReadings = try {
-                persistenceLayer.getBgReadingsDataFromTimeToTime(fromTime, now, false)
-                    .map { it.value }
+                runBlocking {
+                    persistenceLayer.getBgReadingsDataFromTimeToTime(fromTime, now, false)
+                }.map { it.value }
                     .filter { it > 30.0 }
             } catch (e: Exception) {
                 emptyList<Double>()
@@ -735,7 +737,7 @@ class AimiAdvisorService {
             
             // 2. Build Context
             val metrics = calculateMetrics(periodDays)
-            val profile = profileFunction?.getProfile()
+            val profile = profileFunction?.let { runBlocking { it.getProfile() } }
             val isf = profile?.getIsfMgdlTimeFromMidnight(0) ?: 40.0 // Default or specific logic needed to get specific ISF
             
             // Dummy Physio Manager (No access to instance here easily without DI)

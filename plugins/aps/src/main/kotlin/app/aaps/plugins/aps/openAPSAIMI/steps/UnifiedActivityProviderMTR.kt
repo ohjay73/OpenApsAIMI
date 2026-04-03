@@ -8,6 +8,8 @@ import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sharedPreferences.SP
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 
 /**
  * 🎛️ Unified Activity Provider - MTR Implementation
@@ -68,8 +70,9 @@ class UnifiedActivityProviderMTR @Inject constructor(
             // Fetch all records in window
             // Note: getStepsCountFromTimeToTime returns list ordered by ?? Usually time.
             // We'll sort descending to be safe.
-            val records = persistenceLayer.getStepsCountFromTimeToTime(start, now)
-                .sortedByDescending { it.timestamp }
+            val records = runBlocking(Dispatchers.IO) {
+                persistenceLayer.getStepsCountFromTimeToTime(start, now)
+            }.sortedByDescending { it.timestamp }
                 
             if (records.isEmpty()) return null
             
@@ -108,9 +111,9 @@ class UnifiedActivityProviderMTR @Inject constructor(
         val now = System.currentTimeMillis()
 
         return try {
-            val records = persistenceLayer
-                .getStepsCountFromTimeToTime(startMs, now)
-                .sortedBy { it.timestamp } // zeitlich vorwärts
+            val records = runBlocking(Dispatchers.IO) {
+                persistenceLayer.getStepsCountFromTimeToTime(startMs, now)
+            }.sortedBy { it.timestamp } // zeitlich vorwärts
 
             if (records.isEmpty()) return null
 
@@ -154,8 +157,9 @@ class UnifiedActivityProviderMTR @Inject constructor(
         val start = now - windowMs
         
         try {
-            val records = persistenceLayer.getHeartRatesFromTimeToTime(start, now)
-                .sortedByDescending { it.timestamp }
+            val records = runBlocking(Dispatchers.IO) {
+                persistenceLayer.getHeartRatesFromTimeToTime(start, now)
+            }.sortedByDescending { it.timestamp }
                 
             if (records.isEmpty()) return null
             

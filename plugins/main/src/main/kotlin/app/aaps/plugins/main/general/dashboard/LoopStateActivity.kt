@@ -6,6 +6,7 @@ import android.os.Looper
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import androidx.appcompat.content.res.AppCompatResources
+import androidx.lifecycle.lifecycleScope
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.ue.Action
 import app.aaps.core.data.ue.Sources
@@ -21,6 +22,7 @@ import app.aaps.core.ui.dialogs.OKDialog
 import app.aaps.plugins.main.R
 import app.aaps.plugins.main.databinding.ActivityLoopStateBinding
 import com.google.android.material.button.MaterialButton
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import app.aaps.core.data.time.T
 
@@ -50,42 +52,43 @@ class LoopStateActivity : TranslatedDaggerAppCompatActivity() {
     }
 
     private fun renderActions() {
-        val allowedModes = loop.allowedNextModes()
-        val runningMode = loop.runningModeRecord.mode
-        val pumpDescription = activePlugin.activePump.pumpDescription
-        
-        binding.loopActionsContainer.removeAllViews()
-        val spacing = resources.getDimensionPixelSize(R.dimen.dashboard_chip_spacing)
+        lifecycleScope.launch {
+            val allowedModes = loop.allowedNextModes()
+            val runningMode = loop.runningModeRecord.mode
+            val pumpDescription = activePlugin.activePump.pumpDescription
 
-        fun addButton(title: String, iconRes: Int, onClick: () -> Unit) {
-            val icon = AppCompatResources.getDrawable(this, iconRes)
-            val button = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-                text = title
-                iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
-                iconPadding = spacing
-                setOnClickListener {
-                    OKDialog.showConfirmation(
-                        this@LoopStateActivity,
-                        "${resourceHelper.gs(app.aaps.core.ui.R.string.confirm)}: $title",
-                        Runnable {
-                            handler.post { onClick() }
-                            finish()
-                        }
-                    )
+            binding.loopActionsContainer.removeAllViews()
+            val spacing = resources.getDimensionPixelSize(R.dimen.dashboard_chip_spacing)
+
+            fun addButton(title: String, iconRes: Int, onClick: () -> Unit) {
+                val icon = AppCompatResources.getDrawable(this@LoopStateActivity, iconRes)
+                val button = MaterialButton(this@LoopStateActivity, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                    text = title
+                    iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
+                    iconPadding = spacing
+                    setOnClickListener {
+                        OKDialog.showConfirmation(
+                            this@LoopStateActivity,
+                            "${resourceHelper.gs(app.aaps.core.ui.R.string.confirm)}: $title",
+                            Runnable {
+                                handler.post { onClick() }
+                                finish()
+                            }
+                        )
+                    }
                 }
+                icon?.mutate()?.setTint(resourceHelper.gac(this@LoopStateActivity, app.aaps.core.ui.R.attr.userOptionColor))
+                button.icon = icon
+                val params = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = spacing }
+                binding.loopActionsContainer.addView(button, params)
             }
-            icon?.mutate()?.setTint(resourceHelper.gac(this, app.aaps.core.ui.R.attr.userOptionColor))
-            button.icon = icon
-            val params = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = spacing }
-            binding.loopActionsContainer.addView(button, params)
-        }
 
-        val profile = profileFunction.getProfile() ?: return
+            val profile = profileFunction.getProfile() ?: return@launch
 
-        if (allowedModes.contains(RM.Mode.CLOSED_LOOP)) {
+            if (allowedModes.contains(RM.Mode.CLOSED_LOOP)) {
             addButton(resourceHelper.gs(app.aaps.core.ui.R.string.closedloop), app.aaps.core.objects.R.drawable.ic_loop_closed) {
                 loop.handleRunningModeChange(newRM = RM.Mode.CLOSED_LOOP, action = Action.CLOSED_LOOP_MODE, source = Sources.LoopDialog, profile = profile)
             }
@@ -148,6 +151,7 @@ class LoopStateActivity : TranslatedDaggerAppCompatActivity() {
             addButton(resourceHelper.gs(app.aaps.plugins.main.R.string.disconnectpumpfor3h), app.aaps.core.ui.R.drawable.ic_loop_disconnected) {
                 loop.handleRunningModeChange(newRM = RM.Mode.DISCONNECTED_PUMP, durationInMinutes = 180, action = Action.DISCONNECT, source = Sources.LoopDialog, profile = profile)
             }
+        }
         }
     }
 }

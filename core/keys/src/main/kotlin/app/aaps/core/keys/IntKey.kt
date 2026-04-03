@@ -10,7 +10,7 @@ enum class IntKey(
     override val defaultValue: Int,
     override val min: Int,
     override val max: Int,
-    override val titleResId: Int,
+    override val titleResId: Int = 0,
     override val summaryResId: Int? = null,
     override val preferenceType: PreferenceType = PreferenceType.TEXT_FIELD,
     override val entries: Map<Int, Int> = emptyMap(),
@@ -302,10 +302,7 @@ enum class IntKey(
     NsClientUrgentAlarmStaleData(key = "ns_alarm_urgent_stale_data_value", defaultValue = 31, min = 30, max = 180, titleResId = R.string.pref_title_urgent_alarm_stale_data, unitType = UnitType.MIN),
 
     SiteRotationUserProfile(key = "site_rotation_user_profile", defaultValue = 0, min = 0, max = 2, titleResId = R.string.pref_title_site_rotation_profile),
-    BgSourceRandomInterval("randombg_interval_min", 5, 1, 15, defaultedBySM = true),
     GarminLocalHttpPort("communication_http_port", 28891, 1001, 65535, defaultedBySM = true, hideParentScreenIfHidden = true),
-    NsClientAlarmStaleData("ns_alarm_stale_data_value", 16, 15, 120),
-    NsClientUrgentAlarmStaleData("ns_alarm_urgent_stale_data_value", 31, 30, 180),
     OApsAIMIHighBGinterval("key_oaps_aimi_highBG_interval", 3, 1, 20, defaultedBySM = true),
     OApsAIMImealinterval("key_oaps_aimi_meal_interval", 3, 1, 20, defaultedBySM = true),
     OApsAIMILunchinterval("key_oaps_aimi_lunch_interval", 3, 1, 20, defaultedBySM = true),
@@ -323,7 +320,6 @@ enum class IntKey(
     OApsAIMINightGrowthMinEventualOverTarget("key_oaps_aimi_ngr_min_eventual_over_target", 15, 0, 120),
     OApsAIMINightGrowthDecayMinutes("key_oaps_aimi_ngr_decay_minutes", 20, 0, 120),
     OApsAIMIlogsize("key_oaps_aimi_logsize",25,1,50),
-    SiteRotationUserProfile("site_rotation_user_profile", 0, 0, 2),
     // --- AIMI Adaptive Basal ---
     OApsAIMIKickerStartMin(key = "OApsAIMIKickerStartMin", 10, 5, 30), // durée initiale du “kick” plateau (min)
     OApsAIMIKickerMaxMin(key = "OApsAIMIKickerMaxMin", 30, 10, 60), // durée max du “kick” plateau (min)

@@ -1,10 +1,13 @@
 package app.aaps.plugins.aps.openAPSAIMI.keys
 
 import app.aaps.core.keys.interfaces.StringPreferenceKey
+import app.aaps.plugins.aps.R
 
 enum class AimiStringKey(
     override val key: String,
     override val defaultValue: String,
+    override val titleResId: Int,
+    override val summaryResId: Int? = null,
     override val defaultedBySM: Boolean = false,
     override val showInApsMode: Boolean = true,
     override val showInNsClientMode: Boolean = true,
@@ -16,6 +19,18 @@ enum class AimiStringKey(
     override val isPin: Boolean = false,
     override val exportable: Boolean = true
 ) : StringPreferenceKey {
-    PregnancyDueDateString("aimi_pregnancy_due_date_string", ""),
-    RemoteControlPin("aimi_remote_control_pin", "", isPin = true, isPassword = true),
+    PregnancyDueDateString(
+        key = "aimi_pregnancy_due_date_string",
+        defaultValue = "",
+        titleResId = R.string.OApsAIMI_PregnancyDueDate_title,
+        summaryResId = R.string.OApsAIMI_PregnancyDueDate_summary
+    ),
+    RemoteControlPin(
+        key = "aimi_remote_control_pin",
+        defaultValue = "",
+        titleResId = R.string.OApsAIMI_RemoteControlPin_title,
+        summaryResId = R.string.OApsAIMI_RemoteControlPin_summary,
+        isPin = true,
+        isPassword = true
+    ),
 }

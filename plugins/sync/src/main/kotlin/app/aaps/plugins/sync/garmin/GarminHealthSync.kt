@@ -5,13 +5,13 @@ import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.data.model.SC
-import io.reactivex.rxjava3.disposables.CompositeDisposable
-import io.reactivex.rxjava3.schedulers.Schedulers
 import java.time.Clock
 import java.time.Instant
 import java.util.Timer
 import java.util.TimerTask
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import javax.inject.Singleton
 
 /**
@@ -38,8 +38,7 @@ class GarminHealthSync @Inject constructor(
     private val persistenceLayer: PersistenceLayer,
     private val clock: Clock
 ) {
-    
-    private val disposable = CompositeDisposable()
+
     private var syncTimer: Timer? = null
     private var lastStepCount: Int = 0
     private var lastSyncTimestamp: Long = 0
@@ -79,7 +78,6 @@ class GarminHealthSync @Inject constructor(
     fun stop() {
         syncTimer?.cancel()
         syncTimer = null
-        disposable.clear()
         aapsLogger.info(LTag.GARMIN, "Stopped GarminHealthSync")
     }
     
@@ -175,27 +173,25 @@ class GarminHealthSync @Inject constructor(
             device = device
         )
         
-        disposable.add(
-            persistenceLayer.insertOrUpdateStepsCount(stepsCount)
-                .subscribeOn(Schedulers.io())
-                .subscribe(
-                    { id ->
-                        aapsLogger.info(
-                            LTag.GARMIN,
-                            "✅ Inserted StepsCount: ${steps.toInt()} steps, " +
-                            "timestamp=${Instant.ofEpochMilli(timestamp)}, " +
-                            "device=$device, id=$id"
-                        )
-                    },
-                    { error ->
-                        aapsLogger.error(
-                            LTag.GARMIN,
-                            "❌ Failed to insert StepsCount: ${error.message}",
-                            error
-                        )
-                    }
-                )
-        )
+        try {
+            val result = runBlocking(Dispatchers.IO) {
+                persistenceLayer.insertOrUpdateStepsCount(stepsCount)
+            }
+            val record = result.inserted.firstOrNull() ?: result.updated.firstOrNull()
+            val idPart = record?.id?.takeIf { it > 0L }?.let { "id=$it" } ?: "id=new"
+            aapsLogger.info(
+                LTag.GARMIN,
+                "✅ Inserted StepsCount: ${steps.toInt()} steps, " +
+                    "timestamp=${Instant.ofEpochMilli(timestamp)}, " +
+                    "device=$device, $idPart"
+            )
+        } catch (e: Exception) {
+            aapsLogger.error(
+                LTag.GARMIN,
+                "❌ Failed to insert StepsCount: ${e.message ?: e.toString()}",
+                e
+            )
+        }
     }
     
     /**

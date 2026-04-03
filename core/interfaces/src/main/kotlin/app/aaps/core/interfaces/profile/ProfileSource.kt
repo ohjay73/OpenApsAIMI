@@ -1,3 +1,5 @@
 package app.aaps.core.interfaces.profile
 
-interface ProfileSource
+/** Marker for the active profile plugin (see [app.aaps.core.interfaces.plugin.ActivePlugin]). */
+interface ProfileSource {
+}

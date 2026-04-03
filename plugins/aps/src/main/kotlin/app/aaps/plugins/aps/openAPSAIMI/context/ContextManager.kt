@@ -5,15 +5,16 @@ import app.aaps.core.data.model.TE
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
-import app.aaps.core.interfaces.rx.AapsSchedulers
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.plugins.aps.openAPSAIMI.context.ContextIntent.*
 import app.aaps.core.data.ue.Action
 import app.aaps.core.data.ue.Sources
-import io.reactivex.rxjava3.kotlin.plusAssign
-import io.reactivex.rxjava3.disposables.CompositeDisposable
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import javax.inject.Singleton
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.minutes
@@ -51,9 +52,10 @@ class ContextManager @Inject constructor(
     private val sp: SP,
     internal val aapsLogger: AAPSLogger,  // Internal for inline functions
     private val persistenceLayer: PersistenceLayer,  // For NS sync
-    private val dateUtil: DateUtil,
-    private val aapsSchedulers: AapsSchedulers
+    private val dateUtil: DateUtil
 ) {
+
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     
     // Thread-safe storage (internal for inline functions)
     internal val activeIntents = ConcurrentHashMap<String, ContextIntent>()
@@ -198,15 +200,15 @@ class ContextManager @Inject constructor(
             aapsLogger.info(LTag.APS, "[ContextManager] Removed intent $id")
             saveToStorage()
             
-            // Invalidate sync record in local DB and Nightscout
-            val disposable = CompositeDisposable()
-            disposable += persistenceLayer.invalidateTherapyEventsWithNote("AIMI_CONTEXT:$id", Action.TREATMENT, Sources.Aaps)
-                .subscribeOn(aapsSchedulers.io)
-                .subscribe(
-                    { aapsLogger.debug(LTag.APS, "[ContextManager] Synced invalidation for $id") },
-                    { e -> aapsLogger.error(LTag.APS, "[ContextManager] Failed to invalidate sync record for $id: ${e.message}") }
-                )
-            
+            ioScope.launch {
+                try {
+                    persistenceLayer.invalidateTherapyEventsWithNote("AIMI_CONTEXT:$id", Action.TREATMENT, Sources.Aaps)
+                    aapsLogger.debug(LTag.APS, "[ContextManager] Synced invalidation for $id")
+                } catch (e: Exception) {
+                    aapsLogger.error(LTag.APS, "[ContextManager] Failed to invalidate sync record for $id: ${e.message}", e)
+                }
+            }
+
             return true
         }
         aapsLogger.warn(LTag.APS, "[ContextManager] Intent $id not found")
@@ -242,14 +244,14 @@ class ContextManager @Inject constructor(
         aapsLogger.info(LTag.APS, "[ContextManager] Cleared all intents (removed $count)")
         saveToStorage()
         
-        // Invalidate ALL AIMI context sync records
-        val disposable = CompositeDisposable()
-        disposable += persistenceLayer.invalidateTherapyEventsWithNote("AIMI_CONTEXT:", Action.TREATMENT, Sources.Aaps)
-            .subscribeOn(aapsSchedulers.io)
-            .subscribe(
-                { aapsLogger.debug(LTag.APS, "[ContextManager] Synced invalidation for all contexts") },
-                { e -> aapsLogger.error(LTag.APS, "[ContextManager] Failed to invalidate all sync records: ${e.message}") }
-            )
+        ioScope.launch {
+            try {
+                persistenceLayer.invalidateTherapyEventsWithNote("AIMI_CONTEXT:", Action.TREATMENT, Sources.Aaps)
+                aapsLogger.debug(LTag.APS, "[ContextManager] Synced invalidation for all contexts")
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.APS, "[ContextManager] Failed to invalidate all sync records: ${e.message}", e)
+            }
+        }
     }
     
     /**
@@ -534,21 +536,15 @@ class ContextManager @Inject constructor(
             )
             
             aapsLogger.debug(LTag.APS, "[ContextManager] Syncing context $intentId to NS")
-            
-            val disposable = CompositeDisposable()
-            disposable += persistenceLayer.insertOrUpdateTherapyEvent(therapyEvent)
-                .subscribeOn(aapsSchedulers.io)
-                .subscribe(
-                    {
-                        aapsLogger.info(LTag.APS, "[ContextManager] ✅ Context $intentId synced to NS")
-                        disposable.clear()
-                    },
-                    { error ->
-                        aapsLogger.error(LTag.APS, "[ContextManager] ❌ Failed to sync context $intentId: $error")
-                        disposable.clear()
-                    }
-                )
-                
+
+            ioScope.launch {
+                try {
+                    persistenceLayer.insertOrUpdateTherapyEvent(therapyEvent)
+                    aapsLogger.info(LTag.APS, "[ContextManager] ✅ Context $intentId synced to NS")
+                } catch (e: Exception) {
+                    aapsLogger.error(LTag.APS, "[ContextManager] ❌ Failed to sync context $intentId: ${e.message}", e)
+                }
+            }
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "[ContextManager] Exception syncing context $intentId", e)
         }

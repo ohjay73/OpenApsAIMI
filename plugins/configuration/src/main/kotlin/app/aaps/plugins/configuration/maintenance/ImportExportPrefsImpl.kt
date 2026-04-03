@@ -25,7 +25,6 @@ import app.aaps.core.data.model.UE
 import app.aaps.core.data.time.T
 import app.aaps.core.data.ue.Action
 import app.aaps.core.data.ue.Sources
-import app.aaps.core.interfaces.androidPermissions.AndroidPermission
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.configuration.ConfigBuilder
 import app.aaps.core.interfaces.db.PersistenceLayer
@@ -357,20 +356,6 @@ class ImportExportPrefsImpl @Inject constructor(
 
     override fun exportSharedPreferences(activity: FragmentActivity) {
         exportSharedPreferencesLegacy(activity)
-    override fun verifyStoragePermissions(fragment: Fragment, onGranted: Runnable) {
-        val ctx = fragment.context ?: return
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            onGranted.run()
-        } else {
-            val permission = ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_EXTERNAL_STORAGE)
-            if (permission != PackageManager.PERMISSION_GRANTED) {
-                // We don't have permission so prompt the user
-                fragment.activity?.let {
-                    androidPermission.askForPermission(it, arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE))
-                }
-            } else onGranted.run()
-        }
     }
 
     private fun prepareMetadata(context: Context): Map<PrefsMetadataKey, PrefMetadata> {
@@ -1554,4 +1539,3 @@ class ImportExportPrefsImpl @Inject constructor(
         }
     }
 }
-    }

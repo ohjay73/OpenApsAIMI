@@ -1,7 +1,12 @@
 package app.aaps.plugins.configuration.setupwizard
 
+import android.Manifest
+import android.content.Intent
+import android.provider.Settings
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.net.toUri
 import app.aaps.core.data.plugin.PluginType
+import app.aaps.core.interfaces.androidPermissions.AndroidPermission
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.constraints.Objectives
 import app.aaps.core.interfaces.maintenance.ImportExportPrefs
@@ -18,6 +23,7 @@ import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.AapsSchedulers
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.Event
+import app.aaps.core.interfaces.rx.events.EventAAPSDirectorySelected
 import app.aaps.core.interfaces.rx.events.EventPumpStatusChanged
 import app.aaps.core.interfaces.rx.events.EventSWRLStatus
 import app.aaps.core.interfaces.rx.events.EventSWSyncStatus
@@ -34,7 +40,9 @@ import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.objects.crypto.CryptoUtil
 import app.aaps.core.objects.profile.ProfileSealed
 import app.aaps.plugins.configuration.R
+import app.aaps.plugins.configuration.activities.DaggerAppCompatActivityWithResult
 import app.aaps.plugins.configuration.configBuilder.events.EventConfigBuilderUpdateGui
+import app.aaps.plugins.configuration.maintenance.MaintenancePlugin
 import app.aaps.plugins.configuration.setupwizard.elements.SWBreak
 import app.aaps.plugins.configuration.setupwizard.elements.SWButton
 import app.aaps.plugins.configuration.setupwizard.elements.SWEditEncryptedPassword
@@ -68,6 +76,8 @@ class SWDefinition @Inject constructor(
     private val config: Config,
     private val hardLimits: HardLimits,
     private val notificationManager: NotificationManager,
+    private val androidPermission: AndroidPermission,
+    private val maintenancePlugin: MaintenancePlugin,
     private val uiInteraction: UiInteraction,
     private val aapsSchedulers: AapsSchedulers,
     private val swScreenProvider: Provider<SWScreen>,
@@ -194,7 +204,7 @@ class SWDefinition @Inject constructor(
             .add(
                 swButtonProvider.get()
                      .text(R.string.askforpermission)
-                     .visibility { androidPermission.permissionNotGranted(context, Manifest.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS) }
+                     .visibility { androidPermission.permissionNotGranted(requireActivity(), Manifest.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS) }
                     .action { androidPermission.askForPermission(requireActivity(), Manifest.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS) })
             .add(swBreakProvider.get())
             .add(swInfoTextProvider.get().label(rh.gs(R.string.need_storage_permission)).visibility { requiresLegacyStoragePermission() })
@@ -251,7 +261,7 @@ class SWDefinition @Inject constructor(
             .validator { !androidPermission.permissionNotGranted(requireActivity(), Manifest.permission.ACCESS_FINE_LOCATION) && !androidPermission.permissionNotGranted(requireActivity(), Manifest.permission.ACCESS_BACKGROUND_LOCATION) }
 
     private val screenImport
-        get() = swScreenProvider.get().with(app.aaps.core.ui.R.string.import_setting)
+        get() = swScreenProvider.get().with(R.string.import_setting)
             .add(swInfoTextProvider.get().label(R.string.storedsettingsfound))
             .add(swBreakProvider.get())
             .add(swButtonProvider.get().text(R.string.import_setting).action { importExportPrefs.importSharedPreferences(requireActivity()) })

@@ -26,6 +26,7 @@ import app.aaps.core.data.ue.Sources
 import app.aaps.core.data.ue.ValueWithUnit
 import app.aaps.core.interfaces.aps.APSResult
 import io.reactivex.rxjava3.core.Completable
+import io.reactivex.rxjava3.core.Single
 import kotlinx.coroutines.flow.Flow
 import kotlin.reflect.KClass
 
@@ -1373,9 +1374,9 @@ interface PersistenceLayer {
     suspend fun updateFoodsNsIds(foods: List<FD>): TransactionResult<FD>
 
     // UE
-   suspend fun insertUserEntries(entries: List<UE>): Single<TransactionResult<UE>>
-   suspend fun getUserEntryDataFromTime(timestamp: Long): Single<List<UE>>
-   suspend fun getUserEntryFilteredDataFromTime(timestamp: Long): Single<List<UE>>
+   suspend fun insertUserEntries(entries: List<UE>): TransactionResult<UE>
+   suspend fun getUserEntryDataFromTime(timestamp: Long): List<UE>
+   suspend fun getUserEntryFilteredDataFromTime(timestamp: Long): List<UE>
    suspend fun deleteLastEventMatchingKeyword(noteKeyword: String)
 
 
@@ -1480,24 +1481,21 @@ interface PersistenceLayer {
      * @return List of arrays of records
      */
     suspend fun collectNewEntriesSince(since: Long, until: Long, limit: Int, offset: Int): NE
-    fun getMostRecentCarbByDate(): Long? {
+    suspend fun getMostRecentCarbByDate(): Long? {
         val now = System.currentTimeMillis()
         return getCarbsFromTime(now, false) // false pour ordre décroissant
-            .blockingGet()
             .maxByOrNull { it.timestamp }
             ?.timestamp
     }
-    fun getMostRecentCarbAmount(): Double? {
+    suspend fun getMostRecentCarbAmount(): Double? {
         val now = System.currentTimeMillis()
         return getCarbsFromTime(now, false) // Supposant que cette méthode existe
-            .blockingGet()
             .maxByOrNull { it.timestamp }
             ?.amount
     }
-    fun getFutureCob(): Double {
+    suspend fun getFutureCob(): Double {
         val now = System.currentTimeMillis()
         return getCarbsFromTime(now, true) // Supposant que cette méthode existe
-            .blockingGet()
             .filter { it.timestamp > now }
             .sumOf { it.amount }
     }

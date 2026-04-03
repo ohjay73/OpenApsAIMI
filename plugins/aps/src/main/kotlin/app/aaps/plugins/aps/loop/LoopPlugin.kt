@@ -118,6 +118,7 @@ class LoopPlugin @Inject constructor(
     private val commandQueue: CommandQueue,
     private val activePlugin: ActivePlugin,
     private val iobCobCalculator: IobCobCalculator,
+    private val glucoseStatusProvider: GlucoseStatusProvider,
     private val processedTbrEbData: ProcessedTbrEbData,
     private val receiverStatusStore: ReceiverStatusStore,
     private val fabricPrivacy: FabricPrivacy,
@@ -208,7 +209,7 @@ class LoopPlugin @Inject constructor(
                             LTag.APS,
                             "Periodic autodrive fallback (last glucose-driven loop ${sinceGlucoseMs}ms ago, period ${freqMs}ms, BG=$bg)"
                         )
-                        invoke("PeriodicApsMaxSmbFrequency", true)
+                        runBlocking { invoke("PeriodicApsMaxSmbFrequency", true) }
                     }
                 } else {
                     aapsLogger.debug(LTag.APS, "Pas de loop périodique : autodrive=$autodrive.")
@@ -953,7 +954,7 @@ class LoopPlugin @Inject constructor(
 
     private fun applySMBRequest(request: APSResult, callback: Callback?) {
         val pump = activePlugin.activePump
-        val lastBolusTime = persistenceLayer.getNewestBolus()?.timestamp ?: 0L
+        val lastBolusTime = runBlocking { persistenceLayer.getNewestBolus() }?.timestamp ?: 0L
         val now = dateUtil.now()
         val smbIntervalMin = preferences.get(IntKey.ApsMaxSmbFrequency)
         val lastBolusAgeSec = if (lastBolusTime > 0L) ((now - lastBolusTime).coerceAtLeast(0L) / 1000.0) else Double.NaN

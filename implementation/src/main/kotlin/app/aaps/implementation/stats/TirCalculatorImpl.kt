@@ -107,7 +107,7 @@ class TirCalculatorImpl @Inject constructor(
         if (lowMgdl > highMgdl) throw RuntimeException("Low > High")
         val startTime = dateUtil.now() - T.hours(hour = 1).msecs()
         val endTime = dateUtil.now()
-        val bgReadings = persistenceLayer.getBgReadingsDataFromTimeToTime(startTime, endTime, true)
+        val bgReadings = kotlinx.coroutines.runBlocking { persistenceLayer.getBgReadingsDataFromTimeToTime(startTime, endTime, true) }
 
         val result = LongSparseArray<TIR>()
         for (bg in bgReadings) {
@@ -128,7 +128,7 @@ class TirCalculatorImpl @Inject constructor(
         if (lowMgdl > highMgdl) throw RuntimeException("Low > High")
         val startTime = MidnightTime.calc(dateUtil.now())
         val endTime = dateUtil.now()
-        val bgReadings = persistenceLayer.getBgReadingsDataFromTimeToTime(startTime, endTime, true)
+        val bgReadings = kotlinx.coroutines.runBlocking { persistenceLayer.getBgReadingsDataFromTimeToTime(startTime, endTime, true) }
 
         val result = LongSparseArray<TIR>()
         for (bg in bgReadings) {
@@ -145,7 +145,6 @@ class TirCalculatorImpl @Inject constructor(
         return result
     }
 
-    override fun averageTIR(tirs: LongSparseArray<TIR>): TIR {
     /**
      * Calculates aggregate TIR statistics across multiple days.
      *
@@ -184,5 +183,4 @@ class TirCalculatorImpl @Inject constructor(
         }
         return totalTir
     }
-}
 }

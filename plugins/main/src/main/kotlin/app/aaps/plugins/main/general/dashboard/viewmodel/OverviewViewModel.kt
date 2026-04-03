@@ -6,9 +6,12 @@ import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import app.aaps.core.data.iob.InMemoryGlucoseValue
+import app.aaps.core.data.model.EB
 import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.data.model.RM
+import app.aaps.core.data.model.TB
 import app.aaps.core.data.model.TE
+import app.aaps.core.data.model.TT
 import app.aaps.core.data.model.TrendArrow
 import app.aaps.core.interfaces.aps.APSResult
 import app.aaps.core.interfaces.aps.IobTotal
@@ -30,11 +33,8 @@ import app.aaps.core.interfaces.aps.RT
 import app.aaps.plugins.aps.openAPSAIMI.trajectory.TrajectoryType
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventBucketedDataCreated
-import app.aaps.core.interfaces.rx.events.EventExtendedBolusChange
 import app.aaps.core.interfaces.rx.events.EventPumpStatusChanged
 import app.aaps.core.interfaces.rx.events.EventRefreshOverview
-import app.aaps.core.interfaces.rx.events.EventTempBasalChange
-import app.aaps.core.interfaces.rx.events.EventTempTargetChange
 import app.aaps.core.interfaces.rx.events.EventUpdateOverviewGraph
 import app.aaps.core.interfaces.rx.events.EventUpdateOverviewIobCob
 import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualitySnapshot
@@ -57,6 +57,13 @@ import app.aaps.core.interfaces.overview.OverviewData
 import app.aaps.plugins.main.R
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.max
@@ -88,6 +95,12 @@ class OverviewViewModel(
 
     private val disposables = CompositeDisposable()
     private var started = false
+    /** Cancelled in [stop]; Rx + DB observation for dashboard updates run here (same pattern as OverviewFragment flows). */
+    private var updateScope: CoroutineScope? = null
+
+    private fun launchUpdate(block: suspend () -> Unit) {
+        updateScope?.launch { block() }
+    }
 
     private val _statusCardState = MutableLiveData<StatusCardState>()
     val statusCardState: LiveData<StatusCardState> = _statusCardState
@@ -151,6 +164,7 @@ class OverviewViewModel(
 
     fun start() {
         if (started) return
+        updateScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         started = true
         subscribeToUpdates()
         refreshAll()
@@ -159,14 +173,20 @@ class OverviewViewModel(
     fun stop() {
         started = false
         disposables.clear()
+        updateScope?.cancel()
+        updateScope = null
     }
 
     override fun onCleared() {
         disposables.clear()
+        updateScope?.cancel()
+        updateScope = null
         super.onCleared()
     }
 
     private fun subscribeToUpdates() {
+        val scope = updateScope ?: return
+
         disposables += rxBus
             .toObservable(EventRefreshOverview::class.java)
             .observeOn(aapsSchedulers.io)
@@ -175,27 +195,12 @@ class OverviewViewModel(
         disposables += rxBus
             .toObservable(EventBucketedDataCreated::class.java)
             .observeOn(aapsSchedulers.io)
-            .subscribe({ updateStatus() }, fabricPrivacy::logException)
-
-        disposables += rxBus
-            .toObservable(EventTempBasalChange::class.java)
-            .observeOn(aapsSchedulers.io)
-            .subscribe({ updateAdjustments() }, fabricPrivacy::logException)
-
-        disposables += rxBus
-            .toObservable(EventTempTargetChange::class.java)
-            .observeOn(aapsSchedulers.io)
-            .subscribe({ updateAdjustments() }, fabricPrivacy::logException)
-
-        disposables += rxBus
-            .toObservable(EventExtendedBolusChange::class.java)
-            .observeOn(aapsSchedulers.io)
-            .subscribe({ updateAdjustments() }, fabricPrivacy::logException)
+            .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
 
         disposables += rxBus
             .toObservable(EventPumpStatusChanged::class.java)
             .observeOn(aapsSchedulers.io)
-            .subscribe({ updateStatus() }, fabricPrivacy::logException)
+            .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
 
         disposables += activePlugin.activeOverview.overviewBus
             .toObservable(EventUpdateOverviewGraph::class.java)
@@ -205,25 +210,48 @@ class OverviewViewModel(
         disposables += activePlugin.activeOverview.overviewBus
             .toObservable(EventUpdateOverviewIobCob::class.java)
             .observeOn(aapsSchedulers.io)
-            .subscribe({ updateStatus() }, fabricPrivacy::logException)
+            .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
 
         disposables += rxBus
             .toObservable(app.aaps.core.interfaces.rx.events.EventPreferenceChange::class.java)
             .observeOn(aapsSchedulers.io)
-            .subscribe({ 
+            .subscribe({
                 if (it.isChanged(app.aaps.core.keys.StringKey.OApsAIMIContextStorage.key)) {
-                    updateStatus() 
+                    launchUpdate { updateStatus() }
                 }
             }, fabricPrivacy::logException)
+
+        fun <T : Any> observePersistenceChanges(clazz: Class<T>) {
+            scope.launch {
+                try {
+                    persistenceLayer.observeChanges(clazz).collect {
+                        try {
+                            updateAdjustments()
+                        } catch (e: Exception) {
+                            fabricPrivacy.logException(e)
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    fabricPrivacy.logException(e)
+                }
+            }
+        }
+        observePersistenceChanges(TB::class.java)
+        observePersistenceChanges(TT::class.java)
+        observePersistenceChanges(EB::class.java)
     }
 
     private fun refreshAll() {
-        updateStatus()
-        updateAdjustments()
-        updateGraphMessage()
+        launchUpdate {
+            updateStatus()
+            updateAdjustments()
+            updateGraphMessage()
+        }
     }
 
-    private fun updateStatus() {
+    private suspend fun updateStatus() {
         refreshAdaptiveSmoothingQualityFromPlugin()
         val lastBg = lastBgData.lastBg()
         val glucoseText = profileUtil.fromMgdlToStringInUnits(lastBg?.recalculated)
@@ -233,8 +261,7 @@ class OverviewViewModel(
             profileUtil.fromMgdlToSignedStringInUnits(it)
         } ?: resourceHelper.gs(app.aaps.core.ui.R.string.value_unavailable_short)
         val iobText = totalIobText()
-        val cobText = iobCobCalculator
-            .getCobInfo("Dashboard COB")
+        val cobText = iobCobCalculator.getCobInfo("Dashboard COB")
             .displayText(resourceHelper, decimalFormatter)
             ?: resourceHelper.gs(app.aaps.core.ui.R.string.value_unavailable_short)
         val timeAgo = dateUtil.minAgoShort(lastBg?.timestamp)
@@ -261,10 +288,10 @@ class OverviewViewModel(
         }
         
         // 2. Reservoir
-        val reservoirText = activePlugin.activePump.reservoirLevel?.let { level ->
-            if (level > 0) decimalFormatter.to2Decimal(level) + " IE" 
+        val reservoirUnits = activePlugin.activePump.reservoirLevel.value.cU
+        val reservoirText =
+            if (reservoirUnits > 0) decimalFormatter.to2Decimal(reservoirUnits) + " IE"
             else null
-        }
         
         // 3. Infusion Age (from CarePortal)
         val infusionAgeText = persistenceLayer.getLastTherapyRecordUpToNow(TE.Type.CANNULA_CHANGE)?.let { event ->
@@ -303,15 +330,13 @@ class OverviewViewModel(
         } ?: "0%"
         
         // 7. Pump Battery
-        val pumpBatteryText = activePlugin.activePump.batteryLevel?.let { "$it%" }
-        
+        val pumpBatteryText = activePlugin.activePump.batteryLevel.value?.let { "$it%" }
+
         // 8. IOB (replacing Last Sensor Value as per user request)
-        val lastSensorValueText = run {
-            val bolus = bolusIob()
-            val basal = basalIob()
-            val total = bolus.iob + basal.basaliob
-            decimalFormatter.to2Decimal(total) + " IE"
-        }
+        val bolusForSensorLine = bolusIob()
+        val basalForSensorLine = basalIob()
+        val lastSensorValueText =
+            decimalFormatter.to2Decimal(bolusForSensorLine.iob + basalForSensorLine.basaliob) + " IE"
         
         // 9. TBR Rate (Combined U/h and %)
         val tbrRateText = processedTbrEbData.getTempBasalIncludingConvertedExtended(dateUtil.now())?.takeIf { it.isInProgress }?.let { tbr ->
@@ -524,7 +549,7 @@ class OverviewViewModel(
      * Total IOB can be negative (insulin debt from low TBR), which is valid
      * and important clinical information to display.
      */
-    private fun totalIobText(): String {
+    private suspend fun totalIobText(): String {
         val bolus = bolusIob()
         val basal = basalIob()
         
@@ -542,9 +567,10 @@ class OverviewViewModel(
         return "IOB: $formattedTotal"
     }
 
-    private fun bolusIob(): IobTotal = iobCobCalculator.calculateIobFromBolus().round()
+    private suspend fun bolusIob(): IobTotal = iobCobCalculator.calculateIobFromBolus().round()
 
-    private fun basalIob(): IobTotal = iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended().round()
+    private suspend fun basalIob(): IobTotal =
+        iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended().round()
 
     private fun loopStatusText(mode: RM.Mode): String =
         resourceHelper.gs(
@@ -562,7 +588,7 @@ class OverviewViewModel(
             }
         )
 
-    private fun updateAdjustments() {
+    private suspend fun updateAdjustments() {
         val now = dateUtil.now()
         val lastBg = lastBgData.lastBg()
         val trendArrow = trendCalculator.getTrendArrow(iobCobCalculator.ads)
@@ -607,7 +633,7 @@ class OverviewViewModel(
         _graphMessage.postValue(message)
     }
 
-    private fun buildActiveAdjustments(now: Long): List<String> {
+    private suspend fun buildActiveAdjustments(now: Long): List<String> {
         val adjustments = mutableListOf<String>()
         processedTbrEbData.getTempBasalIncludingConvertedExtended(now)?.takeIf { it.isInProgress }?.let {
             adjustments += resourceHelper.gs(R.string.dashboard_adjustment_temp_basal, it.toStringShort(resourceHelper))
@@ -662,7 +688,7 @@ class OverviewViewModel(
         return resourceHelper.gs(R.string.dashboard_adjustment_prediction, "→", valueText, minutesText)
     }
 
-    private fun buildIobActivityLine(): String {
+    private suspend fun buildIobActivityLine(): String {
         val autosensPercent = ((loop.lastRun?.request?.autosensResult?.ratio ?: 1.0) * 100.0)
         val activityText = decimalFormatter.to0Decimal(autosensPercent)
         return resourceHelper.gs(R.string.dashboard_adjustment_iob_activity, totalIobText(), activityText)
@@ -723,11 +749,11 @@ class OverviewViewModel(
         return resourceHelper.gs(R.string.dashboard_aimi_pulse_meta, smb, basalDisplay, sens)
     }
 
-    private fun buildPumpLine(now: Long): String {
-        val reservoirLevel = activePlugin.activePump.reservoirLevel
+    private suspend fun buildPumpLine(now: Long): String {
+        val reservoirUnits = activePlugin.activePump.reservoirLevel.value.cU
         val reservoirText =
-            if (reservoirLevel > 0)
-                resourceHelper.gs(app.aaps.core.ui.R.string.format_insulin_units, reservoirLevel)
+            if (reservoirUnits > 0)
+                resourceHelper.gs(app.aaps.core.ui.R.string.format_insulin_units, reservoirUnits)
             else resourceHelper.gs(app.aaps.core.ui.R.string.value_unavailable_short)
 
         val siteEvent = persistenceLayer.getLastTherapyRecordUpToNow(TE.Type.CANNULA_CHANGE)
@@ -750,9 +776,10 @@ class OverviewViewModel(
             }
         }
 
-        val lastConnection = activePlugin.activePump.lastDataTime
+        val lastConnection = activePlugin.activePump.lastDataTime.value
         val threshold = T.mins(preferences.get(IntKey.AlertsPumpUnreachableThreshold).toLong()).msecs()
-        val isUnreachable = preferences.get(app.aaps.core.keys.BooleanKey.AlertPumpUnreachable) && (lastConnection + threshold < now)
+        val isUnreachable =
+            preferences.get(app.aaps.core.keys.BooleanKey.AlertPumpUnreachable) && (lastConnection + threshold < now)
 
         val statusText = if (isUnreachable) {
             val unreachableText = resourceHelper.gs(app.aaps.core.ui.R.string.pump_unreachable)
@@ -801,7 +828,7 @@ class OverviewViewModel(
         return resourceHelper.gs(R.string.dashboard_adjustment_safety, level, finalSafetyText)
     }
 
-    private fun resolveModeLine(now: Long): String? {
+    private suspend fun resolveModeLine(now: Long): String? {
         val events = persistenceLayer.getTherapyEventDataFromTime(now - MODE_LOOKBACK_MS, TE.Type.NOTE, false)
         var latest: Pair<TE, ModeKeyword>? = null
         events.forEach { event ->

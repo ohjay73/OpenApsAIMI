@@ -15,7 +15,7 @@ import app.aaps.core.keys.interfaces.IntentPreferenceKey
  */
 enum class IntentKey(
     override val key: String,
-    override val titleResId: Int,
+    override val titleResId: Int = 0,
     override val summaryResId: Int? = null,
     override val preferenceType: PreferenceType = PreferenceType.CLICK,
     override val defaultedBySM: Boolean = false,

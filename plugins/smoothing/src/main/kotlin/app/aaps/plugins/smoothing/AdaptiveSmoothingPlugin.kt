@@ -14,7 +14,9 @@ import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.AapsSchedulers
 import app.aaps.core.interfaces.rx.bus.RxBus
-import app.aaps.core.interfaces.rx.events.EventTherapyEventChange
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.collect
 import app.aaps.core.interfaces.rx.events.EventAdaptiveSmoothingQuality
 import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualitySnapshot
 import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualityTier
@@ -128,8 +130,8 @@ class AdaptiveSmoothingPlugin @Inject constructor(
 
     // Events
     private val resetRequested = AtomicBoolean(false)
-    private val disposable = CompositeDisposable()
-    private val sensorChangeDisposables = CompositeDisposable()
+    private var sensorChangeJob: kotlinx.coroutines.Job? = null
+    private var loadSensorChangeJob: kotlinx.coroutines.Job? = null
 
     // Safety Context
     private data class GlycemicContext(
@@ -166,8 +168,8 @@ class AdaptiveSmoothingPlugin @Inject constructor(
 
     override fun onStop() {
         super.onStop()
-        disposable.clear()
-        sensorChangeDisposables.clear()
+        sensorChangeJob?.cancel()
+        loadSensorChangeJob?.cancel()
     }
 
     // ============================================================
@@ -468,8 +470,8 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         val rawDelta = valCur - valOld1
         
         // IOB Safety
-        val bolusIob = iobCobCalculator.calculateIobFromBolus().iob
-        val basalIob = iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended().iob
+        val bolusIob = kotlinx.coroutines.runBlocking { iobCobCalculator.calculateIobFromBolus().iob }
+        val basalIob = kotlinx.coroutines.runBlocking { iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended().iob }
         val iob = bolusIob + basalIob
 
         // Night
@@ -754,36 +756,34 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     }
 
     private fun subscribeToSensorChanges() {
-        disposable += rxBus.toObservable(EventTherapyEventChange::class.java)
-            .observeOn(aapsSchedulers.io)
-            // Debounce because EventTherapyEventChange can be fired for many TE types.
-            .throttleFirst(SENSOR_CHANGE_DEBOUNCE_SECONDS, TimeUnit.SECONDS)
-            .subscribe(
-                { checkForSensorChange() },
-                { t ->
-                    aapsLogger.error(LTag.GLUCOSE, "AdaptiveSmoothing: sensor subscription error", t)
-                }
-            )
+        sensorChangeJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                persistenceLayer.observeChanges(TE::class.java)
+                    .debounce(SENSOR_CHANGE_DEBOUNCE_SECONDS * 1000)
+                    .collect { 
+                        checkForSensorChange()
+                    }
+            } catch (t: Exception) {
+                aapsLogger.error(LTag.GLUCOSE, "AdaptiveSmoothing: sensor subscription error", t)
+            }
+        }
     }
 
     private fun loadLastSensorChange() {
-        // Ensure we don't stack multiple DB queries/subscriptions on frequent triggers.
-        sensorChangeDisposables.clear()
-        sensorChangeDisposables += persistenceLayer.getTherapyEventDataFromTime(System.currentTimeMillis() - 30L*24*3600*1000, false)
-            .observeOn(aapsSchedulers.io)
-            .subscribe({ events ->
-                val latest = events
-                    .asSequence()
-                    .filter { it.type == TE.Type.SENSOR_CHANGE }
-                    .maxByOrNull { it.timestamp }
+        loadSensorChangeJob?.cancel()
+        loadSensorChangeJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                val events = persistenceLayer.getTherapyEventDataFromTime(System.currentTimeMillis() - 30L*24*3600*1000, false)
+                val latest = events.asSequence().filter { it.type == TE.Type.SENSOR_CHANGE }.maxByOrNull { it.timestamp }
 
                 if (latest != null && latest.timestamp > lastSensorChangeTimestamp) {
                     lastSensorChangeTimestamp = latest.timestamp
                     resetRequested.set(true)
                 }
-            }, { t ->
+            } catch (t: Exception) {
                 aapsLogger.error(LTag.GLUCOSE, "AdaptiveSmoothing: loadLastSensorChange error", t)
-            })
+            }
+        }
     }
     
     private fun checkForSensorChange() {

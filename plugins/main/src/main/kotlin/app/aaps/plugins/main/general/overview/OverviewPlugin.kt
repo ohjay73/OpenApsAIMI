@@ -64,7 +64,6 @@ class OverviewPlugin @Inject constructor(
     aapsLogger: AAPSLogger,
     rh: ResourceHelper,
     preferences: Preferences,
-    private val notificationStore: NotificationStore,
     private val fabricPrivacy: FabricPrivacy,
     private val rxBus: RxBus,
     private val aapsSchedulers: AapsSchedulers,

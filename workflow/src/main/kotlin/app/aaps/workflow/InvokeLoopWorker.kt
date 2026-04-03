@@ -5,6 +5,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.iob.IobCobCalculator
+
 import app.aaps.core.objects.workflow.LoggingWorker
 import app.aaps.core.utils.receivers.DataWorkerStorage
 import kotlinx.coroutines.Dispatchers
@@ -34,7 +35,7 @@ class InvokeLoopWorker(
         val data = dataWorkerStorage.pickupObject(inputData.getLong(DataWorkerStorage.STORE_KEY, -1)) as? InvokeLoopData?
             ?: return Result.failure(workDataOf("Error" to "missing input data"))
 
-        if (data.cause !is EventNewBG && data.cause !is EventNewHistoryData) return Result.success(workDataOf("Result" to "no calculation needed"))
+        if (!data.triggeredByNewBG) return Result.success(workDataOf("Result" to "no calculation needed"))
         val glucoseValue = iobCobCalculator.ads.actualBg() ?: return Result.success(workDataOf("Result" to "bg outdated"))
 
         if (glucoseValue.timestamp <= loop.lastBgTriggeredRun) {
@@ -42,7 +43,7 @@ class InvokeLoopWorker(
         }
         loop.lastBgTriggeredRun = glucoseValue.timestamp
 
-        val causeName = data.cause?.javaClass?.simpleName ?: "Unknown"
+        val causeName = if (data.triggeredByNewBG) "NewBG" else "Unknown"
         loop.invoke("Calculation for $glucoseValue (cause=$causeName)", true)
         return Result.success()
     }

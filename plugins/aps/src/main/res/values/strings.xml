@@ -403,6 +403,8 @@
     <string name="OApsAIMI_Enable_pregnancy">Pregnancy Mode</string>
     <string name="OApsAIMI_PregnancyDueDate_title">Due Date (Terme)</string>
     <string name="OApsAIMI_PregnancyDueDate_summary">Enter estimated delivery date (YYYY-MM-DD) to enable gestational autopilot.</string>
+    <string name="OApsAIMI_RemoteControlPin_title">Remote control PIN</string>
+    <string name="OApsAIMI_RemoteControlPin_summary">PIN for AIMI remote control features.</string>
     <string name="error_invalid_date_format">Invalid format. Please use YYYY-MM-DD.</string>
     <string name="OApsAIMI_Force_Limits">Force AAPS Multiplier Limits</string>
     <string name="OApsAIMI_Enable_honeymoon">Child Mode (insulin needs lower than adult)</string>

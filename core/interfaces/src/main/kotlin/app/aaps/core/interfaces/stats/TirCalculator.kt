@@ -67,9 +67,6 @@ interface TirCalculator {
      * @return TIR object with aggregated counts from all days
      */
     fun averageTIR(tirs: LongSparseArray<TIR>): TIR
-    fun calculate(days: Long, lowMgdl: Double, highMgdl: Double): LongSparseArray<TIR>
     fun calculateHour(lowMgdl: Double, highMgdl: Double): LongSparseArray<TIR>
     fun calculateDaily(lowMgdl: Double, highMgdl: Double): LongSparseArray<TIR>
-    fun stats(context: Context): TableLayout
-    fun averageTIR(tirs: LongSparseArray<TIR>): TIR?
 }

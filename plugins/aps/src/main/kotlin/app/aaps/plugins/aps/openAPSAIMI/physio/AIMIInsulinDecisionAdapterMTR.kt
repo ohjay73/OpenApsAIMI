@@ -10,6 +10,7 @@ import app.aaps.plugins.aps.openAPSAIMI.physio.KernelType
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
+import kotlinx.coroutines.runBlocking
 
 /**
  * 💉 AIMI Insulin Decision Adapter - MTR Implementation
@@ -333,11 +334,14 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
         
         // Check therapy events for hypo treatments
         try {
-            val hypoEvents = persistenceLayer.getTherapyEventDataFromTime(
-                now - RECENT_HYPO_WINDOW_MS,
-                TE.Type.NOTE,
-                false
-            ).filter { event ->
+            val events = runBlocking {
+                persistenceLayer.getTherapyEventDataFromTime(
+                    now - RECENT_HYPO_WINDOW_MS,
+                    TE.Type.NOTE,
+                    ascending = false
+                )
+            }
+            val hypoEvents = events.filter { event ->
                 event.note?.contains("hypo", ignoreCase = true) == true ||
                 event.note?.contains("hypoglycemia", ignoreCase = true) == true
             }

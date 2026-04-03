@@ -19,7 +19,9 @@ import app.aaps.core.interfaces.nsclient.NSClientRepository
 import app.aaps.core.interfaces.nsclient.StoreDataForDb
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.LocalProfileManager
+import app.aaps.core.interfaces.profile.ProfileSource
 import app.aaps.core.interfaces.profile.ProfileStore
+import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.source.NSClientSource
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.keys.BooleanKey
@@ -72,7 +74,7 @@ class NsIncomingDataProcessor @Inject constructor(
     private val config: Config,
     private val profileStoreProvider: Provider<ProfileStore>,
     private val notificationManager: NotificationManager,
-    private val nsClientRepository: NSClientRepository
+    private val nsClientRepository: NSClientRepository,
     private val profileSource: ProfileSource,
     private val uiInteraction: UiInteraction,
     private val contextManager: app.aaps.plugins.aps.openAPSAIMI.context.ContextManager

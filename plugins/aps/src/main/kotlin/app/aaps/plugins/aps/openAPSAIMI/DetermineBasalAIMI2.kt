@@ -88,6 +88,7 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.collections.asSequence
+import kotlinx.coroutines.runBlocking
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.max
@@ -297,6 +298,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private val gestationalAutopilot: app.aaps.plugins.aps.openAPSAIMI.advisor.gestation.GestationalAutopilot,
     private val auditorOrchestrator: app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.AuditorOrchestrator,
     private val uiInteraction: UiInteraction,
+    private val notificationManager: app.aaps.core.interfaces.notifications.NotificationManager,
     private val wCycleFacade: WCycleFacade,
     private val wCyclePreferences: WCyclePreferences,
     private val wCycleLearner: WCycleLearner,
@@ -366,10 +368,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 fetcher = { fromMillis: Long ->
                     // Récupère les TBR depuis 'fromMillis', puis trie DESC par timestamp
                     val raws: List<TB> = try {
-                        // Adapte le nom exact de l’API selon ta persistence
-                        persistenceLayer
-                            .getTemporaryBasalsStartingFromTime(fromMillis,ascending = false)    // souvent retourne Single<List<TB>>
-                            .blockingGet()
+                        runBlocking {
+                            persistenceLayer.getTemporaryBasalsStartingFromTime(fromMillis, ascending = false)
+                        }
                     } catch (t: Throwable) {
                         emptyList()
                     }
@@ -1192,11 +1193,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val lookback30min = now - 30 * 60 * 1000L
         
         return try {
-            val boluses = persistenceLayer
-                .getBolusesFromTime(lookback30min, ascending = false)
-                .blockingGet()
-                .filter { it.type == BS.Type.SMB }
-            
+            val boluses = runBlocking {
+                persistenceLayer.getBolusesFromTime(lookback30min, ascending = false)
+            }.filter { it.type == BS.Type.SMB }
+
             boluses.sumOf { it.amount }
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "Failed to calculate SMB last 30min", e)
@@ -1819,7 +1819,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         chainAfterRefractory = gatedUnits
 
          // 🔧 FIX 2: Adaptive AbsorptionGuard threshold (pediatric-safe)
-         val tdd24h = tddCalculator.calculateDaily(-24, 0)?.totalAmount ?: 30.0
+         val tdd24h = runBlocking { tddCalculator.calculateDaily(-24, 0) }?.totalAmount ?: 30.0
          val activityThreshold = (tdd24h / 24.0) * 0.15 // 15% of hourly TDD
          
         if (sinceBolus < 20.0 && iobActivityNow > activityThreshold && !isExplicitUserAction && !mealPriorityContext) {
@@ -2228,7 +2228,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val lookbackTime = dateUtil.now() - minutes * 60 * 1000L
         
         // 1. Check DB
-        val boluses = persistenceLayer.getBolusesFromTime(lookbackTime, true).blockingGet()
+        val boluses = runBlocking { persistenceLayer.getBolusesFromTime(lookbackTime, true) }
         val dbHasBolus = boluses.any { it.amount > 0.3 }
 
         // 2. Check Pump Status Memory (Fallback)
@@ -3721,11 +3721,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         if (tracking && info.dayInCycle > limit) {
              if (info.dayInCycle != lastCycleNotificationDay) {
                  val msg = "⚠️ WCycle: J${info.dayInCycle} > $limit. Retard détecté.\nMettre à jour le 1er jour des règles ?"
-                 consoleLog.add(msg)
-                 uiInteraction.addNotification(
-                    app.aaps.core.interfaces.notifications.Notification.HYPO_RISK_ALARM,
-                    msg,
-                    app.aaps.core.interfaces.notifications.Notification.URGENT
+                 notificationManager.post(
+                     id = app.aaps.core.interfaces.notifications.NotificationId.HYPO_RISK_ALARM,
+                     text = msg
                  )
                  lastCycleNotificationDay = info.dayInCycle
              }
@@ -4576,7 +4574,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     analysis.warnings.filter { it.severity >= app.aaps.plugins.aps.openAPSAIMI.trajectory.WarningSeverity.HIGH }.forEach { w ->
                         consoleLog.add("  🚨 ${w.severity.emoji()} ${w.message}")
                         if (w.severity == app.aaps.plugins.aps.openAPSAIMI.trajectory.WarningSeverity.CRITICAL) {
-                            try { uiInteraction.addNotification(w.type.hashCode(), w.message, 2) } catch (e: Exception) {}
+                            try {
+                                notificationManager.post(
+                                    id = app.aaps.core.interfaces.notifications.NotificationId.AUTOMATION_MESSAGE,
+                                    text = w.message
+                                )
+                            } catch (e: Exception) {}
                         }
                     }
                     analysis.predictedConvergenceTime?.let {
@@ -5024,7 +5027,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // On définit fromTime pour couvrir une longue période (par exemple, les 7 derniers jours)
         val fromTime = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(7)
 // Récupération des événements de changement de cannule
-        val siteChanges = persistenceLayer.getTherapyEventDataFromTime(fromTime, TE.Type.CANNULA_CHANGE, true)
+        val siteChanges = runBlocking {
+            persistenceLayer.getTherapyEventDataFromTime(fromTime, TE.Type.CANNULA_CHANGE, true)
+        }
 
 // Calcul de l'âge du site en jours
         val pumpAgeDays: Float = if (siteChanges.isNotEmpty()) {
@@ -5105,7 +5110,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val dayOfWeek = calendarInstance[Calendar.DAY_OF_WEEK]
         val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
         this.bg = glucoseStatus.glucose
-        val getlastBolusSMB = persistenceLayer.getNewestBolusOfType(BS.Type.SMB)
+        val getlastBolusSMB = runBlocking { persistenceLayer.getNewestBolusOfType(BS.Type.SMB) }
         val lastBolusSMBTime = getlastBolusSMB?.timestamp ?: 0L
         //val lastBolusSMBMinutes = lastBolusSMBTime / 60000
         this.lastBolusSMBUnit = getlastBolusSMB?.amount?.toFloat() ?: 0.0F
@@ -5188,20 +5193,30 @@ class DetermineBasalaimiSMB2 @Inject constructor(
              consoleLog.add("🔒 STRICT CLAMP: BG<120 -> Forced Standard MaxSMB (${String.format("%.2f", stdMaxSMB)}U)")
         }
         val ngrConfig = buildNightGrowthResistanceConfig(profile, autosens_data, glucoseStatus, targetBg.toDouble())
-        this.tir1DAYabove = tirCalculator.averageTIR(tirCalculator.calculate(1, 65.0, 180.0))?.abovePct()!!
-        val tir1DAYIR = tirCalculator.averageTIR(tirCalculator.calculate(1, 65.0, 180.0))?.inRangePct()!!
-        this.currentTIRLow = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0))?.belowPct()!!
-        this.currentTIRRange = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0))?.inRangePct()!!
-        this.currentTIRAbove = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0))?.abovePct()!!
-        this.lastHourTIRLow = tirCalculator.averageTIR(tirCalculator.calculateHour(80.0, 140.0))?.belowPct()!!
-        val lastHourTIRAbove = tirCalculator.averageTIR(tirCalculator.calculateHour(72.0, 140.0))?.abovePct()
-        this.lastHourTIRLow100 = tirCalculator.averageTIR(tirCalculator.calculateHour(100.0, 140.0))?.belowPct()!!
-        this.lastHourTIRabove170 = tirCalculator.averageTIR(tirCalculator.calculateHour(100.0, 170.0))?.abovePct()!!
-        this.lastHourTIRabove120 = tirCalculator.averageTIR(tirCalculator.calculateHour(100.0, 120.0))?.abovePct()!!
-        val tirbasal3IR = tirCalculator.averageTIR(tirCalculator.calculate(3, 65.0, 120.0))?.inRangePct()
-        val tirbasal3B = tirCalculator.averageTIR(tirCalculator.calculate(3, 65.0, 120.0))?.belowPct()
-        val tirbasal3A = tirCalculator.averageTIR(tirCalculator.calculate(3, 65.0, 120.0))?.abovePct()
-        val tirbasalhAP = tirCalculator.averageTIR(tirCalculator.calculateHour(65.0, 100.0))?.abovePct()
+        var tir1DAYIR = 0.0
+        var lastHourTIRAbove: Double? = null
+        var tirbasal3IR: Double? = null
+        var tirbasal3B: Double? = null
+        var tirbasal3A: Double? = null
+        var tirbasalhAP: Double? = null
+        runBlocking {
+            val tir1Day = tirCalculator.calculate(1, 65.0, 180.0)
+            this@DetermineBasalaimiSMB2.tir1DAYabove = tirCalculator.averageTIR(tir1Day)?.abovePct()!!
+            tir1DAYIR = tirCalculator.averageTIR(tir1Day)?.inRangePct()!!
+            this@DetermineBasalaimiSMB2.currentTIRLow = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0))?.belowPct()!!
+            this@DetermineBasalaimiSMB2.currentTIRRange = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0))?.inRangePct()!!
+            this@DetermineBasalaimiSMB2.currentTIRAbove = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0))?.abovePct()!!
+            this@DetermineBasalaimiSMB2.lastHourTIRLow = tirCalculator.averageTIR(tirCalculator.calculateHour(80.0, 140.0))?.belowPct()!!
+            lastHourTIRAbove = tirCalculator.averageTIR(tirCalculator.calculateHour(72.0, 140.0))?.abovePct()
+            this@DetermineBasalaimiSMB2.lastHourTIRLow100 = tirCalculator.averageTIR(tirCalculator.calculateHour(100.0, 140.0))?.belowPct()!!
+            this@DetermineBasalaimiSMB2.lastHourTIRabove170 = tirCalculator.averageTIR(tirCalculator.calculateHour(100.0, 170.0))?.abovePct()!!
+            this@DetermineBasalaimiSMB2.lastHourTIRabove120 = tirCalculator.averageTIR(tirCalculator.calculateHour(100.0, 120.0))?.abovePct()!!
+            val tir3 = tirCalculator.calculate(3, 65.0, 120.0)
+            tirbasal3IR = tirCalculator.averageTIR(tir3)?.inRangePct()
+            tirbasal3B = tirCalculator.averageTIR(tir3)?.belowPct()
+            tirbasal3A = tirCalculator.averageTIR(tir3)?.abovePct()
+            tirbasalhAP = tirCalculator.averageTIR(tirCalculator.calculateHour(65.0, 100.0))?.abovePct()
+        }
         //this.enablebasal = preferences.get(BooleanKey.OApsAIMIEnableBasal)
         this.now = System.currentTimeMillis()
         automateDeletionIfBadDay(tir1DAYIR.toInt())
@@ -5210,17 +5225,17 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         var lastCarbTimestamp = mealData.lastCarbTime
         if (lastCarbTimestamp.toInt() == 0) {
             val oneDayAgoIfNotFound = now - 24 * 60 * 60 * 1000
-            lastCarbTimestamp = persistenceLayer.getMostRecentCarbByDate() ?: oneDayAgoIfNotFound
+            lastCarbTimestamp = runBlocking { persistenceLayer.getMostRecentCarbByDate() } ?: oneDayAgoIfNotFound
         }
         this.lastCarbAgeMin = ((now - lastCarbTimestamp) / (60 * 1000)).toInt()
 
-        this.futureCarbs = persistenceLayer.getFutureCob().toFloat()
+        this.futureCarbs = runBlocking { persistenceLayer.getFutureCob() }.toFloat()
         if (lastCarbAgeMin < 15 && cob == 0.0f) {
-            this.cob = persistenceLayer.getMostRecentCarbAmount()?.toFloat() ?: 0.0f
+            this.cob = runBlocking { persistenceLayer.getMostRecentCarbAmount()?.toFloat() } ?: 0.0f
         }
 
         val fourHoursAgo = now - 4 * 60 * 60 * 1000
-        this.recentNotes = persistenceLayer.getUserEntryDataFromTime(fourHoursAgo).blockingGet()
+        this.recentNotes = runBlocking { persistenceLayer.getUserEntryDataFromTime(fourHoursAgo) }
 
         this.tags0to60minAgo = parseNotes(0, 60)
         this.tags60to120minAgo = parseNotes(60, 120)
@@ -5331,10 +5346,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             val t3cCapCutoff   = System.currentTimeMillis() - t3cCapWindowMs
             
             // 1. Check Database (Harden: count ALL bolus types, not just SMB)
-            val recentBolusCount = persistenceLayer
-                .getBolusesFromTime(t3cCapCutoff, true)
-                .blockingGet()
-                .count { it.type == BS.Type.SMB || it.type == BS.Type.NORMAL }
+            val recentBolusCount = runBlocking {
+                persistenceLayer.getBolusesFromTime(t3cCapCutoff, true)
+            }.count { it.type == BS.Type.SMB || it.type == BS.Type.NORMAL }
 
             // 2. Check Internal Memory (Ensures 1 tick = 1 dose max even if DB is slow)
             val timeSinceInternalSmbMs = System.currentTimeMillis() - internalLastSmbMillis
@@ -5486,7 +5500,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         // 🕒 FCL 5.0 Pre-calc: Total Bolus Volume Last Hour
         val oneHourAgo = now - (60 * 60 * 1000L)
-        val bolusesHistory = persistenceLayer.getBolusesFromTime(oneHourAgo, true).blockingGet()
+        val bolusesHistory = runBlocking { persistenceLayer.getBolusesFromTime(oneHourAgo, true) }
         val totalBolusLastHour = bolusesHistory.sumOf { it.amount }
 
         val bgTrend = calculateBgTrend(recentBGs, reason)
@@ -5526,7 +5540,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             mealFlags = mealFlags
         )
         // tdd7P already hoisted to start of function
-        var tdd24Hrs = tddCalculator.calculateDaily(-24, 0)?.totalAmount?.toFloat() ?: 0.0f
+        var tdd24Hrs = runBlocking { tddCalculator.calculateDaily(-24, 0) }?.totalAmount?.toFloat() ?: 0.0f
         if (tdd24Hrs == 0.0f) tdd24Hrs = tdd7P.toFloat()
         // TODO eliminate
         val bgTime = glucoseStatus.date
@@ -5690,11 +5704,15 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // tdd7Days already hoisted to start of function
         this.tdd7DaysPerHour = (tdd7Days / 24).toFloat()
 
-        var tdd2Days = tddCalculator.averageTDD(tddCalculator.calculate(2, allowMissingDays = false))?.data?.totalAmount?.toFloat() ?: 0.0f
+        var tdd2Days = tddCalculator.averageTDD(
+            runBlocking { tddCalculator.calculate(2, allowMissingDays = false) }
+        )?.data?.totalAmount?.toFloat() ?: 0.0f
         if (tdd2Days == 0.0f || tdd2Days < tdd7P) tdd2Days = tdd7P.toFloat()
         this.tdd2DaysPerHour = tdd2Days / 24
 
-        var tddDaily = tddCalculator.averageTDD(tddCalculator.calculate(1, allowMissingDays = false))?.data?.totalAmount?.toFloat() ?: 0.0f
+        var tddDaily = tddCalculator.averageTDD(
+            runBlocking { tddCalculator.calculate(1, allowMissingDays = false) }
+        )?.data?.totalAmount?.toFloat() ?: 0.0f
         if (tddDaily == 0.0f || tddDaily < tdd7P / 2) tddDaily = tdd7P.toFloat()
         this.tddPerHour = tddDaily / 24
 
@@ -6327,7 +6345,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             // Robust Steps Retrieval (Matches HR logic)
             // Search window: 210 mins to cover 180min + delays
             val stepsSearchStart = now - 210 * 60 * 1000
-            val allStepsCounts = persistenceLayer.getStepsCountFromTimeToTime(stepsSearchStart, now)
+            val allStepsCounts = runBlocking {
+                persistenceLayer.getStepsCountFromTimeToTime(stepsSearchStart, now)
+            }
 
             if (allStepsCounts.isNotEmpty()) {
                 val lastSteps = allStepsCounts.maxByOrNull { it.timestamp }
@@ -6374,7 +6394,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         try {
             // Search window: 200 mins to cover the 180min avg + buffer for overlapping records
             val searchStart = now - 200 * 60 * 1000
-            val allHeartRates = persistenceLayer.getHeartRatesFromTimeToTime(searchStart, now)
+            val allHeartRates = runBlocking {
+                persistenceLayer.getHeartRatesFromTimeToTime(searchStart, now)
+            }
 
             // Debug info for the user/screenshot
             if (allHeartRates.isNotEmpty()) {
@@ -7335,8 +7357,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             //rT.reason.append("Eventual BG " + convertBG(eventualBG) + " >= " + convertBG(max_bg) + ", ")
             rT.reason.append(context.getString(R.string.reason_eventual_bg, convertBG(eventualBG), convertBG(max_bg)))
         }
-        val tdd24h = tddCalculator.averageTDD(tddCalculator.calculate(1, allowMissingDays = false))?.data?.totalAmount ?: 0.0
-        val tirInHypo = tirCalculator.averageTIR(tirCalculator.calculate(1, 65.0, 180.0))?.belowPct() ?: 0.0
+        val tdd24h = tddCalculator.averageTDD(
+            runBlocking { tddCalculator.calculate(1, allowMissingDays = false) }
+        )?.data?.totalAmount ?: 0.0
+        val tirInHypo = tirCalculator.averageTIR(
+            runBlocking { tirCalculator.calculate(1, 65.0, 180.0) }
+        )?.belowPct() ?: 0.0
         val safetyDecision = safetyAdjustment(
             currentBG = glucoseStatus.glucose.toFloat(),
             predictedBG = eventualBG.toFloat(),
@@ -7353,10 +7379,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         rT.isHypoRisk = safetyDecision.isHypoRisk
 
         if (safetyDecision.isHypoRisk) {
-            uiInteraction.addNotification(
-                app.aaps.core.interfaces.notifications.Notification.HYPO_RISK_ALARM,
-                context.getString(R.string.hypo_risk_notification_text),
-                app.aaps.core.interfaces.notifications.Notification.URGENT
+            notificationManager.post(
+                id = app.aaps.core.interfaces.notifications.NotificationId.HYPO_RISK_ALARM,
+                text = context.getString(R.string.hypo_risk_notification_text)
             )
         }
         // --- helpers ---
@@ -8417,7 +8442,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val predChunk = "${if (predAvailable) "Y" else "N"}(sz=${predSize} ev=${eventual.roundToInt()})"
 
         // 🔧 FIX 4: Enhanced diagnostic logging with activity threshold
-        val tdd24h = tddCalculator.calculateDaily(-24, 0)?.totalAmount ?: 30.0
+        val tdd24h = runBlocking { tddCalculator.calculateDaily(-24, 0) }?.totalAmount ?: 30.0
         val activityThreshold = (tdd24h / 24.0) * 0.15
         
         // 🧬 Unified Learning Update (Centralized)

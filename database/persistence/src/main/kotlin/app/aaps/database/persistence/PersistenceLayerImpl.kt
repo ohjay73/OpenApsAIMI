@@ -2032,62 +2032,65 @@ class PersistenceLayerImpl @Inject constructor(
         }
     }
 
-    override suspend fun syncNsTherapyEvents(therapyEvents: List<TE>, doLog: Boolean): Single<PersistenceLayer.TransactionResult<TE>> =
-        repository.runTransactionForResult(SyncNsTherapyEventTransaction(therapyEvents.asSequence().map { it.toDb() }.toList(), config.AAPSCLIENT))
-            .doOnError { aapsLogger.error(LTag.DATABASE, "Error while saving TherapyEvent", it) }
-            .map { result ->
-                val transactionResult = PersistenceLayer.TransactionResult<TE>()
-                val ueValues = mutableListOf<UE>()
-                result.inserted.forEach { therapyEvent ->
-                    val action = when (therapyEvent.type) {
-                        TherapyEvent.Type.CANNULA_CHANGE -> Action.SITE_CHANGE
-                        TherapyEvent.Type.INSULIN_CHANGE -> Action.RESERVOIR_CHANGE
-                        else                             -> Action.CAREPORTAL
-                    }
-                    if (doLog) ueValues.add(
-                        UE(
-                            timestamp = dateUtil.now(),
-                            action = action,
-                            source = Sources.NSClient,
-                            note = therapyEvent.note ?: "",
-                            values = listOfNotNull(
-                                ValueWithUnit.Timestamp(therapyEvent.timestamp),
-                                ValueWithUnit.TEType(therapyEvent.type.fromDb()),
-                                ValueWithUnit.fromGlucoseUnit(therapyEvent.glucose ?: 0.0, therapyEvent.glucoseUnit.fromDb()).takeIf { therapyEvent.glucose != null }
-                            )
+    override suspend fun syncNsTherapyEvents(therapyEvents: List<TE>, doLog: Boolean): PersistenceLayer.TransactionResult<TE> = withContext(Dispatchers.IO) {
+        try {
+            val result = repository.runTransactionForResultSuspend(SyncNsTherapyEventTransaction(therapyEvents.asSequence().map { it.toDb() }.toList(), config.AAPSCLIENT))
+            val transactionResult = PersistenceLayer.TransactionResult<TE>()
+            val ueValues = mutableListOf<UE>()
+            result.inserted.forEach { therapyEvent ->
+                val action = when (therapyEvent.type) {
+                    TherapyEvent.Type.CANNULA_CHANGE -> Action.SITE_CHANGE
+                    TherapyEvent.Type.INSULIN_CHANGE -> Action.RESERVOIR_CHANGE
+                    else                             -> Action.CAREPORTAL
+                }
+                if (doLog) ueValues.add(
+                    UE(
+                        timestamp = dateUtil.now(),
+                        action = action,
+                        source = Sources.NSClient,
+                        note = therapyEvent.note ?: "",
+                        values = listOfNotNull(
+                            ValueWithUnit.Timestamp(therapyEvent.timestamp),
+                            ValueWithUnit.TEType(therapyEvent.type.fromDb()),
+                            ValueWithUnit.fromGlucoseUnit(therapyEvent.glucose ?: 0.0, therapyEvent.glucoseUnit.fromDb()).takeIf { therapyEvent.glucose != null }
                         )
                     )
-                    aapsLogger.debug(LTag.DATABASE, "Inserted TherapyEvent from ${Sources.NSClient.name} $therapyEvent")
-                    transactionResult.inserted.add(therapyEvent.fromDb())
-                }
-                result.invalidated.forEach { therapyEvent ->
-                    if (doLog) ueValues.add(
-                        UE(
-                            timestamp = dateUtil.now(),
-                            action = Action.CAREPORTAL_REMOVED,
-                            source = Sources.NSClient,
-                            note = therapyEvent.note ?: "",
-                            values = listOfNotNull(
-                                ValueWithUnit.Timestamp(therapyEvent.timestamp),
-                                ValueWithUnit.TEType(therapyEvent.type.fromDb()),
-                                ValueWithUnit.fromGlucoseUnit(therapyEvent.glucose ?: 0.0, therapyEvent.glucoseUnit.fromDb()).takeIf { therapyEvent.glucose != null }
-                            )
-                        )
-                    )
-                    aapsLogger.debug(LTag.DATABASE, "Invalidated TherapyEvent from ${Sources.NSClient.name} $therapyEvent")
-                    transactionResult.invalidated.add(therapyEvent.fromDb())
-                }
-                result.updatedNsId.forEach { therapyEvent ->
-                    aapsLogger.debug(LTag.DATABASE, "Updated nsId TherapyEvent from ${Sources.NSClient.name} $therapyEvent")
-                    transactionResult.updatedNsId.add(therapyEvent.fromDb())
-                }
-                result.updatedDuration.forEach { therapyEvent ->
-                    aapsLogger.debug(LTag.DATABASE, "Updated duration TherapyEvent from ${Sources.NSClient.name} $therapyEvent")
-                    transactionResult.updatedDuration.add(therapyEvent.fromDb())
-                }
-                log(ueValues)
-                transactionResult
+                )
+                aapsLogger.debug(LTag.DATABASE, "Inserted TherapyEvent from ${Sources.NSClient.name} $therapyEvent")
+                transactionResult.inserted.add(therapyEvent.fromDb())
             }
+            result.invalidated.forEach { therapyEvent ->
+                if (doLog) ueValues.add(
+                    UE(
+                        timestamp = dateUtil.now(),
+                        action = Action.CAREPORTAL_REMOVED,
+                        source = Sources.NSClient,
+                        note = therapyEvent.note ?: "",
+                        values = listOfNotNull(
+                            ValueWithUnit.Timestamp(therapyEvent.timestamp),
+                            ValueWithUnit.TEType(therapyEvent.type.fromDb()),
+                            ValueWithUnit.fromGlucoseUnit(therapyEvent.glucose ?: 0.0, therapyEvent.glucoseUnit.fromDb()).takeIf { therapyEvent.glucose != null }
+                        )
+                    )
+                )
+                aapsLogger.debug(LTag.DATABASE, "Invalidated TherapyEvent from ${Sources.NSClient.name} $therapyEvent")
+                transactionResult.invalidated.add(therapyEvent.fromDb())
+            }
+            result.updatedNsId.forEach { therapyEvent ->
+                aapsLogger.debug(LTag.DATABASE, "Updated nsId TherapyEvent from ${Sources.NSClient.name} $therapyEvent")
+                transactionResult.updatedNsId.add(therapyEvent.fromDb())
+            }
+            result.updatedDuration.forEach { therapyEvent ->
+                aapsLogger.debug(LTag.DATABASE, "Updated duration TherapyEvent from ${Sources.NSClient.name} $therapyEvent")
+                transactionResult.updatedDuration.add(therapyEvent.fromDb())
+            }
+            log(ueValues)
+            transactionResult
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.DATABASE, "Error while saving TherapyEvent", e)
+            throw e
+        }
+    }
 
     override suspend fun updateTherapyEventsNsIds(therapyEvents: List<TE>): PersistenceLayer.TransactionResult<TE> = withContext(Dispatchers.IO) {
         try {

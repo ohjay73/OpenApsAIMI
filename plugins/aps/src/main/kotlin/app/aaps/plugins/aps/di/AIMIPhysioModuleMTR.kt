@@ -1,6 +1,8 @@
 package app.aaps.plugins.aps.di
 
 import dagger.Module
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
 
 /**
  * 🔌 AIMI Physiological Module - MTR Dagger Configuration
@@ -13,7 +15,8 @@ import dagger.Module
  * @author MTR & Lyra AI - AIMI Physiological Intelligence
  */
 @Module
-class AIMIPhysioModuleMTR {
+@InstallIn(SingletonComponent::class)
+interface AIMIPhysioModuleMTR {
     // Empty module - all components use @Inject constructor + @Singleton
     // Dagger handles dependency injection automatically
 }

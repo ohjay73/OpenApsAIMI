@@ -6,12 +6,12 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.plugins.aps.openAPSAIMI.StepService
-import io.reactivex.rxjava3.disposables.CompositeDisposable
-import io.reactivex.rxjava3.schedulers.Schedulers
 import java.util.Timer
 import java.util.TimerTask
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 
 /**
  * 📱 AIMI Phone Steps Sync Service - MTR Implementation
@@ -40,8 +40,7 @@ class AIMIPhoneStepsSyncServiceMTR @Inject constructor(
         private const val SOURCE_DEVICE = "PhoneSensor"
         private const val PREF_KEY_ENABLED = "aimi_phone_steps_sync_enable"
     }
-    
-    private val disposable = CompositeDisposable()
+
     private var syncTimer: Timer? = null
     
     /**
@@ -79,7 +78,6 @@ class AIMIPhoneStepsSyncServiceMTR @Inject constructor(
     fun stop() {
         syncTimer?.cancel()
         syncTimer = null
-        disposable.clear()
         aapsLogger.info(LTag.APS, "[$TAG] Stopped")
     }
     
@@ -112,21 +110,17 @@ class AIMIPhoneStepsSyncServiceMTR @Inject constructor(
                     device = SOURCE_DEVICE
                 )
                 
-                disposable.add(
-                    persistenceLayer.insertOrUpdateStepsCount(sc)
-                        .subscribeOn(Schedulers.io())
-                        .subscribe(
-                            { _ ->
-                                aapsLogger.debug(
-                                    LTag.APS,
-                                    "[$TAG] ✅ Synced: $steps5 steps (5min), 15min=$steps15, 30min=$steps30"
-                                )
-                            },
-                            { error ->
-                                aapsLogger.error(LTag.APS, "[$TAG] ❌ DB insert failed", error)
-                            }
+                runBlocking(Dispatchers.IO) {
+                    try {
+                        persistenceLayer.insertOrUpdateStepsCount(sc)
+                        aapsLogger.debug(
+                            LTag.APS,
+                            "[$TAG] ✅ Synced: $steps5 steps (5min), 15min=$steps15, 30min=$steps30"
                         )
-                )
+                    } catch (e: Exception) {
+                        aapsLogger.error(LTag.APS, "[$TAG] ❌ DB insert failed", e)
+                    }
+                }
             } else {
                 aapsLogger.debug(LTag.APS, "[$TAG] No steps to sync (StepService returned 0)")
             }
