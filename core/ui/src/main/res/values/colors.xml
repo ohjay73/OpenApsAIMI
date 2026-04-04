@@ -105,6 +105,13 @@
     <color name="critical_low">#FF0000</color>            <!-- Red for <54 mg/dL -->
     <color name="critical_high">#FF4500</color>           <!-- Orange-red for >250 mg/dL -->
 
+    <!-- Glucose ring steps (cerceau dashboard) — aligné avec LightGeneralColors / AapsTheme -->
+    <color name="glucose_ring_step1">#4CAF50</color> <!-- statusNormal -->
+    <color name="glucose_ring_step2">#F4D700</color> <!-- inProgress (bande « élevée ») -->
+    <color name="glucose_ring_step3">#FB8C00</color> <!-- statusWarning / bgHigh -->
+    <color name="glucose_ring_step4">#FF0000</color> <!-- statusCritical / bgLow -->
+    <color name="glucose_ring_surface">#14FFFFFF</color> <!-- fond discret au centre du ring -->
+
 
     <color name="ribbonDefault">#8C8C8C</color>
     <color name="daySelected">#D000FF00</color>

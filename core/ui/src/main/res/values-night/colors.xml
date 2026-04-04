@@ -98,6 +98,13 @@
     <color name="profileSwitch">#FFFFFF</color>
     <color name="sens">#008585</color>
 
+    <!-- Glucose ring steps — aligné avec DarkGeneralColors / AapsTheme (mode nuit) -->
+    <color name="glucose_ring_step1">#81C784</color> <!-- statusNormal -->
+    <color name="glucose_ring_step2">#FFF176</color> <!-- bande intermédiaire lisible sur fond sombre -->
+    <color name="glucose_ring_step3">#FFB74D</color> <!-- warning / high BG -->
+    <color name="glucose_ring_step4">#FF0000</color> <!-- statusCritical -->
+    <color name="glucose_ring_surface">#14FFFFFF</color>
+
     <color name="ribbonDefault">#5a595b</color>
     <color name="daySelected">#D000FF00</color>
     <color name="weekdayOutline">#1ea3e5</color>

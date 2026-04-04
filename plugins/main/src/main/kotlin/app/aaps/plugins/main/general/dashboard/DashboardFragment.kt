@@ -205,6 +205,7 @@ class DashboardFragment : DaggerFragment() {
 
         syncGraphRange(preferences.get(IntNonKey.RangeToDisplay), false)
 
+        binding.statusCard.attachComposeHeroDependencies(preferences)
         viewModel.statusCardState.observe(viewLifecycleOwner) { binding.statusCard.updateWithState(it) }
         viewModel.adjustmentState.observe(viewLifecycleOwner) { state ->
             state?.let {

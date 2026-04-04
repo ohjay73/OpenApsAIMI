@@ -325,6 +325,14 @@
     <string name="dashboard_aimi_pulse_meta">SMB %1$s U · consigne %2$s · AutoSens %3$s%%</string>
     <string name="dashboard_aimi_pulse_hint">Appui pour le détail et raison complète</string>
     <string name="dashboard_aimi_telemetry_label">Couche trajectoire</string>
+    <string name="dashboard_aimi_ml_confidence_title">Signaux AIMI</string>
+    <string name="dashboard_aimi_ml_strip_separator"> · </string>
+    <string name="dashboard_aimi_ml_strip_part_sensor">Capteur %1$s</string>
+    <string name="dashboard_aimi_ml_strip_relevance">Pertinence %1$d%%</string>
+    <string name="dashboard_aimi_ml_strip_health">Santé trajectoire %1$d%%</string>
+    <string name="dashboard_aimi_ml_sensor_ok">OK</string>
+    <string name="dashboard_aimi_ml_sensor_uncertain">incertain</string>
+    <string name="dashboard_aimi_ml_sensor_low">faible</string>
     <string name="dashboard_cd_aimi_pulse">Résumé du dernier passage AIMI. Double appui pour tout le détail.</string>
     <string name="dashboard_chip_announced_aimi_pulse_details">Détails boucle ouverts</string>
 

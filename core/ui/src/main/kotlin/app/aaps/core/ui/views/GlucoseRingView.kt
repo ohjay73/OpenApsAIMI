@@ -4,6 +4,8 @@ import android.content.Context
 import android.graphics.*
 import android.util.AttributeSet
 import android.view.View
+import androidx.annotation.ColorInt
+import androidx.core.content.ContextCompat
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
@@ -31,14 +33,19 @@ class GlucoseRingView @JvmOverloads constructor(
     private var subTextColor: Int = Color.WHITE
 
     private var useSteppedColors: Boolean = true
+    /** Below this mg/dL (exclusive) → step4 — typically level 1 hypo (e.g. 54). */
+    private var severeHypoMaxMgdl: Float = 54f
+    /** Below this mg/dL (exclusive) but ≥ [severeHypoMaxMgdl] → step3 — often aligned with profile target low. */
+    private var hypoMaxMgdlAttr: Float = 70f
+
     private var step1MaxMgdl: Float = 100f
     private var step2MaxMgdl: Float = 160f
     private var step3MaxMgdl: Float = 220f
 
-    private var stepColor1: Int = Color.parseColor("#00C853") // green
-    private var stepColor2: Int = Color.parseColor("#FFD600") // yellow
-    private var stepColor3: Int = Color.parseColor("#FF6D00") // orange
-    private var stepColor4: Int = Color.parseColor("#D50000") // red
+    private var stepColor1: Int = ContextCompat.getColor(context, R.color.glucose_ring_step1)
+    private var stepColor2: Int = ContextCompat.getColor(context, R.color.glucose_ring_step2)
+    private var stepColor3: Int = ContextCompat.getColor(context, R.color.glucose_ring_step3)
+    private var stepColor4: Int = ContextCompat.getColor(context, R.color.glucose_ring_step4)
 
     private var mainTextBold: Boolean = true
 
@@ -51,10 +58,31 @@ class GlucoseRingView @JvmOverloads constructor(
     private var bgMgdl: Int? = null
     private var noseAngleDeg: Float? = null
 
+    /** If set on [update], tints the main BG text (ring/cercle use [computeRingColor] when [overrideColor] is null). */
+    private var centerGlucoseTextColorOverride: Int? = null
+
+    /** Optional inner telemetry arc (0..1), e.g. blended AIMI relevance / health. */
+    private var telemetryArcProgress: Float? = null
+
+    @ColorInt
+    private var telemetryArcColor: Int = ContextCompat.getColor(context, R.color.iob)
+
+    private val arcBounds = RectF()
+
     // Derived each update
     private var currentRingColor: Int = Color.GREEN
 
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private val telemetryTrackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private val telemetryArcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
     }
@@ -87,6 +115,8 @@ class GlucoseRingView @JvmOverloads constructor(
 
             // Stepped colors (optional)
             useSteppedColors = a.getBoolean(R.styleable.GlucoseRingView_glucoseRingUseSteppedColors, useSteppedColors)
+            severeHypoMaxMgdl = a.getFloat(R.styleable.GlucoseRingView_glucoseRingSevereHypoMaxMgdl, severeHypoMaxMgdl)
+            hypoMaxMgdlAttr = a.getFloat(R.styleable.GlucoseRingView_glucoseRingHypoMaxMgdl, hypoMaxMgdlAttr)
             step1MaxMgdl = a.getFloat(R.styleable.GlucoseRingView_glucoseRingStep1MaxMgdl, step1MaxMgdl)
             step2MaxMgdl = a.getFloat(R.styleable.GlucoseRingView_glucoseRingStep2MaxMgdl, step2MaxMgdl)
             step3MaxMgdl = a.getFloat(R.styleable.GlucoseRingView_glucoseRingStep3MaxMgdl, step3MaxMgdl)
@@ -109,40 +139,43 @@ class GlucoseRingView @JvmOverloads constructor(
         subLeftText: String,
         subRightText: String,
         noseAngleDeg: Float?,
-        overrideColor: Int? = null
+        overrideColor: Int? = null,
+        centerGlucoseTextColor: Int? = null,
+        hypoMaxMgdlForComputation: Float? = null,
+        telemetryArcProgress: Float? = null,
+        @ColorInt telemetryArcColor: Int? = null,
     ) {
         this.bgMgdl = bgMgdl
         this.mainText = mainText
         this.subLeftText = subLeftText
         this.subRightText = subRightText
         this.noseAngleDeg = noseAngleDeg
+        this.centerGlucoseTextColorOverride = centerGlucoseTextColor
+        this.telemetryArcProgress = telemetryArcProgress?.coerceIn(0f, 1f)
+        if (telemetryArcColor != null) {
+            this.telemetryArcColor = telemetryArcColor
+        }
 
-        currentRingColor = overrideColor ?: computeRingColor(bgMgdl)
+        currentRingColor = overrideColor ?: computeRingColor(bgMgdl, hypoMaxMgdlForComputation)
 
         invalidate()
     }
 
-    private fun computeRingColor(bgMgdl: Int?): Int {
-        val v = bgMgdl ?: return Color.GRAY
-        if (!useSteppedColors) {
-            // Fallback to simple color mapping if not using stepped colors
-            return when {
-                v < 70 -> stepColor4  // Red (low)
-                v <= 180 -> stepColor1 // Green (in range)
-                else -> stepColor3    // Orange (high)
-            }
-        }
-
-        val vf = v.toFloat()
-        // WARNING: This logic paints <100 as Step1 (Color1). If Color1 is Green, Hypo is Green.
-        // The overrideColor (passed from AAPS logic) fixes this.
-        return when {
-            vf <= step1MaxMgdl -> stepColor1
-            vf <= step2MaxMgdl -> stepColor2
-            vf <= step3MaxMgdl -> stepColor3
-            else -> stepColor4
-        }
-    }
+    private fun computeRingColor(bgMgdl: Int?, hypoMaxOverride: Float?): Int =
+        GlucoseRingColorComputer.compute(
+            bgMgdl = bgMgdl,
+            hypoMaxFromProfile = hypoMaxOverride,
+            severeHypoMaxMgdl = severeHypoMaxMgdl,
+            hypoMaxMgdlAttr = hypoMaxMgdlAttr,
+            useSteppedColors = useSteppedColors,
+            step1MaxMgdl = step1MaxMgdl,
+            step2MaxMgdl = step2MaxMgdl,
+            step3MaxMgdl = step3MaxMgdl,
+            stepColor1 = stepColor1,
+            stepColor2 = stepColor2,
+            stepColor3 = stepColor3,
+            stepColor4 = stepColor4,
+        )
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -163,6 +196,8 @@ class GlucoseRingView @JvmOverloads constructor(
         bgPaint.color = backgroundColor
         canvas.drawCircle(cx, cy, radius, bgPaint)
 
+        drawTelemetryArcIfNeeded(canvas, cx, cy, radius)
+
         // ring
         ringPaint.strokeWidth = strokeWidthPx
         ringPaint.color = currentRingColor
@@ -172,7 +207,7 @@ class GlucoseRingView @JvmOverloads constructor(
         drawNose(canvas, cx, cy, radius)
 
         // main text (bold)
-        mainTextPaint.color = mainTextColor
+        mainTextPaint.color = centerGlucoseTextColorOverride ?: mainTextColor
         mainTextPaint.isFakeBoldText = mainTextBold
         mainTextPaint.textSize = radius * 0.7f //0.6 to 0.7 to make it bigger
 
@@ -191,6 +226,23 @@ class GlucoseRingView @JvmOverloads constructor(
         val x = cx
         canvas.drawText(subLeftText,  x - subTextPaint.measureText(subLeftText)/2f,  y1, subTextPaint)
         canvas.drawText(subRightText, x - subTextPaint.measureText(subRightText)/2f, y2, subTextPaint)
+    }
+
+    private fun drawTelemetryArcIfNeeded(canvas: Canvas, cx: Float, cy: Float, radius: Float) {
+        val p = telemetryArcProgress ?: return
+        if (p <= 0f) return
+        val trackW = (strokeWidthPx * 0.38f).coerceIn(dp(1.4f), dp(3f))
+        val inset = strokeWidthPx + trackW * 0.55f
+        val innerR = (radius - inset).coerceAtLeast(radius * 0.62f)
+        if (innerR <= dp(4f)) return
+        arcBounds.set(cx - innerR, cy - innerR, cx + innerR, cy + innerR)
+        telemetryTrackPaint.strokeWidth = trackW
+        telemetryTrackPaint.color = 0x44888888
+        canvas.drawArc(arcBounds, -90f, 360f, false, telemetryTrackPaint)
+
+        telemetryArcPaint.strokeWidth = trackW
+        telemetryArcPaint.color = telemetryArcColor
+        canvas.drawArc(arcBounds, -90f, 360f * p, false, telemetryArcPaint)
     }
 
     private fun drawNose(canvas: Canvas, cx: Float, cy: Float, radius: Float) {

@@ -19,28 +19,22 @@
             android:layout_marginTop="0dp"
             android:layout_marginBottom="0dp">
 
-            <!-- GlucoseRingView (Center) -->
-            <app.aaps.core.ui.views.GlucoseRingView
-                android:id="@+id/glucose_ring"
+            <!-- Glucose hero (Compose + AapsTheme) -->
+            <FrameLayout
+                android:id="@+id/glucose_ring_container"
                 android:layout_width="132dp"
                 android:layout_height="132dp"
                 android:elevation="3dp"
-                app:ringStrokeWidth="4dp"
-                app:glucoseRingUseSteppedColors="true"
-                app:glucoseRingStep1MaxMgdl="100"
-                app:glucoseRingStep2MaxMgdl="160"
-                app:glucoseRingStep3MaxMgdl="220"
-                app:glucoseRingStepColor1="#00C853"
-                app:glucoseRingStepColor2="#FFD600"
-                app:glucoseRingStepColor3="#FF6D00"
-                app:glucoseRingStepColor4="#D50000"
-                app:ringBackgroundColor="@android:color/transparent"
-                app:ringTextColor="?android:attr/textColorPrimary"
-                app:ringSubTextColor="?android:attr/textColorSecondary"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent" />
+                app:layout_constraintBottom_toBottomOf="parent">
+
+                <androidx.compose.ui.platform.ComposeView
+                    android:id="@+id/glucose_hero_compose"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
+            </FrameLayout>
 
             <!-- Context Badge (Top-Left of Circle, like × on photo) -->
             <ImageView
@@ -52,8 +46,8 @@
                 android:visibility="gone"
                 app:srcCompat="@drawable/ic_graduation"
                 app:tint="?android:attr/textColorPrimary"
-                app:layout_constraintTop_toTopOf="@id/glucose_ring"
-                app:layout_constraintStart_toStartOf="@id/glucose_ring"
+                app:layout_constraintTop_toTopOf="@id/glucose_ring_container"
+                app:layout_constraintStart_toStartOf="@id/glucose_ring_container"
                 android:layout_marginStart="8dp"
                 android:layout_marginTop="8dp" />
 
@@ -63,8 +57,8 @@
                 android:layout_width="28dp"
                 android:layout_height="28dp"
                 android:elevation="20dp"
-                app:layout_constraintTop_toTopOf="@id/glucose_ring"
-                app:layout_constraintEnd_toEndOf="@id/glucose_ring"
+                app:layout_constraintTop_toTopOf="@id/glucose_ring_container"
+                app:layout_constraintEnd_toEndOf="@id/glucose_ring_container"
                 android:layout_marginEnd="8dp"
                 android:layout_marginTop="8dp" />
 
@@ -509,6 +503,43 @@
                 android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel"
                 android:textColor="@color/dashboard_on_surface" />
 
+        </LinearLayout>
+
+        <!-- AIMI ML / telemetry confidence (sensor + relevance + health) -->
+        <LinearLayout
+            android:id="@+id/aimi_ml_confidence_strip"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="@dimen/dashboard_row_spacing_small"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:background="@drawable/dashboard_chip_background">
+
+            <TextView
+                android:id="@+id/aimi_ml_confidence_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/dashboard_aimi_ml_confidence_title"
+                android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel"
+                android:textAllCaps="true"
+                android:letterSpacing="0.08"
+                android:textColor="@color/dashboard_on_surface_muted" />
+
+            <TextView
+                android:id="@+id/aimi_ml_confidence_detail"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textAppearance="@style/TextAppearance.AAPS.Dashboard.PrimaryLine"
+                android:textSize="12sp"
+                android:textColor="@color/dashboard_on_surface"
+                android:lineSpacingMultiplier="1.02"
+                tools:text="Sensor OK · Relevance 87% · Health 72%" />
         </LinearLayout>
 
         <!-- ═══════════════════════════════════════════════════ -->

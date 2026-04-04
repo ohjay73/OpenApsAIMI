@@ -1,28 +1,44 @@
 package app.aaps.plugins.main.general.dashboard.views
 
 import android.content.Context
-import android.view.accessibility.AccessibilityManager
 import android.util.AttributeSet
+import android.util.TypedValue
 import android.view.HapticFeedbackConstants
 import android.view.LayoutInflater
 import android.view.View
+import android.view.accessibility.AccessibilityManager
 import android.widget.FrameLayout
-import androidx.viewbinding.ViewBinding
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.isGone
-import com.google.android.material.chip.Chip
+import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualityTier
+import app.aaps.core.keys.interfaces.Preferences
+import app.aaps.core.ui.compose.AapsTheme
+import app.aaps.core.ui.compose.LocalPreferences
+import app.aaps.core.ui.compose.dashboard.GlucoseHeroRing
+import app.aaps.core.ui.compose.dashboard.GlucoseHeroUiState
+import app.aaps.core.ui.dialogs.OKDialog
+import app.aaps.core.ui.views.GlucoseRingColorComputer
 import app.aaps.plugins.main.databinding.ComponentCircleTopStatusHybridBinding
 import app.aaps.plugins.main.general.dashboard.viewmodel.StatusCardState
-import app.aaps.core.ui.dialogs.OKDialog
+import com.google.android.material.chip.Chip
 import java.util.Locale
 import java.util.TimeZone
+import kotlin.math.roundToInt
 
 
 /**
  * CircleTopDashboardView - Modern Circle-Top Hybrid Dashboard
  * 
  * ✨ Features:
- * - GlucoseRingView with dynamic nose pointer
+ * - Compose glucose hero ([GlucoseHeroRing]) under [AapsTheme] (ring, nose, telemetry arc, typography)
  * - Context & Auditor badges (repositioned top-left/right)
  * - 2 columns of detailed metrics (8 infos)
  * - 4 action chips (Advisor, Adjust, Prefs, Stats)
@@ -48,6 +64,35 @@ class CircleTopDashboardView @JvmOverloads constructor(
         this
     )
 
+    private val heroState = mutableStateOf(
+        GlucoseHeroUiState(
+            ringColorArgb = android.graphics.Color.GRAY,
+            centerTextColorArgb = android.graphics.Color.WHITE,
+            subTextColorArgb = android.graphics.Color.LTGRAY,
+            surfaceColorArgb = android.graphics.Color.TRANSPARENT,
+        )
+    )
+
+    private var composeHeroAttached: Boolean = false
+
+    /**
+     * Wire [ComposeView] + [AapsTheme] ([LocalPreferences]). Call once from [androidx.fragment.app.Fragment.onViewCreated].
+     */
+    fun attachComposeHeroDependencies(preferences: Preferences) {
+        if (composeHeroAttached) return
+        composeHeroAttached = true
+        val composeView: ComposeView = binding.glucoseHeroCompose
+        composeView.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+        composeView.setContent {
+            CompositionLocalProvider(LocalPreferences provides preferences) {
+                AapsTheme {
+                    val hero by heroState
+                    GlucoseHeroRing(state = hero, modifier = Modifier.fillMaxSize())
+                }
+            }
+        }
+    }
+
     /**
      * Update all dashboard components with fresh state data
      * Uses reflection to access properties (bypasses Kotlin cache)
@@ -59,7 +104,10 @@ class CircleTopDashboardView @JvmOverloads constructor(
             // Helper function to safely get property value
             fun <T> getProp(name: String): T? {
                 return try {
-                    val getter = stateClass.getMethod("get${name.capitalize()}")
+                    val accessor = "get" + name.replaceFirstChar { ch ->
+                        if (ch.isLowerCase()) ch.titlecase(Locale.ROOT) else ch.toString()
+                    }
+                    val getter = stateClass.getMethod(accessor)
                     @Suppress("UNCHECKED_CAST")
                     getter.invoke(state) as? T
                 } catch (e: Exception) {
@@ -68,17 +116,34 @@ class CircleTopDashboardView @JvmOverloads constructor(
             }
             
             // ═══════════════════════════════════════════════════════════════
-            // 1. GlucoseRingView (Center Circle)
+            // 1. Glucose hero (Compose / AapsTheme)
             // ═══════════════════════════════════════════════════════════════
             getProp<Int>("glucoseMgdl")?.let { bgMgdl ->
-                binding.glucoseRing.update(
+                val cardState = state as? StatusCardState
+                val arcP = cardState?.let { telemetryArcProgress(it) }
+                val arcC = arcP?.let { telemetryArcColor(it) }
+                heroState.value = buildGlucoseHeroUiState(
                     bgMgdl = bgMgdl,
-                    mainText = getProp<String>("glucoseText") ?: "--",
-                    subLeftText = getProp<String>("timeAgo") ?: "",
-                    subRightText = getProp<String>("deltaText") ?: "",
-                    noseAngleDeg = getProp<Float>("noseAngleDeg"),
-                    overrideColor = getProp<Int>("glucoseColor")
+                    cardState = cardState,
+                    glucoseText = getProp<String>("glucoseText") ?: "--",
+                    timeAgo = getProp<String>("timeAgo") ?: "",
+                    deltaText = getProp<String>("deltaText") ?: "",
+                    noseAngle = getProp<Float>("noseAngleDeg"),
+                    glucoseColor = getProp<Int>("glucoseColor"),
+                    arcProgress = arcP,
+                    arcColorArgb = arcC,
                 )
+            }
+
+            if (state is StatusCardState) {
+                val strip = formatAimiMlStrip(state)
+                binding.aimiMlConfidenceStrip.isGone = strip.isNullOrBlank()
+                if (!strip.isNullOrBlank()) {
+                    binding.aimiMlConfidenceDetail.text = strip
+                    binding.aimiMlConfidenceStrip.contentDescription = strip
+                }
+            } else {
+                binding.aimiMlConfidenceStrip.isGone = true
             }
 
             // ═══════════════════════════════════════════════════════════════
@@ -235,13 +300,15 @@ class CircleTopDashboardView @JvmOverloads constructor(
             binding.insightManoeuvre.text = getProp<String>("insightManoeuvre") ?: "🌀 --"
             binding.insightFactor.text = getProp<String>("insightFactor") ?: "⚡ x1.0"
             
-            // Adjust container style based on health score (confidence)
+            // Insights container: trajectory health drives emphasis (aligned with telemetry arc thresholds)
             val health = getProp<Double>("aimiHealthScore") ?: 1.0
-            if (health < 0.8) {
-                binding.aimiInsightsContainer.setBackgroundResource(app.aaps.plugins.main.R.drawable.dashboard_chip_background_warning)
-            } else {
-                binding.aimiInsightsContainer.setBackgroundResource(app.aaps.plugins.main.R.drawable.dashboard_chip_background)
-            }
+            binding.aimiInsightsContainer.setBackgroundResource(
+                when {
+                    health < 0.45 -> app.aaps.plugins.main.R.drawable.dashboard_chip_background_warning
+                    health < 0.72 -> app.aaps.plugins.main.R.drawable.dashboard_chip_background_quality_uncertain
+                    else -> app.aaps.plugins.main.R.drawable.dashboard_chip_background
+                }
+            )
             
 
             
@@ -327,6 +394,115 @@ class CircleTopDashboardView @JvmOverloads constructor(
     /** Get Loop indicator (icon updated by DashboardFragment) */
     fun getLoopIndicator(): View = binding.loopIndicator
 
+    /**
+     * Blended telemetry arc progress (0..1): relevance, health, or sensor-quality proxy when APS data sparse.
+     */
+    private fun telemetryArcProgress(state: StatusCardState): Float? {
+        val rel = state.trajectoryRelevanceScore
+        val health = state.aimiHealthScore
+        val tierProxy = state.adaptiveSmoothingQualityTier?.let { tier ->
+            when (tier) {
+                AdaptiveSmoothingQualityTier.OK -> 0.88
+                AdaptiveSmoothingQualityTier.UNCERTAIN -> 0.58
+                AdaptiveSmoothingQualityTier.BAD -> 0.35
+            }
+        }
+        val combined: Double? = when {
+            rel != null && health != null -> 0.5 * (rel + health)
+            rel != null -> rel
+            health != null -> health
+            tierProxy != null -> tierProxy
+            else -> null
+        }
+        return combined?.toFloat()?.coerceIn(0f, 1f)
+    }
+
+    private fun telemetryArcColor(progress: Float): Int {
+        val resId = when {
+            progress >= 0.72f -> app.aaps.core.ui.R.color.glucose_ring_step1
+            progress >= 0.45f -> app.aaps.core.ui.R.color.glucose_ring_step2
+            else -> app.aaps.core.ui.R.color.glucose_ring_step3
+        }
+        return ContextCompat.getColor(context, resId)
+    }
+
+    private fun resolveThemeColor(attr: Int): Int {
+        val tv = TypedValue()
+        return if (context.theme.resolveAttribute(attr, tv, true)) tv.data else 0xFF888888.toInt()
+    }
+
+    private fun buildGlucoseHeroUiState(
+        bgMgdl: Int,
+        cardState: StatusCardState?,
+        glucoseText: String,
+        timeAgo: String,
+        deltaText: String,
+        noseAngle: Float?,
+        glucoseColor: Int?,
+        arcProgress: Float?,
+        arcColorArgb: Int?,
+    ): GlucoseHeroUiState {
+        val step1 = ContextCompat.getColor(context, app.aaps.core.ui.R.color.glucose_ring_step1)
+        val step2 = ContextCompat.getColor(context, app.aaps.core.ui.R.color.glucose_ring_step2)
+        val step3 = ContextCompat.getColor(context, app.aaps.core.ui.R.color.glucose_ring_step3)
+        val step4 = ContextCompat.getColor(context, app.aaps.core.ui.R.color.glucose_ring_step4)
+        val ringArgb = GlucoseRingColorComputer.compute(
+            bgMgdl = bgMgdl,
+            hypoMaxFromProfile = cardState?.targetLow?.toFloat(),
+            severeHypoMaxMgdl = 54f,
+            hypoMaxMgdlAttr = 70f,
+            useSteppedColors = true,
+            step1MaxMgdl = 100f,
+            step2MaxMgdl = 160f,
+            step3MaxMgdl = 220f,
+            stepColor1 = step1,
+            stepColor2 = step2,
+            stepColor3 = step3,
+            stepColor4 = step4,
+        )
+        return GlucoseHeroUiState(
+            mainText = glucoseText,
+            subLeftText = timeAgo,
+            subRightText = deltaText,
+            noseAngleDeg = noseAngle,
+            ringColorArgb = ringArgb,
+            centerTextColorArgb = glucoseColor
+                ?: ContextCompat.getColor(context, app.aaps.core.ui.R.color.white),
+            subTextColorArgb = resolveThemeColor(android.R.attr.textColorSecondary),
+            surfaceColorArgb = ContextCompat.getColor(context, app.aaps.core.ui.R.color.glucose_ring_surface),
+            telemetryProgress = arcProgress,
+            telemetryColorArgb = arcColorArgb,
+            strokeWidthDp = 4f,
+        )
+    }
+
+    private fun formatAimiMlStrip(state: StatusCardState): String? {
+        val sep = context.getString(app.aaps.plugins.main.R.string.dashboard_aimi_ml_strip_separator)
+        val parts = buildList {
+            state.adaptiveSmoothingQualityTier?.let { tier ->
+                val label = context.getString(
+                    when (tier) {
+                        AdaptiveSmoothingQualityTier.OK ->
+                            app.aaps.plugins.main.R.string.dashboard_aimi_ml_sensor_ok
+                        AdaptiveSmoothingQualityTier.UNCERTAIN ->
+                            app.aaps.plugins.main.R.string.dashboard_aimi_ml_sensor_uncertain
+                        AdaptiveSmoothingQualityTier.BAD ->
+                            app.aaps.plugins.main.R.string.dashboard_aimi_ml_sensor_low
+                    }
+                )
+                add(context.getString(app.aaps.plugins.main.R.string.dashboard_aimi_ml_strip_part_sensor, label))
+            }
+            state.trajectoryRelevanceScore?.let { rel ->
+                val pct = (rel * 100.0).roundToInt().coerceIn(0, 100)
+                add(context.getString(app.aaps.plugins.main.R.string.dashboard_aimi_ml_strip_relevance, pct))
+            }
+            state.aimiHealthScore?.let { h ->
+                val pct = (h * 100.0).roundToInt().coerceIn(0, 100)
+                add(context.getString(app.aaps.plugins.main.R.string.dashboard_aimi_ml_strip_health, pct))
+            }
+        }
+        return parts.takeIf { it.isNotEmpty() }?.joinToString(sep)
+    }
 }
 
 /**

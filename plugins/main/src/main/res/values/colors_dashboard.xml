@@ -15,9 +15,10 @@
     <color name="dashboard_metric_info">#42A5F5</color>
     <color name="dashboard_metric_attention">#FFC107</color>
     <color name="dashboard_metric_warning">#AB47BC</color>
-    <color name="dashboard_tir_very_low">#D50000</color>
-    <color name="dashboard_tir_low">#FF6D00</color>
-    <color name="dashboard_tir_in_range">#00C853</color>
-    <color name="dashboard_tir_high">#FFD600</color>
+    <!-- TIR : même sémantique que glucose_ring_step* / GeneralColors (core:ui) -->
+    <color name="dashboard_tir_very_low">@color/glucose_ring_step4</color>
+    <color name="dashboard_tir_low">@color/glucose_ring_step3</color>
+    <color name="dashboard_tir_in_range">@color/glucose_ring_step1</color>
+    <color name="dashboard_tir_high">@color/glucose_ring_step2</color>
     <color name="dashboard_tir_track">#22FFFFFF</color>
 </resources>
