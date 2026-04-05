@@ -82,7 +82,7 @@ import app.aaps.core.validators.preferences.AdaptiveSwitchPreference
 import app.aaps.core.validators.preferences.AdaptiveUnitPreference
 import app.aaps.core.validators.DefaultEditTextValidator
 import app.aaps.core.validators.EditTextValidator
-import app.aaps.plugins.aps.OpenAPSFragment
+import app.aaps.core.ui.compose.icons.IcPluginOpenAPS
 import app.aaps.plugins.aps.R
 import app.aaps.plugins.aps.events.EventOpenAPSUpdateGui
 import app.aaps.plugins.aps.events.EventResetOpenAPSGui
@@ -153,8 +153,16 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.APS)
-        .fragmentClass(OpenAPSFragment::class.java.name)
-        .pluginIcon(app.aaps.core.ui.R.drawable.ic_generic_icon)
+        .composeContent { plugin ->
+            app.aaps.plugins.aps.compose.OpenAPSComposeContent(
+                apsPlugin = plugin as APS,
+                rxBus = rxBus,
+                rh = rh,
+                dateUtil = dateUtil
+            )
+        }
+        .pluginIcon(app.aaps.core.objects.R.drawable.ic_calculator)
+        .icon(IcPluginOpenAPS)
         .pluginName(R.string.openapsaimi)
         .shortName(R.string.oaps_aimi_shortname)
         .preferencesId(PluginDescription.PREFERENCE_SCREEN)

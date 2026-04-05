@@ -16,7 +16,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.content.ContextCompat
-import androidx.core.view.ViewCompat
 import androidx.core.view.isGone
 import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualityTier
 import app.aaps.core.keys.interfaces.Preferences
@@ -27,8 +26,8 @@ import app.aaps.core.ui.compose.dashboard.GlucoseHeroUiState
 import app.aaps.core.ui.dialogs.OKDialog
 import app.aaps.core.ui.views.GlucoseRingColorComputer
 import app.aaps.plugins.main.databinding.ComponentCircleTopStatusHybridBinding
+import app.aaps.plugins.main.general.dashboard.compose.DashboardQuickActionsBar
 import app.aaps.plugins.main.general.dashboard.viewmodel.StatusCardState
-import com.google.android.material.chip.Chip
 import java.util.Locale
 import java.util.TimeZone
 import kotlin.math.roundToInt
@@ -41,7 +40,7 @@ import kotlin.math.roundToInt
  * - Compose glucose hero ([GlucoseHeroRing]) under [AapsTheme] (ring, nose, telemetry arc, typography)
  * - Context & Auditor badges (repositioned top-left/right)
  * - 2 columns of detailed metrics (8 infos)
- * - 4 action chips (Advisor, Adjust, Prefs, Stats)
+ * - 4 quick actions (Advisor, Adjust, Meal, Context) en Compose
  * - Trend arrow + delta display
  * - Loop status indicator
  * 
@@ -75,19 +74,38 @@ class CircleTopDashboardView @JvmOverloads constructor(
 
     private var composeHeroAttached: Boolean = false
 
+    private val actionListenerState = mutableStateOf<CircleTopActionListener?>(null)
+
     /**
-     * Wire [ComposeView] + [AapsTheme] ([LocalPreferences]). Call once from [androidx.fragment.app.Fragment.onViewCreated].
+     * Wire les [ComposeView] du hero glucose et de la barre d’actions + [AapsTheme] ([LocalPreferences]).
+     * À appeler une fois depuis [androidx.fragment.app.Fragment.onViewCreated], avant [setActionListener].
      */
     fun attachComposeHeroDependencies(preferences: Preferences) {
         if (composeHeroAttached) return
         composeHeroAttached = true
-        val composeView: ComposeView = binding.glucoseHeroCompose
-        composeView.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
-        composeView.setContent {
+        val heroCompose: ComposeView = binding.glucoseHeroCompose
+        heroCompose.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+        heroCompose.setContent {
             CompositionLocalProvider(LocalPreferences provides preferences) {
                 AapsTheme {
                     val hero by heroState
                     GlucoseHeroRing(state = hero, modifier = Modifier.fillMaxSize())
+                }
+            }
+        }
+
+        val quickActionsCompose: ComposeView = binding.dashboardQuickActionsCompose
+        quickActionsCompose.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+        quickActionsCompose.setContent {
+            CompositionLocalProvider(LocalPreferences provides preferences) {
+                AapsTheme {
+                    val listener by actionListenerState
+                    DashboardQuickActionsBar(
+                        onAdvisor = { listener?.onAimiAdvisorClicked() },
+                        onAdjust = { listener?.onAdjustClicked() },
+                        onMeal = { listener?.onAimiPreferencesClicked() },
+                        onContext = { listener?.onStatsClicked() },
+                    )
                 }
             }
         }
@@ -319,26 +337,11 @@ class CircleTopDashboardView @JvmOverloads constructor(
     }
 
     /**
-     * Set action listeners for chips and the AIMI pulse card.
+     * Set action listeners for quick actions (Compose) and the AIMI pulse card.
      */
     fun setActionListener(listener: CircleTopActionListener) {
         circleTopActionListener = listener
-
-        fun applyChipStateDescription(chip: Chip) {
-            val stateRes = if (chip.isChecked) {
-                app.aaps.plugins.main.R.string.dashboard_chip_state_selected
-            } else {
-                app.aaps.plugins.main.R.string.dashboard_chip_state_not_selected
-            }
-            ViewCompat.setStateDescription(chip, context.getString(stateRes))
-        }
-
-        fun configureAccessibility(chip: Chip) {
-            chip.setOnCheckedChangeListener { buttonView, _ ->
-                applyChipStateDescription(buttonView as Chip)
-            }
-            applyChipStateDescription(chip)
-        }
+        actionListenerState.value = listener
 
         fun announceIfAccessibilityEnabled(messageRes: Int) {
             val manager = accessibilityManager
@@ -348,36 +351,13 @@ class CircleTopDashboardView @JvmOverloads constructor(
         }
 
         fun withHaptic(action: () -> Unit): View.OnClickListener = View.OnClickListener {
-            // Light, immediate tactile acknowledgement for dashboard chip actions.
             it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
             action()
         }
 
-        configureAccessibility(binding.chipAimiAdvisor)
-        configureAccessibility(binding.chipAdjust)
-        configureAccessibility(binding.chipAimiPref)
-        configureAccessibility(binding.chipStat)
-
         binding.aimiPulseContainer.setOnClickListener(withHaptic {
             circleTopActionListener?.onAimiPulseClicked()
             announceIfAccessibilityEnabled(app.aaps.plugins.main.R.string.dashboard_chip_announced_aimi_pulse_details)
-        })
-
-        binding.chipAimiAdvisor.setOnClickListener(withHaptic {
-            listener.onAimiAdvisorClicked()
-            announceIfAccessibilityEnabled(app.aaps.plugins.main.R.string.dashboard_chip_announced_advisor_opened)
-        })
-        binding.chipAdjust.setOnClickListener(withHaptic {
-            listener.onAdjustClicked()
-            announceIfAccessibilityEnabled(app.aaps.plugins.main.R.string.dashboard_chip_announced_adjust_opened)
-        })
-        binding.chipAimiPref.setOnClickListener(withHaptic {
-            listener.onAimiPreferencesClicked()
-            announceIfAccessibilityEnabled(app.aaps.plugins.main.R.string.dashboard_chip_announced_meal_mode_opened)
-        })
-        binding.chipStat.setOnClickListener(withHaptic {
-            listener.onStatsClicked()
-            announceIfAccessibilityEnabled(app.aaps.plugins.main.R.string.dashboard_chip_announced_context_opened)
         })
     }
     
@@ -506,7 +486,7 @@ class CircleTopDashboardView @JvmOverloads constructor(
 }
 
 /**
- * Listener for dashboard chips and the AIMI pulse card.
+ * Listener for dashboard quick actions and the AIMI pulse card.
  */
 interface CircleTopActionListener {
     fun onAimiAdvisorClicked()

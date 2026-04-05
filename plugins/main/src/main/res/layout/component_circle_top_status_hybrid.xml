@@ -628,66 +628,12 @@
         </LinearLayout>
 
         <!-- ═══════════════════════════════════════════════════ -->
-        <!-- BOTTOM ROW: Action Chips                            -->
+        <!-- BOTTOM ROW: quick actions (Compose, même 4 entrées) -->
         <!-- ═══════════════════════════════════════════════════ -->
-        <HorizontalScrollView
-            android:id="@+id/bottom_action_row"
+        <androidx.compose.ui.platform.ComposeView
+            android:id="@+id/dashboard_quick_actions_compose"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:scrollbars="none">
-
-            <com.google.android.material.chip.ChipGroup
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center"
-                app:chipSpacingHorizontal="@dimen/dashboard_chip_spacing"
-                app:chipSpacingVertical="@dimen/dashboard_row_spacing_small"
-                app:singleSelection="false">
-
-                <com.google.android.material.chip.Chip
-                    android:id="@+id/chip_aimi_advisor"
-                    style="@style/Widget.AAPS.Dashboard.ActionChip"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:contentDescription="@string/dashboard_cd_chip_aimi_advisor"
-                    android:focusable="true"
-                    android:focusableInTouchMode="true"
-                    android:importantForAccessibility="yes"
-                    android:text="@string/advisor_button" />
-
-                <com.google.android.material.chip.Chip
-                    android:id="@+id/chip_adjust"
-                    style="@style/Widget.AAPS.Dashboard.ActionChip"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:contentDescription="@string/dashboard_cd_chip_adjust"
-                    android:focusable="true"
-                    android:focusableInTouchMode="true"
-                    android:importantForAccessibility="yes"
-                    android:text="@string/adjust_button" />
-
-                <com.google.android.material.chip.Chip
-                    android:id="@+id/chip_aimi_pref"
-                    style="@style/Widget.AAPS.Dashboard.ActionChip"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:contentDescription="@string/dashboard_cd_chip_meal_mode"
-                    android:focusable="true"
-                    android:focusableInTouchMode="true"
-                    android:importantForAccessibility="yes"
-                    android:text="@string/dashboard_mode_meal" />
-
-                <com.google.android.material.chip.Chip
-                    android:id="@+id/chip_stat"
-                    style="@style/Widget.AAPS.Dashboard.ActionChip"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:contentDescription="@string/dashboard_cd_chip_aimi_context"
-                    android:focusable="true"
-                    android:focusableInTouchMode="true"
-                    android:importantForAccessibility="yes"
-                    android:text="@string/aimi_context" />
-            </com.google.android.material.chip.ChipGroup>
-        </HorizontalScrollView>
+            android:layout_marginTop="@dimen/dashboard_row_spacing_small" />
     </LinearLayout>
 </merge>

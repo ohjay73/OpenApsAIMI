@@ -5,7 +5,9 @@ import app.aaps.core.interfaces.autotune.Autotune
 import app.aaps.plugins.aps.autotune.AutotunePlugin
 import app.aaps.plugins.aps.loop.LoopPlugin
 import app.aaps.plugins.aps.openAPSAIMI.di.WCycleModule
+import app.aaps.plugins.aps.openAPSAIMI.advisor.AimiModeSettingsActivity
 import app.aaps.plugins.aps.openAPSAIMI.advisor.AimiProfileAdvisorActivity
+import app.aaps.plugins.aps.openAPSAIMI.advisor.meal.MealAdvisorActivity
 import app.aaps.plugins.aps.openAPSAIMI.context.ui.ContextActivity
 import dagger.Binds
 import dagger.Module
@@ -26,6 +28,11 @@ import dagger.hilt.components.SingletonComponent
 @InstallIn(SingletonComponent::class)
 @Suppress("unused")
 abstract class ApsModule {
+
+    @ContributesAndroidInjector abstract fun contributesAimiProfileAdvisorActivity(): AimiProfileAdvisorActivity
+    @ContributesAndroidInjector abstract fun contributesAimiModeSettingsActivity(): AimiModeSettingsActivity
+    @ContributesAndroidInjector abstract fun contributesMealAdvisorActivity(): MealAdvisorActivity
+    @ContributesAndroidInjector abstract fun contributesContextActivity(): ContextActivity
 
     @Module
     @InstallIn(SingletonComponent::class)
