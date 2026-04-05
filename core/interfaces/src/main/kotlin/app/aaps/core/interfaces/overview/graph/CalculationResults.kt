@@ -148,7 +148,8 @@ data class CobGraphData(
  */
 data class ActivityGraphData(
     val activity: List<GraphDataPoint>,
-    val activityPrediction: List<GraphDataPoint>
+    val activityPrediction: List<GraphDataPoint>,
+    val maxActivity: Double = 0.0
 )
 
 /**
@@ -186,6 +187,21 @@ data class DevSlopeGraphData(
  */
 data class VarSensGraphData(
     val varSens: List<GraphDataPoint>
+)
+
+/**
+ * Heart rate graph data: BPM readings from smartwatch or similar device.
+ * Each point spans (timestamp - duration) to timestamp.
+ */
+data class HeartRateGraphData(
+    val heartRates: List<GraphDataPoint>
+)
+
+/**
+ * Steps count graph data: 5-minute step counts from smartwatch or similar device.
+ */
+data class StepsGraphData(
+    val steps: List<GraphDataPoint>
 )
 
 /**

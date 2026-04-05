@@ -24,7 +24,6 @@
     <string name="openaps_no_as_data">No autosens data available</string>
     <string name="dynisf_shortname">DYNISF</string>
     <string name="autoisf_shortname">AUTOISF</string>
-    <string name="executing">Executing</string>
     <string name="openapsama">OpenAPS AMA</string>
     <string name="array_of_elements">Array of %1$d elements.\nActual value:</string>
     <string name="oaps_shortname">OAPS</string>
@@ -34,7 +33,6 @@
     <string name="description_auto_isf">Most recent algorithm for advanced users with AutoISF extensions</string>
     <string name="openapsama_bolus_snooze_dia_divisor">Bolus snooze dia divisor</string>
 
-    <string name="openapsma_run">Run now</string>
     <string name="openapsma_last_run_label">Last run</string>
     <string name="openapsma_input_parameters_label">Input parameters</string>
     <string name="openapsma_glucose_status_label">Glucose status</string>
@@ -413,12 +411,12 @@
     <string name="openapsaimi_highBG_maxsmb_summary">Max SMB value when BG is above 120</string>
     <string name="openapsaimi_highBG_maxsmb_title">Max SMB High BG</string>
     <string name="OApsAIMI_Enable_night_title">Night Mode (SMB/2)</string>
-    
+
     <!-- Learners Section -->
     <string name="oaps_aimi_learners_title">🎓 Learners</string>
     <string name="unified_reactivity_title">Unified Reactivity Learner</string>
     <string name="unified_reactivity_summary">Analyzes TIR/CV%/Hypo every 6h to adapt reactivity (0.6-1.5). Replaces time-bucket reactivity. Exports to CSV in Documents/AAPS.</string>
-    
+
     <!-- 🚨 Emergency SOS (Hypo) Module -->
     <string name="aimi_sos_title">🚨 Emergency SOS (Hypo)</string>
     <string name="aimi_sos_enable_title">Enable Emergency SOS</string>
@@ -444,17 +442,17 @@
     <string name="oaps_aimi_thyroid_guard_level_summary">Aggressiveness of the safety gate blocking SMBs while the thyroid rapidly normalizes to Euthyroid phase.</string>
     <string name="oaps_aimi_thyroid_log_verbosity_title">Extended Logs</string>
     <string name="oaps_aimi_thyroid_log_verbosity_summary">Adds extreme detail to the Thyroid state machine and effect model calculation logs.</string>
-    
+
     <string-array name="oaps_aimi_thyroid_mode_entries">
         <item>Manual Selection</item>
         <item>Auto (Labs + Physio) - Experimental</item>
     </string-array>
-    
+
     <string-array name="oaps_aimi_thyroid_mode_values">
         <item>MANUAL</item>
         <item>AUTO</item>
     </string-array>
-    
+
     <string-array name="oaps_aimi_thyroid_status_entries">
         <item>Euthyroid (Normal)</item>
         <item>Mild Hyper</item>
@@ -462,7 +460,7 @@
         <item>Severe Hyper</item>
         <item>Normalizing (High Risk)</item>
     </string-array>
-    
+
     <string-array name="oaps_aimi_thyroid_status_values">
         <item>EUTHYROID</item>
         <item>HYPER_MILD</item>
@@ -470,33 +468,33 @@
         <item>HYPER_SEVERE</item>
         <item>NORMALIZING</item>
     </string-array>
-    
+
     <string-array name="oaps_aimi_thyroid_phase_entries">
         <item>None (Stable Euthyroid)</item>
         <item>Titration (Starting Meds)</item>
         <item>Stable Treatment</item>
         <item>De-escalation (Stopping Meds)</item>
     </string-array>
-    
+
     <string-array name="oaps_aimi_thyroid_phase_values">
         <item>NONE</item>
         <item>TITRATION</item>
         <item>STABLE</item>
         <item>DE_ESCALATION</item>
     </string-array>
-    
+
     <string-array name="oaps_aimi_thyroid_guard_entries">
         <item>Low (Minimal caps)</item>
         <item>Medium (Standard caps)</item>
         <item>High (Strict block on fast drops)</item>
     </string-array>
-    
+
     <string-array name="oaps_aimi_thyroid_guard_values">
         <item>LOW</item>
         <item>MEDIUM</item>
         <item>HIGH</item>
     </string-array>
-    
+
     <!-- Night Growth Restriction -->
     <string name="prebolus_lunch_mode_summary">Lunch Mode Prebolus 1/2</string>
     <string name="prebolus2_lunch_mode_summary">Lunch Mode Prebolus 2/2</string>
@@ -919,7 +917,7 @@
     <string name="reason_iob_adjustment_inverted">  • IOB Activity Acceleration: -%1$.1f min\n</string>
     <string name="reason_bio_sync_stress">  • 🔴 Bio-Sync STRESS (HR %1$d, Steps %2$d) ➝ Peak slowed x1.25\n</string>
     <string name="reason_bio_sync_flow">  • 🟢 Bio-Sync FLOW (Steps %1$d, HR %2$d) ➝ Peak faster x%3$.2f\n</string>
-    
+
     <string name="smb_disabled_high_target">SMB disabled due to high temptarget of %1$.0f</string>
     <string name="smb_enabled_always">SMB enabled due to enableSMB_always</string>
     <string name="smb_enabled_for_cob">SMB enabled for COB of %1$.1f</string>
@@ -1260,19 +1258,19 @@
     <string name="aimi_adv_section_pkpd">AJUSTEMENTS PKPD</string>
     <string name="aimi_adv_section_brain">ÉTAT COGNITIF</string>
     <string name="aimi_adv_section_coach">COACH IA</string>
-    
+
     <string name="aimi_adv_brain_protect">PROTECTEUR (x%1$.2f)</string>
     <string name="aimi_adv_brain_offense">OFFENSIF (x%1$.2f)</string>
     <string name="aimi_adv_brain_neutral">NEUTRE (x%1$.2f)</string>
     <string name="aimi_adv_brain_protect_desc">Le système a détecté une instabilité/hypo récente et a réduit l\'agressivité globale.</string>
     <string name="aimi_adv_brain_offense_desc">Le système combat une hyperglycémie persistante ou une résistance détectée.</string>
     <string name="aimi_adv_brain_neutral_desc">Le système fonctionne avec ses paramètres de base. Aucune anomalie détectée.</string>
-    
+
     <string name="aimi_coach_title">Coach IA</string>
     <string name="aimi_coach_loading">Génération des conseils personnalisés...</string>
     <string name="aimi_coach_placeholder">Configurez une clé API OpenAI ou Gemini dans les préférences pour activer le Coach IA.</string>
     <string name="aimi_coach_error">Erreur lors de la récupération des conseils IA.</string>
-    
+
     <string name="aimi_adv_analysis_intro_excellent">Excellent travail ! Vos résultats sont impressionnants.</string>
     <string name="aimi_adv_analysis_intro_good">Bon travail, mais quelques ajustements sont possibles.</string>
     <string name="aimi_adv_analysis_intro_poor">Attention, des ajustements sont nécessaires pour améliorer l\'équilibre.</string>
@@ -1282,7 +1280,7 @@
     <string name="aimi_adv_generated_footer">Généré le %1$s • OpenAPS AIMI</string>
 
     <string name="aimi_advisor_model_title">Choisir le modèle IA</string>
-    
+
     <string name="aimi_adv_rec_hypos_title">Risque d\'Hypoglycémie</string>
     <string name="aimi_adv_rec_hypos_desc">Détecté %1$d%% de temps sous 54mg/dL. Suggestion de réduire l\'agressivité.</string>
     <string name="aimi_adv_rec_control_title">Contrôle Glycémique</string>
@@ -1293,13 +1291,13 @@
     <string name="aimi_adv_rec_basal_desc">La part de basale (%1$d%%) est élevée. Vérifiez si votre basale est correcte.</string>
     <string name="aimi_adv_rec_profile_ok_title">Profil Excellent</string>
     <string name="aimi_adv_rec_profile_ok_desc">Aucun ajustement majeur nécessaire.</string>
-    
+
     <string name="aimi_pkpd_title_enable">Activation PK/PD</string>
     <string name="aimi_pkpd_title_dia">Durée d\'action (DIA)</string>
     <string name="aimi_pkpd_title_peak">Pic d\'action</string>
     <string name="aimi_pkpd_title_isf">Facteur Sensibilité (ISF)</string>
     <string name="aimi_pkpd_title_damping">Amortissement SMB</string>
-    
+
     <string name="aimi_pkpd_advisor_disabled">PKPD désactivé alors que le TIR est faible. Activation recommandée pour apprentissage dynamique.</string>
     <string name="aimi_pkpd_hyper_dia">Hyperglycémies persistantes : Réduire la DIA (%1$s -> %2$sh) pour accélérer l\'action.</string>
     <string name="aimi_pkpd_hyper_peak">Hyperglycémies post-prandiales : Avancer le pic (%1$s min) pour plus de réactivité.</string>
@@ -1320,7 +1318,7 @@
     <string name="aimi_auditor_timeout_summary">Maximum wait time for AI provider response (default: 10s)</string>
     <string name="aimi_auditor_min_confidence_title">Minimum Confidence (%)</string>
     <string name="aimi_auditor_min_confidence_summary">Only apply modulations if AI confidence is above this threshold (default: 70%)</string>
-    
+
     <!-- Context Module -->
     <string name="context_title">AIMI Context</string>
     <string name="context_description">Describe your current situation to help AIMI adapt insulin delivery</string>
@@ -1363,7 +1361,7 @@
     <string name="aimi_physio_llm_enable_summary">Send physio data to LLM for daily health summaries (Optional).</string>
     <string name="aimi_physio_debug_title">Debug Logging</string>
     <string name="aimi_physio_debug_summary">Log detailed physiological states to the console.</string>
-    
+
     <!-- 🌸 Endometriosis & Cycle Settings -->
     <string name="endo_preferences_title">Endometriosis Settings</string>
     <string name="endo_enable_title">Enable Endometriosis Logic</string>
@@ -1378,11 +1376,11 @@
     <string name="endo_smb_dampen_summary">Factor to reduce SMBs during flare to prevent stacking (Default 0.7x).</string>
     <string name="endo_flare_duration_title">Flare Duration (hours)</string>
     <string name="endo_flare_duration_summary">How long the flare mode stays active when toggled.</string>
-    
 
-    
 
-    
+
+
+
 
     <!-- T3c Brittle Mode -->
     <string name="aimi_t3c_brittle_mode_title">T3c / Brittle Diabetes Mode</string>
