@@ -63,7 +63,6 @@ import app.aaps.core.utils.isRunningRealPumpTest
 import app.aaps.databinding.ActivityMainBinding
 import app.aaps.plugins.configuration.activities.DaggerAppCompatActivityWithResult
 import app.aaps.plugins.configuration.activities.SingleFragmentActivity
-import app.aaps.plugins.configuration.maintenance.MaintenancePlugin
 import app.aaps.plugins.configuration.setupwizard.SetupWizardActivity
 import app.aaps.plugins.constraints.signatureVerifier.SignatureVerifierPlugin
 import app.aaps.ui.tabs.TabPageAdapter
@@ -99,7 +98,6 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
     @Inject lateinit var activePlugin: ActivePlugin
     @Inject lateinit var fabricPrivacy: FabricPrivacy
     @Inject lateinit var protectionCheck: ProtectionCheck
-    @Inject lateinit var maintenancePlugin: MaintenancePlugin
     @Inject lateinit var profileFunction: ProfileFunction
     @Inject lateinit var configBuilder: ConfigBuilder
     @Inject lateinit var notificationManager: NotificationManager

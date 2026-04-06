@@ -1,34 +1,19 @@
 package app.aaps.plugins.configuration.activities
 
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import android.os.Bundle
-import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.contract.ActivityResultContracts
-import app.aaps.core.interfaces.logging.AAPSLogger
-import app.aaps.core.interfaces.logging.LTag
-import app.aaps.core.interfaces.maintenance.ImportExportPrefs
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventAAPSDirectorySelected
 import app.aaps.core.interfaces.ui.UiInteraction
-import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.ui.locale.LocaleHelper
-import app.aaps.plugins.configuration.R
-import app.aaps.plugins.configuration.maintenance.PrefsFileContract
-import app.aaps.plugins.configuration.maintenance.cloud.CloudConstants
 import dagger.android.support.DaggerAppCompatActivity
-import io.reactivex.rxjava3.disposables.CompositeDisposable
 import javax.inject.Inject
 
 open class DaggerAppCompatActivityWithResult : DaggerAppCompatActivity() {
 
     @Inject lateinit var rxBus: RxBus
     @Inject lateinit var rh: ResourceHelper
-    @Inject lateinit var importExportPrefs: ImportExportPrefs
-    @Inject lateinit var aapsLogger: AAPSLogger
     @Inject lateinit var preferences: Preferences
     @Inject lateinit var uiInteraction: UiInteraction
     private val compositeDisposable = CompositeDisposable()
@@ -106,15 +91,6 @@ open class DaggerAppCompatActivityWithResult : DaggerAppCompatActivity() {
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(LocaleHelper.wrap(newBase))
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        // Handle cloud import result
-        if (requestCode == CloudConstants.CLOUD_IMPORT_REQUEST_CODE && resultCode == RESULT_OK) {
-            importExportPrefs.doImportSharedPreferences(this)
-        }
     }
 
     // Used for SetupWizardActivity
