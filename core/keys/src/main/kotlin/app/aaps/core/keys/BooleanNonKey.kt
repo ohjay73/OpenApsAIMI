@@ -26,7 +26,7 @@ enum class BooleanNonKey(
     WizardIncludeCob("wizard_include_cob", false),
     WizardIncludeTrend("wizard_include_trend_bg", false),
 
-    // Export destination settings (managed by ExportOptionsDialog, no preferences UI)
+    // Export destination settings (maintenance bottom sheet + SP mirror; no dedicated preference screen)
     ExportAllCloudEnabled("export_all_cloud_enabled", false),
     ExportLogEmailEnabled("export_log_email_enabled", true),
     ExportLogCloudEnabled("export_log_cloud_enabled", false),

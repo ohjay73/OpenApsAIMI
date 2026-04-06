@@ -62,6 +62,7 @@ class CloudDirectoryManagerImpl @Inject constructor(
         sp.putBoolean(ExportPrefKeys.PREF_SETTINGS_CLOUD_ENABLED, true)
         sp.putBoolean(ExportPrefKeys.PREF_CSV_LOCAL_ENABLED, false)
         sp.putBoolean(ExportPrefKeys.PREF_CSV_CLOUD_ENABLED, true)
+        sp.putBoolean(ExportPrefKeys.PREF_AIMI_CLOUD_ENABLED, true)
     }
 
     override fun enableLocalStorage() {
@@ -78,6 +79,7 @@ class CloudDirectoryManagerImpl @Inject constructor(
         sp.putBoolean(ExportPrefKeys.PREF_SETTINGS_CLOUD_ENABLED, false)
         sp.putBoolean(ExportPrefKeys.PREF_CSV_LOCAL_ENABLED, true)
         sp.putBoolean(ExportPrefKeys.PREF_CSV_CLOUD_ENABLED, false)
+        sp.putBoolean(ExportPrefKeys.PREF_AIMI_CLOUD_ENABLED, false)
     }
 
     override suspend fun testConnection(): Boolean {

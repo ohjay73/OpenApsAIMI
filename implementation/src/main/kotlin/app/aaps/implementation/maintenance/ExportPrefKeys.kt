@@ -13,4 +13,6 @@ object ExportPrefKeys {
     const val PREF_SETTINGS_CLOUD_ENABLED = "export_settings_cloud_enabled"
     const val PREF_CSV_LOCAL_ENABLED = "export_csv_local_enabled"
     const val PREF_CSV_CLOUD_ENABLED = "export_csv_cloud_enabled"
+    /** When set, a successful settings export to cloud also triggers [app.aaps.core.interfaces.rx.events.EventAimiCloudBackupTrigger]. */
+    const val PREF_AIMI_CLOUD_ENABLED = "export_aimi_cloud_enabled"
 }

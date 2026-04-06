@@ -100,7 +100,8 @@ fun MaintenanceDialogs(
             onToggleLogEmail = { maintenanceViewModel.toggleLogEmail(it) },
             onToggleLogCloud = { maintenanceViewModel.toggleLogCloud(it) },
             onToggleCsvLocal = { maintenanceViewModel.toggleCsvLocal(it) },
-            onToggleCsvCloud = { maintenanceViewModel.toggleCsvCloud(it) }
+            onToggleCsvCloud = { maintenanceViewModel.toggleCsvCloud(it) },
+            onToggleAimiCloud = { maintenanceViewModel.toggleAimiCloud(it) }
         )
     }
 

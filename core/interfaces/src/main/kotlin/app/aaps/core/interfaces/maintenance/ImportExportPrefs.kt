@@ -25,6 +25,8 @@ data class ExportConfig(
     val logCloud: Boolean,
     val csvLocal: Boolean,
     val csvCloud: Boolean,
+    /** Upload AIMI backup files to the cloud when exporting settings to cloud. */
+    val aimiCloud: Boolean,
     val cloudDisplayName: String?
 )
 
@@ -82,6 +84,7 @@ interface ImportExportPrefs {
     fun setLogCloudEnabled(enabled: Boolean)
     fun setCsvLocalEnabled(enabled: Boolean)
     fun setCsvCloudEnabled(enabled: Boolean)
+    fun setAimiCloudEnabled(enabled: Boolean)
 
     // Compose import support — discrete steps, no UI
 

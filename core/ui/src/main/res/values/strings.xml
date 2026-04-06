@@ -830,6 +830,9 @@
     <string name="maintenance_aaps_directory_desc">Select local storage folder</string>
     <string name="maintenance_cloud_directory_desc">Set up cloud storage (Google Drive)</string>
     <string name="maintenance_export_desc">Save encrypted settings backup</string>
+    <string name="maintenance_export_aimi_cloud_title">AIMI cloud backup</string>
+    <string name="maintenance_export_aimi_cloud_desc">When you export settings to the cloud, also upload AIMI backup files under AAPS/export/aimi.</string>
+    <string name="maintenance_export_aimi_cloud_chip">Include AIMI</string>
     <string name="maintenance_import_desc">Restore settings from backup</string>
     <string name="maintenance_export_csv_desc">Export treatment history as spreadsheet</string>
     <string name="maintenance_cleanup_db_desc">Remove old entries from database</string>

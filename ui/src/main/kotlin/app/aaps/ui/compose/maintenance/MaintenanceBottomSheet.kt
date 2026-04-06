@@ -69,6 +69,7 @@ fun MaintenanceBottomSheet(
     onToggleLogCloud: (Boolean) -> Unit = {},
     onToggleCsvLocal: (Boolean) -> Unit = {},
     onToggleCsvCloud: (Boolean) -> Unit = {},
+    onToggleAimiCloud: (Boolean) -> Unit = {},
     isDirectoryAccessGranted: Boolean = false
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -99,6 +100,7 @@ fun MaintenanceBottomSheet(
             onToggleLogCloud = onToggleLogCloud,
             onToggleCsvLocal = onToggleCsvLocal,
             onToggleCsvCloud = onToggleCsvCloud,
+            onToggleAimiCloud = onToggleAimiCloud,
             isDirectoryAccessGranted = isDirectoryAccessGranted
         )
     }
@@ -126,6 +128,7 @@ internal fun MaintenanceBottomSheetContent(
     onToggleLogCloud: (Boolean) -> Unit = {},
     onToggleCsvLocal: (Boolean) -> Unit = {},
     onToggleCsvCloud: (Boolean) -> Unit = {},
+    onToggleAimiCloud: (Boolean) -> Unit = {},
     isDirectoryAccessGranted: Boolean = false
 ) {
     val primaryColor = MaterialTheme.colorScheme.primary
@@ -290,6 +293,39 @@ internal fun MaintenanceBottomSheetContent(
                         cloudLabel = stringResource(CoreUiR.string.chip_cloud),
                         onLocalToggle = onToggleCsvLocal,
                         onCloudToggle = onToggleCsvCloud
+                    )
+                }
+            }
+        )
+        MaintenanceItem(
+            text = stringResource(CoreUiR.string.maintenance_export_aimi_cloud_title),
+            description = stringResource(CoreUiR.string.maintenance_export_aimi_cloud_desc),
+            icon = Icons.Default.Cloud,
+            color = primaryColor,
+            onDismiss = onDismiss,
+            onClick = {
+                if (isCloudActive) {
+                    exportConfig?.let { cfg -> onToggleAimiCloud(!cfg.aimiCloud) }
+                }
+            },
+            trailingContent = exportConfig?.let {
+                {
+                    FilterChip(
+                        selected = it.aimiCloud,
+                        onClick = {
+                            if (isCloudActive) onToggleAimiCloud(!it.aimiCloud)
+                        },
+                        enabled = isCloudActive,
+                        label = {
+                            Text(
+                                text = stringResource(CoreUiR.string.maintenance_export_aimi_cloud_chip),
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
                     )
                 }
             }
@@ -491,6 +527,7 @@ private fun MaintenanceBottomSheetContentPreview() {
                 logCloud = false,
                 csvLocal = true,
                 csvCloud = false,
+                aimiCloud = false,
                 cloudDisplayName = "Google Drive"
             ),
             isDirectoryAccessGranted = true

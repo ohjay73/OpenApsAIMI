@@ -132,6 +132,7 @@ class ImportExportPrefsImpl @Inject constructor(
             logCloud = sp.getBoolean(ExportPrefKeys.PREF_LOG_CLOUD_ENABLED, false),
             csvLocal = sp.getBoolean(ExportPrefKeys.PREF_CSV_LOCAL_ENABLED, true),
             csvCloud = sp.getBoolean(ExportPrefKeys.PREF_CSV_CLOUD_ENABLED, false),
+            aimiCloud = sp.getBoolean(ExportPrefKeys.PREF_AIMI_CLOUD_ENABLED, false),
             cloudDisplayName = provider?.displayName
         )
     }
@@ -183,6 +184,11 @@ class ImportExportPrefsImpl @Inject constructor(
         if (!enabled && !sp.getBoolean(ExportPrefKeys.PREF_CSV_LOCAL_ENABLED, true)) {
             sp.putBoolean(ExportPrefKeys.PREF_CSV_LOCAL_ENABLED, true)
         }
+        sp.putBoolean(ExportPrefKeys.PREF_ALL_CLOUD_ENABLED, false)
+    }
+
+    override fun setAimiCloudEnabled(enabled: Boolean) {
+        sp.putBoolean(ExportPrefKeys.PREF_AIMI_CLOUD_ENABLED, enabled)
         sp.putBoolean(ExportPrefKeys.PREF_ALL_CLOUD_ENABLED, false)
     }
 
@@ -530,7 +536,7 @@ class ImportExportPrefsImpl @Inject constructor(
             doExportToCloud(activity, password)
 
             // Trigger AIMI backup if enabled
-            if (exportOptionsDialog.isAimiCloudEnabled()) {
+            if (sp.getBoolean(ExportPrefKeys.PREF_AIMI_CLOUD_ENABLED, false)) {
                 rxBus.send(EventAimiCloudBackupTrigger())
             }
         }
@@ -612,7 +618,7 @@ class ImportExportPrefsImpl @Inject constructor(
                 doExportToCloud(activity, password)
 
                 // Trigger AIMI backup if enabled
-                if (exportOptionsDialog.isAimiCloudEnabled()) {
+                if (sp.getBoolean(ExportPrefKeys.PREF_AIMI_CLOUD_ENABLED, false)) {
                     rxBus.send(EventAimiCloudBackupTrigger())
                 }
             }
@@ -790,7 +796,7 @@ class ImportExportPrefsImpl @Inject constructor(
                         }
 
                         // Trigger AIMI backup if enabled
-                        if (exportOptionsDialog.isAimiCloudEnabled()) {
+                        if (sp.getBoolean(ExportPrefKeys.PREF_AIMI_CLOUD_ENABLED, false)) {
                             rxBus.send(EventAimiCloudBackupTrigger())
                         }
                     } else {

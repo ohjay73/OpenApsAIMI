@@ -31,9 +31,6 @@ abstract class ConfigurationModule {
 
         @Binds fun bindRunningConfiguration(runningConfigurationImpl: RunningConfigurationImpl): RunningConfiguration
         @Binds fun bindConfigBuilderInterface(configBuilderPlugin: ConfigBuilderPlugin): ConfigBuilder
-        @Binds fun bindImportExportPrefsInterface(importExportPrefs: ImportExportPrefsImpl): ImportExportPrefs
-        @Binds fun bindMaintenanceInterface(maintenancePlugin: MaintenancePlugin): Maintenance
-        @Binds fun bindCloudDirectoryManager(impl: CloudDirectoryManagerImpl): CloudDirectoryManager
         @Binds fun bindAndroidPermission(impl: AndroidPermissionImpl): AndroidPermission
     }
 }
