@@ -128,7 +128,7 @@ class DynamicBasalControllerT3cTest {
     }
 
     @Test
-    fun `computeT3c eventualBg does not change rate without T3cTrajectoryContext`() {
+    fun `computeT3c eventualBg does not change rate when anticipation disabled`() {
         fun rateWithEventual(ev: Double?) = DynamicBasalController.computeT3c(
             bg = 150.0,
             targetBg = 100.0,
@@ -145,10 +145,60 @@ class DynamicBasalControllerT3cTest {
             eventualBg = ev,
             activationThreshold = 130.0,
             aggressiveness = 1.0,
-            trajectory = null
+            trajectory = null,
+            anticipationHints = T3cAnticipation.Hints.DISABLED
         )
         val rHigh = rateWithEventual(200.0)
         val rLow = rateWithEventual(70.0)
         assertEquals(rHigh, rLow, 1e-9)
+    }
+
+    @Test
+    fun `computeT3c eventual uplifts correction when anticipation strength on`() {
+        val flatLocal = DynamicBasalController.computeT3c(
+            bg = 120.0,
+            targetBg = 100.0,
+            delta = 0.0f,
+            shortAvgDelta = 0.0,
+            longAvgDelta = 0.0,
+            accel = 0.0,
+            iob = 0.0,
+            maxIob = 10.0,
+            profileBasal = 1.0,
+            isf = 50.0,
+            duraISFminutes = 0.0,
+            duraISFaverage = 100.0,
+            eventualBg = 190.0,
+            activationThreshold = 130.0,
+            aggressiveness = 1.0,
+            trajectory = null,
+            anticipationHints = T3cAnticipation.Hints.DISABLED
+        )
+        val lifted = DynamicBasalController.computeT3c(
+            bg = 120.0,
+            targetBg = 100.0,
+            delta = 0.0f,
+            shortAvgDelta = 0.0,
+            longAvgDelta = 0.0,
+            accel = 0.0,
+            iob = 0.0,
+            maxIob = 10.0,
+            profileBasal = 1.0,
+            isf = 50.0,
+            duraISFminutes = 0.0,
+            duraISFaverage = 100.0,
+            eventualBg = 190.0,
+            activationThreshold = 130.0,
+            aggressiveness = 1.0,
+            trajectory = null,
+            anticipationHints = T3cAnticipation.Hints(
+                strength = 1.0,
+                lgsThresholdMgdl = 70.0,
+                minutesToSoftHypo = null,
+                defensiveNadirBg = null,
+                minutesToHyperExcursion = null
+            )
+        )
+        assertTrue(lifted > flatLocal + 0.2)
     }
 }

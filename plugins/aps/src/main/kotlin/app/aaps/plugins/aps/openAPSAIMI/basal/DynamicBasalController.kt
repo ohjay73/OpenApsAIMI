@@ -224,7 +224,8 @@ class DynamicBasalController @Inject constructor(
             activationThreshold: Double = 130.0,
             aggressiveness: Double = 1.0,
             maxBasalCap: Double? = null,
-            trajectory: T3cTrajectoryContext? = null
+            trajectory: T3cTrajectoryContext? = null,
+            anticipationHints: T3cAnticipation.Hints = T3cAnticipation.Hints.DISABLED
         ): Double {
             val effectiveIsf = isf.coerceAtLeast(10.0)
             val velocity = delta * 0.7f + shortAvgDelta.toFloat() * 0.3f
@@ -251,16 +252,21 @@ class DynamicBasalController @Inject constructor(
             val projectionMins = if (delta >= 3.0f && delta > shortAvgDelta) 40.0 else 30.0
             val t = projectionMins / 5.0
             val projectedBg = bg + (velocity * t) + (0.5 * accel * t * t)
-            
+            val effectiveProjectedBg = T3cAnticipation.blendProjectedForHyper(
+                projectedBg = projectedBg,
+                eventualBg = eventualBg,
+                strength = anticipationHints.strength
+            )
+
             // 2. Anticipation de la Cible (Smarter Braking)
-            val baseToDeliver = if (projectedBg < targetBg) {
-                profileBasal * exp((projectedBg - targetBg) / 15.0)
+            val baseToDeliver = if (effectiveProjectedBg < targetBg) {
+                profileBasal * exp((effectiveProjectedBg - targetBg) / 15.0)
             } else {
                 profileBasal
             }
-            
+
             // Use activationThreshold as the reference for correction
-            val projectedError = (projectedBg - activationThreshold).coerceAtLeast(0.0)
+            val projectedError = (effectiveProjectedBg - activationThreshold).coerceAtLeast(0.0)
             
             // 3. Calcul du Besoin Brut T3C
             val requiredU = projectedError / effectiveIsf
@@ -280,20 +286,26 @@ class DynamicBasalController @Inject constructor(
             }
             
             // 6. Horizon de Livraison Réactif
-            val deliveryHorizonHours = when {
+            val deliveryHorizonHoursRaw = when {
                 delta >= 3.0f || velocity >= 3.0f -> 0.16
-                projectedBg > activationThreshold + 30.0 -> 0.25
+                effectiveProjectedBg > activationThreshold + 30.0 -> 0.25
                 else -> 0.33
             }
-            
+            val deliveryHorizonHours = T3cAnticipation.compressDeliveryHorizonHours(
+                baseHorizonHours = deliveryHorizonHoursRaw,
+                minutesToHyperExcursion = anticipationHints.minutesToHyperExcursion,
+                strength = anticipationHints.strength
+            )
+
             // Apply AGGRESSIVENESS here
             val correctionRate = (requiredU / deliveryHorizonHours) * resistanceFactor * accelFactor * aggressiveness
-            
+
             // 7. Continuous Braking : Freinage linéaire basé sur la vitesse de chute
             val brakeFactor = (1.0 + velocity / 2.0).coerceIn(0.0, 1.0)
 
-            // Apply BOTH brakeFactor AND resTransitionMult
-            val totalRate = (baseToDeliver + correctionRate) * brakeFactor * resTransitionMult
+            // Apply BOTH brakeFactor AND resTransitionMult; then curve-based hypo lead (IOB/COB envelope)
+            var totalRate = (baseToDeliver + correctionRate) * brakeFactor * resTransitionMult
+            totalRate *= T3cAnticipation.hypoLeadMultiplier(anticipationHints, targetBg)
 
             // Cap at configured max basal (T3C should respect user-defined hard ceiling).
             // Fallback keeps legacy behavior if cap is not provided.
@@ -307,8 +319,7 @@ class DynamicBasalController @Inject constructor(
                     ctx = ctx
                 )
             }
-            // eventualBg is folded into [T3cTrajectoryContext.eventualPredBg] on the real T3C path only;
-            // when trajectory is null, behavior matches pre-trajectory T3C (tests / legacy callers).
+            // eventualBg + prediction envelopes feed [anticipationHints] on the T3C path; trajectory.ctx still applies last.
             return out.coerceIn(0.0, effectiveCap)
         }
 

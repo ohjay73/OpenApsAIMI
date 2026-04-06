@@ -37,6 +37,7 @@ import app.aaps.plugins.aps.R
 import app.aaps.plugins.aps.openAPSAIMI.basal.BasalDecisionEngine
 import app.aaps.plugins.aps.openAPSAIMI.basal.BasalHistoryUtils
 import app.aaps.plugins.aps.openAPSAIMI.basal.DynamicBasalController
+import app.aaps.plugins.aps.openAPSAIMI.basal.T3cAnticipation
 import app.aaps.plugins.aps.openAPSAIMI.basal.T3cTrajectoryContext
 import app.aaps.plugins.aps.openAPSAIMI.carbs.CarbsAdvisor
 import app.aaps.core.interfaces.ui.UiInteraction
@@ -8854,7 +8855,29 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val aggressiveness = (rawAggressiveness + rawAggressiveness * adaptiveBoost)
             .coerceIn(0.3, 2.0) // hard bounds
 
-        // 🧠 Predictive PI Controller — 1000% scale, predictedBg as error term
+        val lgsForAnticipation = kotlin.math.min(
+            90.0,
+            (profile.lgsThreshold?.toDouble() ?: 70.0).coerceAtLeast(70.0)
+        )
+        val anticipationStrength = preferences.get(DoubleKey.OApsAIMIT3cAnticipationStrength)
+        val t3cAnticipationHints = T3cAnticipation.buildHints(
+            predictions = rT.predBGs,
+            bgNow = bg,
+            lgsThresholdMgdl = lgsForAnticipation,
+            activationThreshold = activationThreshold,
+            eventualBg = if (eventualBg > 0) eventualBg else null,
+            strengthRaw = anticipationStrength
+        )
+        if (anticipationStrength > 0.01) {
+            consoleLog.add(
+                "🔮 T3cANT str=${"%.2f".format(anticipationStrength)} " +
+                    "tSoftHypo=${t3cAnticipationHints.minutesToSoftHypo?.toString() ?: "—"}m " +
+                    "nadir=${t3cAnticipationHints.defensiveNadirBg?.let { "%.0f".format(it) } ?: "—"} " +
+                    "tHyperBand=${t3cAnticipationHints.minutesToHyperExcursion?.toString() ?: "—"}m"
+            )
+        }
+
+        // 🧠 Predictive PI Controller — curve-augmented when anticipation strength > 0
         val computedRate = DynamicBasalController.computeT3c(
             bg = bg,
             targetBg = targetBg,
@@ -8872,7 +8895,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             activationThreshold = activationThreshold,
             aggressiveness = aggressiveness,
             maxBasalCap = maxBasalCap,
-            trajectory = trajectoryContext
+            trajectory = trajectoryContext,
+            anticipationHints = t3cAnticipationHints
         )
 
         // Progressive ramp: move toward target rate without abrupt jumps.
@@ -8898,6 +8922,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         rT.duration = 30
         rT.reason.append(
             "🛡️T3c | Thresh: ${activationThreshold.toInt()} | Agg: ${"%.1f".format(aggressiveness)} (raw=${"%.1f".format(rawAggressiveness)} AML=${"%.2f".format(adaptiveMult)}) | " +
+                "ANT:${"%.2f".format(anticipationStrength)} | " +
                 "PI: ${"%.2f".format(t3cFinalRate)}U/h (target=${"%.2f".format(targetRate)} cap=${"%.2f".format(maxBasalCap)} stepUp=${"%.2f".format(maxStepUp)})"
         )
 

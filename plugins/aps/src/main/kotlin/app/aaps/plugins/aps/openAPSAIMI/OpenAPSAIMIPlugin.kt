@@ -1662,6 +1662,14 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                             dialogMessage = R.string.aimi_t3c_aggressiveness_summary
                         )
                     )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIT3cAnticipationStrength,
+                            title = R.string.aimi_t3c_anticipation_strength_title,
+                            dialogMessage = R.string.aimi_t3c_anticipation_strength_summary
+                        )
+                    )
                 })
 
                 // 🌀 Phase-Space Trajectory Control

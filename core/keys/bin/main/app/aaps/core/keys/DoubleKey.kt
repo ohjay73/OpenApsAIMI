@@ -360,6 +360,8 @@ enum class DoubleKey(
 
     // --- T3C Enhancements ---
     OApsAIMIT3cActivationThreshold("key_aimi_t3c_activation_threshold", 130.0, 100.0, 250.0),
+    /** 0 = parabolic PI only (legacy). >0 blends eventual BG + prediction curve timing into T3C basal. */
+    OApsAIMIT3cAnticipationStrength("key_aimi_t3c_anticipation_strength", 0.0, 0.0, 1.0),
     OApsAIMIT3cAggressiveness("key_aimi_t3c_aggressiveness", 1.0, 0.5, 3.0),
     OApsAIMIAdaptiveBasalMaxScaling("key_aimi_adaptive_basal_max_scaling", 1.0, 0.5, 2.0),
 }
