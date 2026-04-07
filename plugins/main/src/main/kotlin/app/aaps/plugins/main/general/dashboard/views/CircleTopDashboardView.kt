@@ -428,9 +428,12 @@ class CircleTopDashboardView @JvmOverloads constructor(
         val step2 = ContextCompat.getColor(context, app.aaps.core.ui.R.color.glucose_ring_step2)
         val step3 = ContextCompat.getColor(context, app.aaps.core.ui.R.color.glucose_ring_step3)
         val step4 = ContextCompat.getColor(context, app.aaps.core.ui.R.color.glucose_ring_step4)
+        // Ring palette: stepped TIR-style bands (green→120, etc.). Hypo band uses default clinical floor (70)
+        // from [hypoMaxMgdlAttr], not profile target low — otherwise BG just under a high target-low (e.g. 100 vs 105)
+        // stays orange and ignores step1MaxMgdl. Compose [GlucoseHeroRing] uses this [ringArgb] only.
         val ringArgb = GlucoseRingColorComputer.compute(
             bgMgdl = bgMgdl,
-            hypoMaxFromProfile = cardState?.targetLow?.toFloat(),
+            hypoMaxFromProfile = null,
             severeHypoMaxMgdl = 54f,
             hypoMaxMgdlAttr = 70f,
             useSteppedColors = true,
