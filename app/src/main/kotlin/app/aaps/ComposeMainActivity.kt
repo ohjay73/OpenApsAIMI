@@ -746,7 +746,8 @@ class ComposeMainActivity : AppCompatActivity() {
                         withProtection(ProtectionCheck.Protection.BOLUS) {
                             navController.navigate(AppRoute.ProfileActivation.createRoute(index))
                         }
-                    }
+                    },
+                    onInsulinManager = { navController.navigate(AppRoute.InsulinManagement.createRoute(mode)) }
                 )
             }
 
