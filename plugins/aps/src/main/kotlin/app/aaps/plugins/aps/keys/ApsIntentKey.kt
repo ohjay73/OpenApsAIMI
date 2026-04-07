@@ -26,5 +26,12 @@ enum class ApsIntentKey(
         titleResId = R.string.openapsama_link_to_preference_json_doc_txt,
         preferenceType = PreferenceType.URL,
         urlResId = R.string.openapsama_link_to_preference_json_doc
-    )
+    ),
+
+    PkpdSetup(
+        key = "aimi_pkpd_setup_compose",
+        titleResId = R.string.aimi_pkpd_compose_title,
+        summaryResId = R.string.aimi_pkpd_compose_summary,
+        preferenceType = PreferenceType.ACTIVITY,
+    ),
 }

@@ -64,6 +64,8 @@ import app.aaps.core.keys.interfaces.PreferenceItem
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.StringKey
+import app.aaps.core.keys.interfaces.withCompose
+import app.aaps.core.ui.compose.ComposeScreenContent
 import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
 import app.aaps.plugins.aps.keys.ApsIntentKey
 import app.aaps.plugins.aps.openAPSAIMI.keys.AimiStringKey
@@ -110,6 +112,7 @@ import androidx.core.util.size
 import androidx.core.net.toUri
 import kotlin.math.abs
 import kotlin.math.exp
+import app.aaps.plugins.aps.openAPSAIMI.compose.AimiPkpdSettingsScreen
 import app.aaps.plugins.aps.openAPSAIMI.utils.AimiBackupManager
 import app.aaps.core.objects.extensions.put
 import app.aaps.core.objects.extensions.store
@@ -1302,28 +1305,14 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
             key = "aimi_compose_pkpd",
             titleResId = R.string.oaps_aimi_pkpd_section_title,
             items = listOf(
-                BooleanKey.OApsAIMIPkpdEnabled,
-                DoubleKey.OApsAIMIPkpdInitialDiaH,
-                DoubleKey.OApsAIMIPkpdInitialPeakMin,
-                DoubleKey.OApsAIMIPkpdBoundsDiaMinH,
-                DoubleKey.OApsAIMIPkpdBoundsDiaMaxH,
-                DoubleKey.OApsAIMIPkpdBoundsPeakMinMin,
-                DoubleKey.OApsAIMIPkpdBoundsPeakMinMax,
-                DoubleKey.OApsAIMIPkpdMaxDiaChangePerDayH,
-                DoubleKey.OApsAIMIPkpdMaxPeakChangePerDayMin,
-                DoubleKey.OApsAIMIIsfFusionMinFactor,
-                DoubleKey.OApsAIMIIsfFusionMaxFactor,
-                DoubleKey.OApsAIMIIsfFusionMaxChangePerTick,
-                DoubleKey.OApsAIMISmbTailThreshold,
-                DoubleKey.OApsAIMISmbTailDamping,
-                BooleanKey.OApsAIMIPkpdPragmaticReliefEnabled,
-                DoubleKey.OApsAIMIPkpdPragmaticReliefMinFactor,
-                DoubleKey.OApsAIMIRedCarpetRestoreThreshold,
-                BooleanKey.OApsAIMIIobSurveillanceGuard,
-                DoubleKey.OApsAIMIPriorityMaxIobFactor,
-                DoubleKey.OApsAIMIPriorityMaxIobExtraU,
-                DoubleKey.OApsAIMISmbExerciseDamping,
-                DoubleKey.OApsAIMISmbLateFatDamping,
+                ApsIntentKey.PkpdSetup.withCompose(
+                    ComposeScreenContent { onBack ->
+                        AimiPkpdSettingsScreen(
+                            preferences = preferences,
+                            onBack = onBack,
+                        )
+                    }
+                ),
             ),
         )
 
