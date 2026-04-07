@@ -1,6 +1,7 @@
 package app.aaps.ui.compose.main
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -23,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.aaps.core.interfaces.notifications.AapsNotification
@@ -111,6 +113,8 @@ fun MainScreen(
     queueStatusText: String? = null,
     isPumpCommunicating: Boolean = false,
     onStopBolus: () -> Unit = {},
+    /** When non-null, replaces Compose OverviewScreen (e.g. AIMI hybrid dashboard hosted in the activity). */
+    dashboardOverview: (@Composable (PaddingValues, Dp) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     LocalDateUtil.current
@@ -193,38 +197,43 @@ fun MainScreen(
                 },
             ) { paddingValues ->
                 val hasToolbar = quickLaunchItems.isNotEmpty()
+                val fabBottomOffset = if (hasToolbar) 56.dp else 0.dp
                 Box(modifier = Modifier.fillMaxSize()) {
-                    OverviewScreen(
-                        profileName = uiState.profileName,
-                        isProfileModified = uiState.isProfileModified,
-                        profileProgress = uiState.profileProgress,
-                        tempTargetText = uiState.tempTargetText,
-                        tempTargetState = uiState.tempTargetState,
-                        tempTargetProgress = uiState.tempTargetProgress,
-                        tempTargetReason = uiState.tempTargetReason,
-                        runningMode = uiState.runningMode,
-                        runningModeText = uiState.runningModeText,
-                        runningModeProgress = uiState.runningModeProgress,
-                        isSimpleMode = uiState.isSimpleMode,
-                        calcProgress = calcProgress,
-                        graphViewModel = graphViewModel,
-                        manageViewModel = manageViewModel,
-                        statusViewModel = statusViewModel,
-                        statusLightsDef = statusLightsDef,
-                        onNavigate = onNavigate,
-                        notifications = notifications,
-                        onDismissNotification = onDismissNotification,
-                        onNotificationActionClick = onNotificationActionClick,
-                        autoShowNotificationSheet = autoShowNotificationSheet,
-                        onAutoShowConsumed = onAutoShowConsumed,
-                        paddingValues = paddingValues,
-                        fabBottomOffset = if (hasToolbar) 56.dp else 0.dp,
-                        bolusState = bolusState,
-                        pumpStatusText = pumpStatusText,
-                        queueStatusText = queueStatusText,
-                        isPumpCommunicating = isPumpCommunicating,
-                        onStopBolus = onStopBolus
-                    )
+                    if (dashboardOverview != null) {
+                        dashboardOverview(paddingValues, fabBottomOffset)
+                    } else {
+                        OverviewScreen(
+                            profileName = uiState.profileName,
+                            isProfileModified = uiState.isProfileModified,
+                            profileProgress = uiState.profileProgress,
+                            tempTargetText = uiState.tempTargetText,
+                            tempTargetState = uiState.tempTargetState,
+                            tempTargetProgress = uiState.tempTargetProgress,
+                            tempTargetReason = uiState.tempTargetReason,
+                            runningMode = uiState.runningMode,
+                            runningModeText = uiState.runningModeText,
+                            runningModeProgress = uiState.runningModeProgress,
+                            isSimpleMode = uiState.isSimpleMode,
+                            calcProgress = calcProgress,
+                            graphViewModel = graphViewModel,
+                            manageViewModel = manageViewModel,
+                            statusViewModel = statusViewModel,
+                            statusLightsDef = statusLightsDef,
+                            onNavigate = onNavigate,
+                            notifications = notifications,
+                            onDismissNotification = onDismissNotification,
+                            onNotificationActionClick = onNotificationActionClick,
+                            autoShowNotificationSheet = autoShowNotificationSheet,
+                            onAutoShowConsumed = onAutoShowConsumed,
+                            paddingValues = paddingValues,
+                            fabBottomOffset = fabBottomOffset,
+                            bolusState = bolusState,
+                            pumpStatusText = pumpStatusText,
+                            queueStatusText = queueStatusText,
+                            isPumpCommunicating = isPumpCommunicating,
+                            onStopBolus = onStopBolus
+                        )
+                    }
 
                     // Search results overlay
                     if (searchUiState.isSearchActive) {

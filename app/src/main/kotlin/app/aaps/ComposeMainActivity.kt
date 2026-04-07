@@ -132,6 +132,7 @@ import app.aaps.core.ui.compose.siteRotation.SiteLocationPickerScreen
 import app.aaps.core.ui.locale.LocaleHelper
 import app.aaps.core.ui.search.SearchableItem
 import app.aaps.core.utils.isRunningRealPumpTest
+import app.aaps.compose.dashboard.DashboardOverviewHost
 import app.aaps.implementation.plugin.PluginStore
 import app.aaps.implementation.protection.BiometricCheck
 import app.aaps.plugins.configuration.activities.OptimizationPermissionContract
@@ -561,6 +562,13 @@ class ComposeMainActivity : AppCompatActivity() {
                 val notifications by notificationManager.notifications.collectAsStateWithLifecycle()
                 val quickLaunchItems by mainViewModel.quickLaunchItems.collectAsStateWithLifecycle()
 
+                var useDashboardLayout by remember {
+                    mutableStateOf(preferences.get(BooleanKey.OverviewUseDashboardLayout))
+                }
+                LaunchedEffect(Unit) {
+                    preferences.observe(BooleanKey.OverviewUseDashboardLayout).collect { useDashboardLayout = it }
+                }
+
                 // Pump setup button in bottom bar
                 val pumpPlugin = activePlugin.activePumpInternal as PluginBase
                 val showPumpSetup = (!activePlugin.activePump.isInitialized() || activePlugin.activePump.isSuspended()) && (pumpPlugin.hasComposeContent() || pumpPlugin.hasFragment())
@@ -681,6 +689,16 @@ class ComposeMainActivity : AppCompatActivity() {
                     isPumpCommunicating = pumpCommunicationStatus.statusBanner() != null,
                     onStopBolus = {
                         commandQueue.cancelAllBoluses(null)
+                    },
+                    dashboardOverview = if (useDashboardLayout) {
+                        { pad, fab ->
+                            DashboardOverviewHost(
+                                paddingValues = pad,
+                                fabBottomOffset = fab,
+                            )
+                        }
+                    } else {
+                        null
                     }
                 )
             }
