@@ -29,6 +29,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.aaps.core.interfaces.notifications.AapsNotification
 import app.aaps.core.interfaces.pump.BolusProgressState
+import app.aaps.core.ui.compose.pump.PumpActivityDialog
+import app.aaps.core.ui.compose.pump.PumpActivityFab
 import app.aaps.core.ui.compose.AapsFab
 import app.aaps.core.ui.compose.LocalDateUtil
 import app.aaps.core.ui.compose.LocalSnackbarHostState
@@ -45,6 +47,8 @@ import app.aaps.ui.compose.maintenance.MaintenanceDialogs
 import app.aaps.ui.compose.maintenance.MaintenanceViewModel
 import app.aaps.ui.compose.manageSheet.ManageSheetState
 import app.aaps.ui.compose.manageSheet.ManageViewModel
+import app.aaps.ui.compose.notificationsSheet.NotificationBottomSheet
+import app.aaps.ui.compose.notificationsSheet.NotificationFab
 import app.aaps.ui.compose.overview.OverviewScreen
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
 import app.aaps.ui.compose.overview.statusLights.StatusViewModel
@@ -124,6 +128,21 @@ fun MainScreen(
     var showTreatmentSheet by remember { mutableStateOf(false) }
     var showAutomationSheet by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val isDashboardEmbedded = dashboardOverview != null
+    var dashboardNotificationSheet by remember { mutableStateOf(false) }
+    var dashboardPumpDialog by remember { mutableStateOf(false) }
+    val showDashboardPumpFab = isDashboardEmbedded &&
+        (isPumpCommunicating || (bolusState != null && bolusState.isSMB))
+
+    LaunchedEffect(autoShowNotificationSheet, isDashboardEmbedded) {
+        if (autoShowNotificationSheet && isDashboardEmbedded) {
+            dashboardNotificationSheet = true
+            onAutoShowConsumed()
+        }
+    }
+    LaunchedEffect(bolusState, isDashboardEmbedded) {
+        if (isDashboardEmbedded && bolusState == null) dashboardPumpDialog = false
+    }
 
     // Sync drawer state with ui state
     LaunchedEffect(uiState.isDrawerOpen) {
@@ -280,6 +299,27 @@ fun MainScreen(
                             .align(Alignment.BottomEnd)
                             .padding(bottom = fabBottomPadding, end = 16.dp)
                     )
+
+                    if (isDashboardEmbedded) {
+                        PumpActivityFab(
+                            visible = showDashboardPumpFab,
+                            bolusState = bolusState,
+                            onClick = { dashboardPumpDialog = true },
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(paddingValues)
+                                .padding(end = 16.dp, bottom = 128.dp + fabBottomOffset)
+                        )
+                        NotificationFab(
+                            notificationCount = notifications.size,
+                            highestLevel = notifications.minByOrNull { it.level.ordinal }?.level,
+                            onClick = { dashboardNotificationSheet = true },
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(paddingValues)
+                                .padding(end = 16.dp, bottom = 72.dp + fabBottomOffset)
+                        )
+                    }
                 }
             }
         }
@@ -310,6 +350,25 @@ fun MainScreen(
                 onDismiss = { showAutomationSheet = false },
                 automationItems = automationState.items,
                 onItemClick = { item -> mainViewModel.requestAutomationConfirmation(item.eventId) }
+            )
+        }
+
+        if (isDashboardEmbedded && dashboardPumpDialog) {
+            PumpActivityDialog(
+                bolusState = bolusState,
+                pumpStatus = pumpStatusText,
+                queueStatus = queueStatusText,
+                isModal = false,
+                onStop = onStopBolus,
+                onDismiss = { dashboardPumpDialog = false }
+            )
+        }
+        if (isDashboardEmbedded && dashboardNotificationSheet && notifications.isNotEmpty()) {
+            NotificationBottomSheet(
+                notifications = notifications,
+                onDismissSheet = { dashboardNotificationSheet = false },
+                onDismissNotification = onDismissNotification,
+                onNotificationActionClick = onNotificationActionClick
             )
         }
 

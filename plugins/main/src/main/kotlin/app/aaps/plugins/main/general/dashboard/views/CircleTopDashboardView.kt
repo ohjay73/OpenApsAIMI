@@ -31,9 +31,6 @@ import app.aaps.plugins.main.general.dashboard.compose.DashboardQuickActionsBar
 import app.aaps.plugins.main.general.dashboard.viewmodel.StatusCardState
 import java.util.Locale
 import java.util.TimeZone
-import kotlin.math.roundToInt
-
-
 /**
  * CircleTopDashboardView - Modern Circle-Top Hybrid Dashboard
  * 
@@ -164,16 +161,8 @@ class CircleTopDashboardView @JvmOverloads constructor(
                 }
             }
 
-            if (state is StatusCardState) {
-                val strip = formatAimiMlStrip(state)
-                binding.aimiMlConfidenceStrip.isGone = strip.isNullOrBlank()
-                if (!strip.isNullOrBlank()) {
-                    binding.aimiMlConfidenceDetail.text = strip
-                    binding.aimiMlConfidenceStrip.contentDescription = strip
-                }
-            } else {
-                binding.aimiMlConfidenceStrip.isGone = true
-            }
+            // "Signaux AIMI" strip hidden to save vertical space; tier + trajectory info remains on the hero arc and chips.
+            binding.aimiMlConfidenceStrip.isGone = true
 
             // ═══════════════════════════════════════════════════════════════
             // 2. Left Column Metrics
@@ -468,34 +457,6 @@ class CircleTopDashboardView @JvmOverloads constructor(
             telemetryColorArgb = arcColorArgb,
             strokeWidthDp = 4f,
         )
-    }
-
-    private fun formatAimiMlStrip(state: StatusCardState): String? {
-        val sep = context.getString(app.aaps.plugins.main.R.string.dashboard_aimi_ml_strip_separator)
-        val parts = buildList {
-            state.adaptiveSmoothingQualityTier?.let { tier ->
-                val label = context.getString(
-                    when (tier) {
-                        AdaptiveSmoothingQualityTier.OK ->
-                            app.aaps.plugins.main.R.string.dashboard_aimi_ml_sensor_ok
-                        AdaptiveSmoothingQualityTier.UNCERTAIN ->
-                            app.aaps.plugins.main.R.string.dashboard_aimi_ml_sensor_uncertain
-                        AdaptiveSmoothingQualityTier.BAD ->
-                            app.aaps.plugins.main.R.string.dashboard_aimi_ml_sensor_low
-                    }
-                )
-                add(context.getString(app.aaps.plugins.main.R.string.dashboard_aimi_ml_strip_part_sensor, label))
-            }
-            state.trajectoryRelevanceScore?.let { rel ->
-                val pct = (rel * 100.0).roundToInt().coerceIn(0, 100)
-                add(context.getString(app.aaps.plugins.main.R.string.dashboard_aimi_ml_strip_relevance, pct))
-            }
-            state.aimiHealthScore?.let { h ->
-                val pct = (h * 100.0).roundToInt().coerceIn(0, 100)
-                add(context.getString(app.aaps.plugins.main.R.string.dashboard_aimi_ml_strip_health, pct))
-            }
-        }
-        return parts.takeIf { it.isNotEmpty() }?.joinToString(sep)
     }
 }
 

@@ -7,7 +7,7 @@ import androidx.annotation.RawRes
 import androidx.annotation.StringRes
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.FragmentManager
-import app.aaps.MainActivity
+import app.aaps.ComposeMainActivity
 import app.aaps.activities.HistoryBrowseActivity
 import app.aaps.activities.MyPreferenceFragment
 import app.aaps.activities.PreferencesActivity
@@ -55,7 +55,8 @@ class UiInteractionImpl @Inject constructor(
 
     private val alertDialogs: AlertDialogs = AlertDialogs(preferences, rxBus)
 
-    override val mainActivity: Class<*> = MainActivity::class.java
+    /** Launcher + in-app UI use [ComposeMainActivity]; keep classic [MainActivity] reachable via shell FAB. */
+    override val mainActivity: Class<*> = ComposeMainActivity::class.java
     override val tddStatsActivity: Class<*> = TDDStatsActivity::class.java
     override val historyBrowseActivity: Class<*> = HistoryBrowseActivity::class.java
     override val errorHelperActivity: Class<*> = ErrorActivity::class.java
