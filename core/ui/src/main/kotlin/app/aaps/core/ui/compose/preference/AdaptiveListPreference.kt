@@ -29,9 +29,7 @@ fun AdaptiveListIntPreferenceItem(
     visibilityContext: PreferenceVisibilityContext? = null
 ) {
     val effectiveTitleResId = if (titleResId != 0) titleResId else intKey.titleResId
-
-    // Skip if no title resource is available
-    if (effectiveTitleResId == 0) return
+    val titleText = preferenceDisplayTitle(effectiveTitleResId, intKey.key)
 
     val visibility = calculatePreferenceVisibility(
         preferenceKey = intKey,
@@ -53,7 +51,7 @@ fun AdaptiveListIntPreferenceItem(
     ListPreference(
         state = state,
         values = entryValues,
-        title = { Text(stringResource(effectiveTitleResId)) },
+        title = { Text(titleText) },
         enabled = visibility.enabled,
         summary = { Text(currentEntry) },
         dialogSummary = dialogSummary,
@@ -78,9 +76,7 @@ fun AdaptiveStringListPreferenceItem(
     visibilityContext: PreferenceVisibilityContext? = null
 ) {
     val effectiveTitleResId = if (titleResId != 0) titleResId else stringKey.titleResId
-
-    // Skip if no title resource is available
-    if (effectiveTitleResId == 0) return
+    val titleText = preferenceDisplayTitle(effectiveTitleResId, stringKey.key)
 
     val visibility = calculatePreferenceVisibility(
         preferenceKey = stringKey,
@@ -101,7 +97,7 @@ fun AdaptiveStringListPreferenceItem(
     ListPreference(
         state = state,
         values = values,
-        title = { Text(stringResource(effectiveTitleResId)) },
+        title = { Text(titleText) },
         enabled = visibility.enabled,
         summary = { Text(currentEntry) },
         dialogSummary = dialogSummary,

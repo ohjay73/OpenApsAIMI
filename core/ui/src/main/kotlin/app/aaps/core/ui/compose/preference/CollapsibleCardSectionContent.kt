@@ -17,9 +17,6 @@
 
 package app.aaps.core.ui.compose.preference
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -72,11 +69,9 @@ fun CollapsibleCardSectionContent(
                 icon = icon
             )
 
-            AnimatedVisibility(
-                visible = expanded,
-                enter = expandVertically(),
-                exit = shrinkVertically()
-            ) {
+            // Avoid AnimatedVisibility(expandVertically): it can break hit-testing for nested clickable rows
+            // inside a single LazyColumn item (plugin preference cards).
+            if (expanded) {
                 Column(modifier = Modifier.padding(bottom = theme.cardContentBottomPadding)) {
                     content()
                 }

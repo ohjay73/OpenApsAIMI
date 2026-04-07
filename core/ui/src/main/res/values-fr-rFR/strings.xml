@@ -30,6 +30,7 @@
     <string name="patient_name_default" comment="This is default patient display name, when user does not provide real one">Patient</string>
     <string name="result">Résultat</string>
     <string name="settings">Paramètres</string>
+    <string name="legacy_xml_preferences">Anciens réglages (écran XML)</string>
     <string name="statuslights">Voyants d\'état</string>
     <string name="do_ns_upload_title">Remonter les Gly vers NS</string>
     <string name="configbuilder_insulin">Insuline</string>

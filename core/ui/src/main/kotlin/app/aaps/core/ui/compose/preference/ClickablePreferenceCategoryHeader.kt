@@ -93,9 +93,9 @@ internal fun ClickablePreferenceCategoryHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .padding(headerPadding)
             .background(backgroundColor)
-            .clickable(onClick = onToggle)
-            .padding(headerPadding),
+            .clickable(onClick = onToggle),
         verticalAlignment = Alignment.CenterVertically
     ) {
         CompositionLocalProvider(LocalContentColor provides theme.categoryColor) {

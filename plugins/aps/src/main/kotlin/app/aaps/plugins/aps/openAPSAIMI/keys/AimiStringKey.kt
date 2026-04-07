@@ -1,13 +1,17 @@
 package app.aaps.plugins.aps.openAPSAIMI.keys
 
+import app.aaps.core.keys.PreferenceType
 import app.aaps.core.keys.interfaces.StringPreferenceKey
 import app.aaps.plugins.aps.R
+import app.aaps.plugins.aps.openAPSAIMI.steps.UnifiedActivityProviderMTR
 
 enum class AimiStringKey(
     override val key: String,
     override val defaultValue: String,
     override val titleResId: Int,
     override val summaryResId: Int? = null,
+    override val preferenceType: PreferenceType = PreferenceType.TEXT_FIELD,
+    override val entries: Map<String, Int> = emptyMap(),
     override val defaultedBySM: Boolean = false,
     override val showInApsMode: Boolean = true,
     override val showInNsClientMode: Boolean = true,
@@ -32,5 +36,19 @@ enum class AimiStringKey(
         summaryResId = R.string.OApsAIMI_RemoteControlPin_summary,
         isPin = true,
         isPassword = true
+    ),
+
+    /** Steps & heart-rate source (same key as [UnifiedActivityProviderMTR.PREF_KEY_SOURCE_MODE]). */
+    ActivitySourceMode(
+        key = UnifiedActivityProviderMTR.PREF_KEY_SOURCE_MODE,
+        defaultValue = UnifiedActivityProviderMTR.DEFAULT_MODE,
+        titleResId = R.string.pref_aimi_steps_source_title,
+        preferenceType = PreferenceType.LIST,
+        entries = mapOf(
+            UnifiedActivityProviderMTR.MODE_PREFER_WEAR to R.string.pref_aimi_steps_source_wear,
+            UnifiedActivityProviderMTR.MODE_AUTO_FALLBACK to R.string.pref_aimi_steps_source_auto,
+            UnifiedActivityProviderMTR.MODE_HEALTH_CONNECT_ONLY to R.string.pref_aimi_steps_source_hc,
+            UnifiedActivityProviderMTR.MODE_DISABLED to R.string.pref_aimi_steps_source_disabled,
+        ),
     ),
 }

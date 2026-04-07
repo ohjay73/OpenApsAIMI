@@ -119,7 +119,7 @@ fun AdaptivePreferenceItem(
             } else if (emptyMessageResId != null) {
                 // Show disabled preference with empty message
                 Preference(
-                    title = { Text(stringResource(key.titleResId)) },
+                    title = { Text(preferenceDisplayTitle(key.titleResId, key.key)) },
                     summary = { Text(stringResource(emptyMessageResId)) },
                     enabled = false
                 )
@@ -147,6 +147,12 @@ fun AdaptivePreferenceItem(
                             visibilityContext = visibilityContext
                         )
                     }
+                } else {
+                    AdaptiveStringPreferenceItem(
+
+                        stringKey = key,
+                        visibilityContext = visibilityContext
+                    )
                 }
             } else {
                 when (key.preferenceType) {
@@ -160,6 +166,12 @@ fun AdaptivePreferenceItem(
 
                                 stringKey = key,
                                 entries = entriesMap,
+                                visibilityContext = visibilityContext
+                            )
+                        } else {
+                            AdaptiveStringPreferenceItem(
+
+                                stringKey = key,
                                 visibilityContext = visibilityContext
                             )
                         }

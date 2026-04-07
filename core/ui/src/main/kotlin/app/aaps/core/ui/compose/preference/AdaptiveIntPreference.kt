@@ -36,9 +36,7 @@ fun AdaptiveIntPreferenceItem(
     visibilityContext: PreferenceVisibilityContext? = null
 ) {
     val effectiveTitleResId = if (titleResId != 0) titleResId else intKey.titleResId
-
-    // Skip if no title resource is available
-    if (effectiveTitleResId == 0) return
+    val titleText = preferenceDisplayTitle(effectiveTitleResId, intKey.key)
 
     val visibility = calculatePreferenceVisibility(
         preferenceKey = intKey,
@@ -74,7 +72,7 @@ fun AdaptiveIntPreferenceItem(
                 .padding(theme.listItemPadding)
         ) {
             Text(
-                text = stringResource(effectiveTitleResId),
+                text = titleText,
                 style = theme.titleTextStyle,
                 color = theme.titleColor
             )
@@ -99,7 +97,7 @@ fun AdaptiveIntPreferenceItem(
                 formatAsInt = true,
                 valueFormat = DecimalFormat("0"),
                 unitLabel = unitLabel,
-                dialogLabel = stringResource(effectiveTitleResId),
+                dialogLabel = titleText,
                 dialogSummary = summary
             )
         }
@@ -113,7 +111,7 @@ fun AdaptiveIntPreferenceItem(
         }
         TextFieldPreference(
             state = state,
-            title = { Text(stringResource(effectiveTitleResId)) },
+            title = { Text(titleText) },
             textToValue = { text ->
                 text.toIntOrNull()?.coerceIn(intKey.min, intKey.max)
             },

@@ -36,9 +36,7 @@ fun AdaptiveStringPreferenceItem(
 ) {
     val effectiveTitleResId = if (titleResId != 0) titleResId else stringKey.titleResId
     val effectiveSummaryResId = summaryResId ?: stringKey.summaryResId
-
-    // Skip if no title resource is available
-    if (effectiveTitleResId == 0) return
+    val titleText = preferenceDisplayTitle(effectiveTitleResId, stringKey.key)
 
     val visibility = calculatePreferenceVisibility(
         preferenceKey = stringKey,
@@ -53,11 +51,15 @@ fun AdaptiveStringPreferenceItem(
     val isSecure = isPassword || stringKey.isPassword || stringKey.isPin
 
     // Get dialog summary from key
-    val dialogSummary = if (effectiveSummaryResId != null) stringResource(effectiveSummaryResId) else null
+    val dialogSummary = if (effectiveSummaryResId != null && effectiveSummaryResId != 0) {
+        stringResource(effectiveSummaryResId)
+    } else {
+        null
+    }
 
     TextFieldPreference(
         state = state,
-        title = { Text(stringResource(effectiveTitleResId)) },
+        title = { Text(titleText) },
         textToValue = { text ->
             val result = validator.validate(text)
             if (result.isValid) text else null
@@ -70,14 +72,15 @@ fun AdaptiveStringPreferenceItem(
 
             isSecure && value.isEmpty()    -> {
                 val notSetResId = if (stringKey.isPin) app.aaps.core.ui.R.string.pin_not_set else app.aaps.core.ui.R.string.password_not_set
-                { Text(stringResource(effectiveSummaryResId ?: notSetResId)) }
+                val summaryRes = effectiveSummaryResId?.takeIf { it != 0 } ?: notSetResId
+                { Text(stringResource(summaryRes)) }
             }
 
             value.isNotEmpty()             -> {
                 { Text(value) }
             }
 
-            effectiveSummaryResId != null  -> {
+            effectiveSummaryResId != null && effectiveSummaryResId != 0 -> {
                 { Text(stringResource(effectiveSummaryResId)) }
             }
 

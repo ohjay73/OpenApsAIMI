@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.util.LongSparseArray
+import androidx.annotation.ArrayRes
 import androidx.core.util.forEach
 import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceFragmentCompat
@@ -65,6 +66,7 @@ import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.interfaces.withCompose
+import app.aaps.core.keys.interfaces.withEntries
 import app.aaps.core.ui.compose.ComposeScreenContent
 import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
 import app.aaps.plugins.aps.keys.ApsIntentKey
@@ -1256,13 +1258,27 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         add(aimiComposeAutodriveSubScreen())
     }
 
+    private fun aimiComposeStringArrayMap(@ArrayRes valuesId: Int, @ArrayRes labelsId: Int): Map<String, String> {
+        val values = rh.gsa(valuesId)
+        val labels = rh.gsa(labelsId)
+        require(values.size == labels.size) { "Array size mismatch: valuesId=$valuesId labelsId=$labelsId" }
+        return values.indices.associate { values[it] to labels[it] }
+    }
+
     private fun aimiComposeUserPreferenceItems(): List<PreferenceItem> = buildList {
         add(
             PreferenceSubScreenDef(
                 key = "aimi_compose_ai_keys",
                 titleResId = R.string.aimi_prefs_ai_title,
                 items = listOf(
-                    StringKey.AimiAdvisorProvider,
+                    StringKey.AimiAdvisorProvider.withEntries(
+                        mapOf(
+                            "OPENAI" to rh.gs(R.string.aimi_prefs_provider_openai),
+                            "GEMINI" to rh.gs(R.string.aimi_prefs_provider_gemini),
+                            "DEEPSEEK" to rh.gs(R.string.aimi_prefs_provider_deepseek),
+                            "CLAUDE" to rh.gs(R.string.aimi_prefs_provider_claude),
+                        )
+                    ),
                     StringKey.AimiAdvisorOpenAIKey,
                     StringKey.AimiAdvisorGeminiKey,
                     StringKey.AimiAdvisorDeepSeekKey,
@@ -1274,24 +1290,27 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
             PreferenceSubScreenDef(
                 key = "aimi_compose_sos",
                 titleResId = R.string.aimi_sos_title,
-                items = listOf(
-                    BooleanKey.AimiEmergencySosEnable,
-                    StringKey.AimiEmergencySosPhone,
-                    IntKey.AimiEmergencySosThreshold,
-                ),
+                items = buildList {
+                    add(BooleanKey.AimiEmergencySosEnable)
+                    add(StringKey.AimiEmergencySosPhone)
+                    add(IntKey.AimiEmergencySosThreshold)
+                    add(ApsIntentKey.AimiSosPermissions)
+                },
             )
         )
         add(
             PreferenceSubScreenDef(
                 key = "aimi_compose_physio",
                 titleResId = R.string.aimi_physio_title,
-                items = listOf(
-                    BooleanKey.AimiPhysioAssistantEnable,
-                    BooleanKey.AimiPhysioSleepDataEnable,
-                    BooleanKey.AimiPhysioHRVDataEnable,
-                    BooleanKey.AimiPhysioLLMAnalysisEnable,
-                    BooleanKey.AimiPhysioDebugLogs,
-                ),
+                items = buildList {
+                    add(BooleanKey.AimiPhysioAssistantEnable)
+                    add(ApsIntentKey.AimiHealthConnectPermissions)
+                    add(AimiStringKey.ActivitySourceMode)
+                    add(BooleanKey.AimiPhysioSleepDataEnable)
+                    add(BooleanKey.AimiPhysioHRVDataEnable)
+                    add(BooleanKey.AimiPhysioLLMAnalysisEnable)
+                    add(BooleanKey.AimiPhysioDebugLogs)
+                },
             )
         )
         add(BooleanKey.OApsAIMIMLtraining)
@@ -1301,7 +1320,139 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         add(DoubleKey.OApsAIMICHO)
         add(DoubleKey.OApsAIMITDD7)
         add(aimiComposePkpdSubScreen())
+        add(aimiComposeAdaptiveBasalSubScreen())
+        add(aimiComposeT3cSubScreen())
+        add(aimiComposeTrajectorySubScreen())
+        add(BooleanKey.OApsxdriponeminute)
+        add(aimiComposeWomenCycleSubScreen())
+        add(aimiComposeInflammatorySubScreen())
+        add(aimiComposeThyroidModuleSubScreen())
+        add(BooleanKey.OApsAIMIpregnancy)
+        add(AimiStringKey.PregnancyDueDateString)
+        add(BooleanKey.OApsAIMIhoneymoon)
+        add(BooleanKey.OApsAIMInight)
+        add(BooleanKey.OApsAIMIUnifiedReactivityEnabled)
+        add(aimiComposeEndometriosisSubScreen())
+        add(aimiComposeAiAuditorSubScreen())
+        add(aimiComposeNightGrowthSubScreen())
     }
+
+    private fun aimiComposeAdaptiveBasalSubScreen(): PreferenceSubScreenDef =
+        PreferenceSubScreenDef(
+            key = "aimi_compose_adaptive_basal",
+            titleResId = R.string.oaps_aimi_adaptive_basal_title,
+            items = listOf(
+                BooleanKey.OApsAIMIT3cAdaptiveBasalEnabled,
+                DoubleKey.OApsAIMIAdaptiveBasalMaxScaling,
+            ),
+        )
+
+    private fun aimiComposeT3cSubScreen(): PreferenceSubScreenDef =
+        PreferenceSubScreenDef(
+            key = "aimi_compose_t3c",
+            titleResId = R.string.aimi_t3c_settings_title,
+            items = listOf(
+                BooleanKey.OApsAIMIT3cBrittleMode,
+                DoubleKey.OApsAIMIT3cActivationThreshold,
+                DoubleKey.OApsAIMIT3cAggressiveness,
+                DoubleKey.OApsAIMIT3cAnticipationStrength,
+            ),
+        )
+
+    private fun aimiComposeTrajectorySubScreen(): PreferenceSubScreenDef =
+        PreferenceSubScreenDef(
+            key = "aimi_compose_trajectory",
+            titleResId = R.string.aimi_trajectory_section_title,
+            items = listOf(BooleanKey.OApsAIMITrajectoryGuardEnabled),
+        )
+
+    private fun aimiComposeWomenCycleSubScreen(): PreferenceSubScreenDef =
+        PreferenceSubScreenDef(
+            key = "aimi_compose_wcycle",
+            titleResId = R.string.wcycle_preferences,
+            items = buildList {
+                add(BooleanKey.OApsAIMIwcycle)
+                add(StringKey.OApsAIMIWCycleTrackingMode.withEntries(aimiComposeStringArrayMap(R.array.wcycle_tracking_values, R.array.wcycle_tracking_entries)))
+                add(StringKey.OApsAIMIWCycleContraceptive.withEntries(aimiComposeStringArrayMap(R.array.wcycle_contraceptive_values, R.array.wcycle_contraceptive_entries)))
+                add(DoubleKey.OApsAIMIwcycledateday)
+                add(IntKey.OApsAIMIWCycleAvgLength)
+                add(BooleanKey.OApsAIMIWCycleShadow)
+                add(BooleanKey.OApsAIMIWCycleRequireConfirm)
+                add(DoubleKey.OApsAIMIWCycleClampMin)
+                add(DoubleKey.OApsAIMIWCycleClampMax)
+            },
+        )
+
+    private fun aimiComposeInflammatorySubScreen(): PreferenceSubScreenDef =
+        PreferenceSubScreenDef(
+            key = "aimi_compose_inflammatory",
+            titleResId = R.string.aimi_inflammatory_diseases_title,
+            items = listOf(
+                StringKey.OApsAIMIWCycleThyroid.withEntries(aimiComposeStringArrayMap(R.array.wcycle_thyroid_values, R.array.wcycle_thyroid_entries)),
+                StringKey.OApsAIMIWCycleVerneuil.withEntries(aimiComposeStringArrayMap(R.array.wcycle_verneuil_values, R.array.wcycle_verneuil_entries)),
+            ),
+        )
+
+    private fun aimiComposeThyroidModuleSubScreen(): PreferenceSubScreenDef =
+        PreferenceSubScreenDef(
+            key = "aimi_compose_thyroid_module",
+            titleResId = R.string.oaps_aimi_thyroid_title,
+            items = buildList {
+                add(BooleanKey.OApsAIMIThyroidEnabled)
+                add(StringKey.OApsAIMIThyroidMode.withEntries(aimiComposeStringArrayMap(R.array.oaps_aimi_thyroid_mode_values, R.array.oaps_aimi_thyroid_mode_entries)))
+                add(StringKey.OApsAIMIThyroidManualStatus.withEntries(aimiComposeStringArrayMap(R.array.oaps_aimi_thyroid_status_values, R.array.oaps_aimi_thyroid_status_entries)))
+                add(StringKey.OApsAIMIThyroidTreatmentPhase.withEntries(aimiComposeStringArrayMap(R.array.oaps_aimi_thyroid_phase_values, R.array.oaps_aimi_thyroid_phase_entries)))
+                add(StringKey.OApsAIMIThyroidGuardLevel.withEntries(aimiComposeStringArrayMap(R.array.oaps_aimi_thyroid_guard_values, R.array.oaps_aimi_thyroid_guard_entries)))
+                add(BooleanKey.OApsAIMIThyroidLogVerbosity)
+            },
+        )
+
+    private fun aimiComposeEndometriosisSubScreen(): PreferenceSubScreenDef =
+        PreferenceSubScreenDef(
+            key = "aimi_compose_endo",
+            titleResId = R.string.endo_preferences_title,
+            items = listOf(
+                BooleanKey.AimiEndometriosisEnable,
+                BooleanKey.AimiEndometriosisPainFlare,
+                IntKey.AimiEndometriosisFlareDuration,
+                DoubleKey.AimiEndometriosisBasalMult,
+                DoubleKey.AimiEndometriosisSmbDampen,
+            ),
+        )
+
+    private fun aimiComposeAiAuditorSubScreen(): PreferenceSubScreenDef =
+        PreferenceSubScreenDef(
+            key = "aimi_compose_ai_auditor",
+            titleResId = R.string.aimi_ai_auditor_section_title,
+            items = buildList {
+                add(BooleanKey.AimiAuditorEnabled)
+                add(
+                    StringKey.AimiAuditorMode.withEntries(
+                        mapOf(
+                            "AUDIT_ONLY" to "Audit only (log verdicts)",
+                            "SOFT_MODULATION" to "Soft modulation (apply if confident)",
+                            "HIGH_RISK_ONLY" to "High risk only (apply with risk flags)",
+                        )
+                    )
+                )
+                add(IntKey.AimiAuditorMaxPerHour)
+                add(IntKey.AimiAuditorTimeoutSeconds)
+                add(IntKey.AimiAuditorMinConfidence)
+            },
+        )
+
+    private fun aimiComposeNightGrowthSubScreen(): PreferenceSubScreenDef =
+        PreferenceSubScreenDef(
+            key = "aimi_compose_ngr",
+            titleResId = R.string.oaps_aimi_ngr_title,
+            items = listOf(
+                BooleanKey.OApsAIMINightGrowthEnabled,
+                IntKey.OApsAIMINightGrowthAgeYears,
+                StringKey.OApsAIMINightGrowthStart,
+                StringKey.OApsAIMINightGrowthEnd,
+                DoubleKey.OApsAIMINightGrowthMaxIobExtra,
+            ),
+        )
 
     private fun aimiComposeManualModesSubScreen(): PreferenceSubScreenDef =
         PreferenceSubScreenDef(
@@ -1421,16 +1572,40 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         PreferenceSubScreenDef(
             key = "aimi_compose_pkpd",
             titleResId = R.string.oaps_aimi_pkpd_section_title,
-            items = listOf(
-                ApsIntentKey.PkpdSetup.withCompose(
-                    ComposeScreenContent { onBack ->
-                        AimiPkpdSettingsScreen(
-                            preferences = preferences,
-                            onBack = onBack,
-                        )
-                    }
-                ),
-            ),
+            items = buildList {
+                add(
+                    ApsIntentKey.PkpdSetup.withCompose(
+                        ComposeScreenContent { onBack ->
+                            AimiPkpdSettingsScreen(
+                                preferences = preferences,
+                                onBack = onBack,
+                            )
+                        }
+                    )
+                )
+                add(BooleanKey.OApsAIMIPkpdEnabled)
+                add(DoubleKey.OApsAIMIPkpdInitialDiaH)
+                add(DoubleKey.OApsAIMIPkpdInitialPeakMin)
+                add(DoubleKey.OApsAIMIPkpdBoundsDiaMinH)
+                add(DoubleKey.OApsAIMIPkpdBoundsDiaMaxH)
+                add(DoubleKey.OApsAIMIPkpdBoundsPeakMinMin)
+                add(DoubleKey.OApsAIMIPkpdBoundsPeakMinMax)
+                add(DoubleKey.OApsAIMIPkpdMaxDiaChangePerDayH)
+                add(DoubleKey.OApsAIMIPkpdMaxPeakChangePerDayMin)
+                add(DoubleKey.OApsAIMIIsfFusionMinFactor)
+                add(DoubleKey.OApsAIMIIsfFusionMaxFactor)
+                add(DoubleKey.OApsAIMIIsfFusionMaxChangePerTick)
+                add(DoubleKey.OApsAIMISmbTailThreshold)
+                add(DoubleKey.OApsAIMISmbTailDamping)
+                add(BooleanKey.OApsAIMIPkpdPragmaticReliefEnabled)
+                add(DoubleKey.OApsAIMIPkpdPragmaticReliefMinFactor)
+                add(DoubleKey.OApsAIMIRedCarpetRestoreThreshold)
+                add(BooleanKey.OApsAIMIIobSurveillanceGuard)
+                add(DoubleKey.OApsAIMIPriorityMaxIobFactor)
+                add(DoubleKey.OApsAIMIPriorityMaxIobExtraU)
+                add(DoubleKey.OApsAIMISmbExerciseDamping)
+                add(DoubleKey.OApsAIMISmbLateFatDamping)
+            },
         )
 
     override fun addPreferenceScreen(preferenceManager: PreferenceManager, parent: PreferenceScreen, context: Context, requiredKey: String?) {

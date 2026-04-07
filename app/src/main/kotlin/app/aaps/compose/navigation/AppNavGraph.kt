@@ -145,6 +145,8 @@ fun NavGraphBuilder.appNavGraph(
     onRefreshPermissions: () -> Unit,
     onExecuteQuickWizard: (guid: String) -> Unit,
     findScreenDef: (key: String) -> PreferenceSubScreenDef?,
+    /** Opens [app.aaps.activities.PreferencesActivity] — pass plugin simpleName or null for the full preference tree */
+    onOpenLegacyXmlPreferences: (pluginSimpleName: String?) -> Unit,
 ) {
     composable(
         AppRoute.InsulinManagement.route,
@@ -452,7 +454,8 @@ fun NavGraphBuilder.appNavGraph(
             activePlugin = activePlugin,
             rh = rh,
             builtInSearchables = builtInSearchables,
-            onBackClick = { navController.safePopBackStack() }
+            onBackClick = { navController.safePopBackStack() },
+            onOpenLegacyXmlPreferences = { onOpenLegacyXmlPreferences(null) }
         )
     }
 
@@ -510,7 +513,8 @@ fun NavGraphBuilder.appNavGraph(
             PluginPreferencesScreen(
                 plugin = plugin,
                 visibilityContext = visibilityContext,
-                onBackClick = { navController.safePopBackStack() }
+                onBackClick = { navController.safePopBackStack() },
+                onOpenLegacyXmlPreferences = { onOpenLegacyXmlPreferences(plugin.javaClass.simpleName) }
             )
         }
     }

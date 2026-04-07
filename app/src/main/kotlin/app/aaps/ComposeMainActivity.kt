@@ -687,6 +687,16 @@ class ComposeMainActivity : AppCompatActivity() {
                 onRefreshPermissions = { permissionsViewModel.refresh() },
                 onExecuteQuickWizard = { guid -> mainViewModel.executeQuickWizard(this@ComposeMainActivity, guid) },
                 findScreenDef = { key -> findScreenDef(key) },
+                onOpenLegacyXmlPreferences = { pluginSimpleName ->
+                    withProtection(ProtectionCheck.Protection.PREFERENCES) {
+                        val i = Intent(this@ComposeMainActivity, uiInteraction.preferencesActivity)
+                            .setAction("info.nightscout.androidaps.MainActivity")
+                        if (pluginSimpleName != null) {
+                            i.putExtra(UiInteraction.PLUGIN_NAME, pluginSimpleName)
+                        }
+                        startActivity(i)
+                    }
+                },
             )
         }
 

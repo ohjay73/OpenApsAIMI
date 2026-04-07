@@ -4,6 +4,8 @@ import app.aaps.core.keys.PreferenceType
 import app.aaps.core.keys.interfaces.BooleanPreferenceKey
 import app.aaps.core.keys.interfaces.IntentPreferenceKey
 import app.aaps.plugins.aps.R
+import app.aaps.plugins.aps.openAPSAIMI.physio.AIMIHealthConnectPermissionActivityMTR
+import app.aaps.plugins.aps.openAPSAIMI.sos.AIMIEmergencySosPermissionActivityMTR
 
 enum class ApsIntentKey(
     override val key: String,
@@ -11,6 +13,7 @@ enum class ApsIntentKey(
     override val summaryResId: Int? = null,
     override val preferenceType: PreferenceType = PreferenceType.URL,
     override val urlResId: Int? = null,
+    override val activityClass: Class<*>? = null,
     override val defaultedBySM: Boolean = false,
     override val showInApsMode: Boolean = true,
     override val showInNsClientMode: Boolean = true,
@@ -33,5 +36,21 @@ enum class ApsIntentKey(
         titleResId = R.string.aimi_pkpd_compose_title,
         summaryResId = R.string.aimi_pkpd_compose_summary,
         preferenceType = PreferenceType.ACTIVITY,
+    ),
+
+    AimiSosPermissions(
+        key = "aimi_sos_permissions_compose",
+        titleResId = R.string.aimi_sos_permissions_title,
+        summaryResId = R.string.aimi_sos_permissions_summary,
+        preferenceType = PreferenceType.ACTIVITY,
+        activityClass = AIMIEmergencySosPermissionActivityMTR::class.java,
+    ),
+
+    AimiHealthConnectPermissions(
+        key = "aimi_physio_hc_permissions_compose",
+        titleResId = R.string.aimi_physio_hc_permissions_title,
+        summaryResId = R.string.aimi_physio_hc_permissions_summary,
+        preferenceType = PreferenceType.ACTIVITY,
+        activityClass = AIMIHealthConnectPermissionActivityMTR::class.java,
     ),
 }

@@ -3,20 +3,33 @@ package app.aaps.core.ui.compose.preference
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.NavigateNext
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import app.aaps.core.keys.interfaces.BooleanPreferenceKey
 import app.aaps.core.keys.interfaces.IntPreferenceKey
 import app.aaps.core.keys.interfaces.IntentPreferenceKey
@@ -42,7 +55,10 @@ fun LazyListScope.addPreferenceContent(
 /**
  * Helper function to add PreferenceSubScreenDef inline in a LazyListScope.
  * This displays as one collapsible card with main content and nested subscreens inside.
- * Content is rendered using the new pattern (no NavigablePreferenceContent interface).
+ * Nested paths use slash-separated keys so expansion state stays unique across the whole app.
+ *
+ * From [treeDepth] 1 onward, nested [PreferenceSubScreenDef] rows use full-screen drill-down when
+ * [LocalOpenPreferenceSubScreen] is provided — avoids deep accordion / lazy-column pitfalls.
  */
 fun LazyListScope.addPreferenceSubScreenDef(
     def: PreferenceSubScreenDef,
@@ -51,7 +67,6 @@ fun LazyListScope.addPreferenceSubScreenDef(
     val sectionKey = "${def.key}_main"
     item(key = sectionKey) {
         val isExpanded = sectionState?.isExpanded(sectionKey) ?: false
-        // Get visibility context from CompositionLocal
         val visibilityContext = LocalVisibilityContext.current
         CollapsibleCardSectionContent(
             titleResId = def.titleResId,
@@ -61,10 +76,10 @@ fun LazyListScope.addPreferenceSubScreenDef(
             iconResId = def.iconResId,
             icon = def.icon
         ) {
-            // Render items in order, preserving the original structure
             RenderPreferenceItems(
                 items = def.items,
-                parentKey = def.key,
+                pathPrefix = def.key,
+                treeDepth = 0,
                 sectionState = sectionState,
                 visibilityContext = visibilityContext
             )
@@ -72,63 +87,127 @@ fun LazyListScope.addPreferenceSubScreenDef(
     }
 }
 
+@Composable
+private fun PreferenceSubScreenDrillDownRow(
+    titleResId: Int,
+    summaryItems: List<Int>,
+    onOpen: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val theme = LocalPreferenceTheme.current
+    val resolvedSummaries = summaryItems.map { stringResource(it) }
+    val summaryText = if (resolvedSummaries.isNotEmpty()) {
+        resolvedSummaries.joinToString(", ")
+    } else {
+        null
+    }
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(theme.headerPaddingInsideCard)
+            .clickable(onClick = onOpen),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = stringResource(titleResId),
+                style = theme.categoryTextStyle,
+                color = theme.categoryColor
+            )
+            if (summaryText != null) {
+                Text(
+                    text = summaryText,
+                    style = theme.summaryCategoryTextStyle,
+                    color = theme.summaryCategoryColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.NavigateNext,
+            contentDescription = stringResource(app.aaps.core.ui.R.string.expand),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(theme.expandIconSize)
+        )
+    }
+}
+
 /**
- * Helper composable to render a list of preference items with visibility support.
+ * @param pathPrefix Slash-separated path of the **parent** node (e.g. plugin root key).
+ * @param treeDepth Nesting level inside inline accordions; 0 = direct children of the plugin card.
  */
 @Composable
 private fun RenderPreferenceItems(
     items: List<PreferenceItem>,
-    parentKey: String,
+    pathPrefix: String,
+    treeDepth: Int,
     sectionState: PreferenceSectionState?,
     visibilityContext: PreferenceVisibilityContext?
 ) {
-    items.forEach { item ->
-        when (item) {
-            is PreferenceKey          -> {
-                HighlightablePreference(preferenceKey = item.key) {
-                    AdaptivePreferenceItem(
-                        key = item,
+    val opener = LocalOpenPreferenceSubScreen.current
+    val theme = LocalPreferenceTheme.current
+    Column(modifier = Modifier.fillMaxWidth()) {
+        items.forEach { item ->
+            when (item) {
+                is PreferenceKey          -> {
+                    HighlightablePreference(preferenceKey = item.key) {
+                        AdaptivePreferenceItem(
+                            key = item,
+                            visibilityContext = visibilityContext
+                        )
+                    }
+                }
+
+                is PreferenceSubScreenDef -> {
+                    val shouldShow = shouldShowSubScreenInline(
+                        subScreen = item,
                         visibilityContext = visibilityContext
                     )
-                }
-            }
 
-            is PreferenceSubScreenDef -> {
-                val shouldShow = shouldShowSubScreenInline(
-                    subScreen = item,
-                    visibilityContext = visibilityContext
-                )
+                    if (!shouldShow) {
+                        return@forEach
+                    }
 
-                if (shouldShow) {
-                    // Render nested subscreen as simple collapsible section (no extra card)
-                    val subSectionKey = "${parentKey}_${item.key}"
-                    val isSubExpanded = sectionState?.isExpanded(subSectionKey) ?: false
+                    val subPath = "$pathPrefix/${item.key}"
+                    val useDrillDown = treeDepth > 0 && opener != null
 
-                    // Header without card (no icon for nested subscreens)
-                    ClickablePreferenceCategoryHeader(
-                        titleResId = item.titleResId,
-                        summaryItems = item.effectiveSummaryItems(),
-                        expanded = isSubExpanded,
-                        onToggle = { sectionState?.toggle(subSectionKey, SectionLevel.SUB_SECTION, parentKey = parentKey) },
-                        insideCard = true,
-                        iconResId = null  // No icon for nested subscreens
-                    )
+                    if (useDrillDown) {
+                        PreferenceSubScreenDrillDownRow(
+                            titleResId = item.titleResId,
+                            summaryItems = item.effectiveSummaryItems(),
+                            onOpen = { opener.invoke(item) }
+                        )
+                    } else {
+                        val isSubExpanded = sectionState?.isExpanded(subPath) ?: false
 
-                    // Content without card wrapper — recurse so nested PreferenceSubScreenDef render
-                    if (isSubExpanded && item.items.isNotEmpty()) {
-                        val theme = LocalPreferenceTheme.current
-                        Column(
-                            modifier = Modifier.padding(start = theme.nestedContentIndent)
-                        ) {
-                            RenderPreferenceItems(
-                                items = item.items,
-                                parentKey = item.key,
-                                sectionState = sectionState,
-                                visibilityContext = visibilityContext
-                            )
+                        ClickablePreferenceCategoryHeader(
+                            titleResId = item.titleResId,
+                            summaryItems = item.effectiveSummaryItems(),
+                            expanded = isSubExpanded,
+                            onToggle = { sectionState?.toggle(subPath, SectionLevel.SUB_SECTION, parentKey = pathPrefix) },
+                            insideCard = true,
+                            iconResId = null
+                        )
+
+                        if (isSubExpanded && item.items.isNotEmpty()) {
+                            Column(
+                                modifier = Modifier.padding(start = theme.nestedContentIndent)
+                            ) {
+                                RenderPreferenceItems(
+                                    items = item.items,
+                                    pathPrefix = subPath,
+                                    treeDepth = treeDepth + 1,
+                                    sectionState = sectionState,
+                                    visibilityContext = visibilityContext
+                                )
+                            }
                         }
                     }
                 }
+
+                else                      -> Unit
             }
         }
     }
@@ -143,44 +222,34 @@ private fun shouldShowSubScreenInline(
     subScreen: PreferenceSubScreenDef,
     visibilityContext: PreferenceVisibilityContext?
 ): Boolean {
-    // Find items with hideParentScreenIfHidden = true
-    for (item in subScreen.items) {
-        if (item is PreferenceKey && item.hideParentScreenIfHidden) {
-            val visibility = if (item is IntentPreferenceKey) {
-                // Check visibility of intent item
+    for (checkItem in subScreen.items) {
+        if (checkItem is PreferenceKey && checkItem.hideParentScreenIfHidden) {
+            val visibility = if (checkItem is IntentPreferenceKey) {
                 calculateIntentPreferenceVisibility(
-                    intentKey = item,
+                    intentKey = checkItem,
                     visibilityContext = visibilityContext
                 )
             } else {
-                // Get engineeringModeOnly based on specific type
-                val engineeringModeOnly = when (item) {
-                    is BooleanPreferenceKey -> item.engineeringModeOnly
-                    is IntPreferenceKey     -> item.engineeringModeOnly
-                    is LongPreferenceKey    -> item.engineeringModeOnly
+                val engineeringModeOnly = when (checkItem) {
+                    is BooleanPreferenceKey -> checkItem.engineeringModeOnly
+                    is IntPreferenceKey     -> checkItem.engineeringModeOnly
+                    is LongPreferenceKey    -> checkItem.engineeringModeOnly
                     else                    -> false
                 }
-                // Check visibility of regular preference item
                 calculatePreferenceVisibility(
-                    preferenceKey = item,
+                    preferenceKey = checkItem,
                     engineeringModeOnly = engineeringModeOnly,
                     visibilityContext = visibilityContext
                 )
             }
-            // If this controlling item is hidden, hide the parent subscreen
             if (!visibility.visible) {
                 return false
             }
         }
     }
-    // No hideParentScreenIfHidden items found, or all are visible
     return true
 }
 
-/**
- * Wrapper that highlights a preference if it matches the LocalHighlightKey.
- * Shows a brief color flash animation to draw attention to the preference.
- */
 @Composable
 private fun HighlightablePreference(
     preferenceKey: String,
@@ -191,11 +260,10 @@ private fun HighlightablePreference(
 
     var isHighlighted by remember { mutableStateOf(shouldHighlight) }
 
-    // Animate highlight fade out
     LaunchedEffect(shouldHighlight) {
         if (shouldHighlight) {
             isHighlighted = true
-            delay(2000) // Keep highlight for 2 seconds
+            delay(2000)
             isHighlighted = false
         }
     }

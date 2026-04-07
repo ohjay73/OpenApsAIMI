@@ -36,9 +36,7 @@ fun AdaptiveIntentPreferenceItem(
 ) {
     val effectiveTitleResId = if (titleResId != 0) titleResId else intentKey.titleResId
     val effectiveSummaryResId = summaryResId ?: intentKey.summaryResId
-
-    // Skip if no title resource is available
-    if (effectiveTitleResId == 0) return
+    val titleText = preferenceDisplayTitle(effectiveTitleResId, intentKey.key)
 
     val visibility = calculateIntentPreferenceVisibility(
         intentKey = intentKey,
@@ -53,7 +51,7 @@ fun AdaptiveIntentPreferenceItem(
 
     if (showConfirmation && confirmationResId != null) {
         OkCancelDialog(
-            title = stringResource(effectiveTitleResId),
+            title = titleText,
             message = stringResource(confirmationResId),
             onConfirm = {
                 onClick()
@@ -70,8 +68,8 @@ fun AdaptiveIntentPreferenceItem(
     }
 
     Preference(
-        title = { Text(stringResource(effectiveTitleResId)) },
-        summary = effectiveSummaryResId?.let { { Text(stringResource(it)) } },
+        title = { Text(titleText) },
+        summary = effectiveSummaryResId?.takeIf { it != 0 }?.let { res -> { Text(stringResource(res)) } },
         enabled = visibility.enabled,
         onClick = if (visibility.enabled) effectiveOnClick else null
     )
@@ -90,9 +88,7 @@ fun AdaptiveUrlPreferenceItem(
     visibilityContext: PreferenceVisibilityContext? = null
 ) {
     val effectiveTitleResId = if (titleResId != 0) titleResId else intentKey.titleResId
-
-    // Skip if no title resource is available
-    if (effectiveTitleResId == 0) return
+    val titleText = preferenceDisplayTitle(effectiveTitleResId, intentKey.key)
 
     val visibility = calculateIntentPreferenceVisibility(
         intentKey = intentKey,
@@ -103,7 +99,7 @@ fun AdaptiveUrlPreferenceItem(
 
     val uriHandler = LocalUriHandler.current
     Preference(
-        title = { Text(stringResource(effectiveTitleResId)) },
+        title = { Text(titleText) },
         summary = { Text(url) },
         enabled = visibility.enabled,
         onClick = if (visibility.enabled) {
@@ -128,9 +124,7 @@ fun AdaptiveDynamicActivityPreferenceItem(
 ) {
     val effectiveTitleResId = if (titleResId != 0) titleResId else intentKey.titleResId
     val effectiveSummaryResId = summaryResId ?: intentKey.summaryResId
-
-    // Skip if no title resource is available
-    if (effectiveTitleResId == 0) return
+    val titleText = preferenceDisplayTitle(effectiveTitleResId, intentKey.key)
 
     val visibility = calculateIntentPreferenceVisibility(
         intentKey = intentKey,
@@ -141,8 +135,8 @@ fun AdaptiveDynamicActivityPreferenceItem(
 
     val context = LocalContext.current
     Preference(
-        title = { Text(stringResource(effectiveTitleResId)) },
-        summary = effectiveSummaryResId?.let { { Text(stringResource(it)) } },
+        title = { Text(titleText) },
+        summary = effectiveSummaryResId?.takeIf { it != 0 }?.let { res -> { Text(stringResource(res)) } },
         enabled = visibility.enabled,
         onClick = if (visibility.enabled) {
             { context.startActivity(Intent(context, activityClass)) }
@@ -165,8 +159,7 @@ fun AdaptiveComposeScreenPreferenceItem(
 ) {
     val effectiveTitleResId = if (titleResId != 0) titleResId else intentKey.titleResId
     val effectiveSummaryResId = summaryResId ?: intentKey.summaryResId
-
-    if (effectiveTitleResId == 0) return
+    val titleText = preferenceDisplayTitle(effectiveTitleResId, intentKey.key)
 
     val visibility = calculateIntentPreferenceVisibility(
         intentKey = intentKey,
@@ -176,8 +169,8 @@ fun AdaptiveComposeScreenPreferenceItem(
     if (!visibility.visible) return
 
     Preference(
-        title = { Text(stringResource(effectiveTitleResId)) },
-        summary = effectiveSummaryResId?.let { { Text(stringResource(it)) } },
+        title = { Text(titleText) },
+        summary = effectiveSummaryResId?.takeIf { it != 0 }?.let { res -> { Text(stringResource(res)) } },
         enabled = visibility.enabled,
         onClick = if (visibility.enabled) {
             { onNavigate(composeScreen) }

@@ -168,6 +168,9 @@ class SingleFragmentActivity : AppCompatActivity() {
                             visibilityContext = visibilityContext,
                             onBackClick = {
                                 showingComposePreferences = false
+                            },
+                            onOpenLegacyXmlPreferences = {
+                                uiInteraction.runPreferencesForPlugin(this@SingleFragmentActivity, plugin.javaClass.simpleName)
                             }
                         )
                     } else {

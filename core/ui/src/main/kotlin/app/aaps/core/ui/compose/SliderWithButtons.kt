@@ -162,9 +162,9 @@ fun SliderWithButtons(
         else -> ""
     }
 
-    // Use shared formatting function for display text
+    // Use shared formatting function for display text (coerced so out-of-range stored values still read sensibly)
     val displayText = if (showValue) formatSliderDisplayValue(
-        value = value,
+        value = currentValue,
         unitLabelResId = unitLabelResId,
         valueFormatResId = valueFormatResId,
         formatAsInt = formatAsInt,
@@ -186,7 +186,7 @@ fun SliderWithButtons(
                     val roundedValue = roundToStep(newValue, step).coerceIn(minValue, maxValue)
                     onValueChange(roundedValue)
                 },
-                enabled = enabled && value > minValue,
+                enabled = enabled && currentValue > minValue,
                 modifier = Modifier.size(32.dp)
             ) {
                 Icon(
@@ -221,7 +221,7 @@ fun SliderWithButtons(
                     val roundedValue = roundToStep(newValue, step).coerceIn(minValue, maxValue)
                     onValueChange(roundedValue)
                 },
-                enabled = enabled && value < maxValue,
+                enabled = enabled && currentValue < maxValue,
                 modifier = Modifier.size(32.dp)
             ) {
                 Icon(
@@ -251,7 +251,7 @@ fun SliderWithButtons(
     // Value input dialog
     if (showDialog && enabled) {
         ValueInputDialog(
-            currentValue = value,
+            currentValue = currentValue,
             valueRange = valueRange,
             step = step,
             label = dialogLabel,

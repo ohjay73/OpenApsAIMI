@@ -200,18 +200,18 @@ enum class StringKey(
     PumpCommonBolusStorage("pump_sync_storage_bolus", ""),
     PumpCommonTbrStorage("pump_sync_storage_tbr", ""),
     GarminRequestKey(key = "garmin_aaps_key", defaultValue = ""),
-    OApsAIMIWCycleTrackingMode("key_oaps_aimi_wcycle_tracking_mode", "FIXED_28"),
-    OApsAIMIWCycleContraceptive("key_oaps_aimi_wcycle_contraceptive", "NONE"),
-    OApsAIMIWCycleThyroid("key_oaps_aimi_wcycle_thyroid", "EUTHYROID"),
-    OApsAIMIWCycleVerneuil("key_oaps_aimi_wcycle_verneuil", "NONE"),
+    OApsAIMIWCycleTrackingMode("key_oaps_aimi_wcycle_tracking_mode", "FIXED_28", preferenceType = PreferenceType.LIST),
+    OApsAIMIWCycleContraceptive("key_oaps_aimi_wcycle_contraceptive", "NONE", preferenceType = PreferenceType.LIST),
+    OApsAIMIWCycleThyroid("key_oaps_aimi_wcycle_thyroid", "EUTHYROID", preferenceType = PreferenceType.LIST),
+    OApsAIMIWCycleVerneuil("key_oaps_aimi_wcycle_verneuil", "NONE", preferenceType = PreferenceType.LIST),
     OApsAIMINightGrowthStart("key_oaps_aimi_ngr_night_start", "22:00"),
     OApsAIMINightGrowthEnd("key_oaps_aimi_ngr_night_end", "06:00"),
     AimiAdvisorOpenAIKey("aimi_advisor_openai_key", "", isPassword = true),
     AimiAdvisorGeminiKey("aimi_advisor_gemini_key", "", isPassword = true),
     AimiAdvisorDeepSeekKey("aimi_advisor_deepseek_key", "", isPassword = true),
     AimiAdvisorClaudeKey("aimi_advisor_claude_key", "", isPassword = true),
-    AimiAdvisorProvider("aimi_advisor_provider", "OPENAI"),
-    AimiAuditorMode("aimi_auditor_mode", "AUDIT_ONLY"),  // 🧠 AI Auditor mode: AUDIT_ONLY, SOFT_MODULATION, HIGH_RISK_ONLY
+    AimiAdvisorProvider("aimi_advisor_provider", "OPENAI", preferenceType = PreferenceType.LIST),
+    AimiAuditorMode("aimi_auditor_mode", "AUDIT_ONLY", preferenceType = PreferenceType.LIST),  // resolved via withEntries in plugin
 
     // Context Module (dedicated provider for flexibility)
     ContextLLMProvider("aimi_context_llm_provider", "OPENAI"),
@@ -228,10 +228,10 @@ enum class StringKey(
     AimiPhysioLLMProvider("aimi_physio_llm_provider", "gpt4"),
 
     // 🦋 Thyroid / Basedow Module (MTR)
-    OApsAIMIThyroidMode("key_aimi_thyroid_mode", "MANUAL"),
-    OApsAIMIThyroidManualStatus("key_aimi_thyroid_manual_status", "EUTHYROID"),
-    OApsAIMIThyroidTreatmentPhase("key_aimi_thyroid_treatment_phase", "NONE"),
-    OApsAIMIThyroidGuardLevel("key_aimi_thyroid_guard_level", "HIGH"),
+    OApsAIMIThyroidMode("key_aimi_thyroid_mode", "MANUAL", preferenceType = PreferenceType.LIST),
+    OApsAIMIThyroidManualStatus("key_aimi_thyroid_manual_status", "EUTHYROID", preferenceType = PreferenceType.LIST),
+    OApsAIMIThyroidTreatmentPhase("key_aimi_thyroid_treatment_phase", "NONE", preferenceType = PreferenceType.LIST),
+    OApsAIMIThyroidGuardLevel("key_aimi_thyroid_guard_level", "HIGH", preferenceType = PreferenceType.LIST),
 
     // 🚨 Emergency SOS (Hypo)
     AimiEmergencySosPhone("aimi_emergency_sos_phone", ""),

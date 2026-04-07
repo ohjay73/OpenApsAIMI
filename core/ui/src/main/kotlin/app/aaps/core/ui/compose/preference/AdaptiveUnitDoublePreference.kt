@@ -38,9 +38,7 @@ fun AdaptiveUnitDoublePreferenceItem(
     val preferences = LocalPreferences.current
     val profileUtil = LocalProfileUtil.current
     val effectiveTitleResId = if (titleResId != 0) titleResId else unitKey.titleResId
-
-    // Skip if no title resource is available
-    if (effectiveTitleResId == 0) return
+    val titleText = preferenceDisplayTitle(effectiveTitleResId, unitKey.key)
 
     val visibility = calculatePreferenceVisibility(
         preferenceKey = unitKey,
@@ -80,7 +78,7 @@ fun AdaptiveUnitDoublePreferenceItem(
             .padding(theme.listItemPadding)
     ) {
         Text(
-            text = stringResource(effectiveTitleResId),
+            text = titleText,
             style = theme.titleTextStyle,
             color = theme.titleColor
         )
@@ -105,7 +103,7 @@ fun AdaptiveUnitDoublePreferenceItem(
             showValue = true,
             valueFormat = valueFormat,
             unitLabel = unitLabel,
-            dialogLabel = stringResource(effectiveTitleResId),
+            dialogLabel = titleText,
             dialogSummary = summary
         )
     }

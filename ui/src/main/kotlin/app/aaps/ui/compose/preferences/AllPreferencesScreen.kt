@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,7 +37,9 @@ import app.aaps.core.ui.compose.LocalConfig
 import app.aaps.core.ui.compose.LocalPreferences
 import app.aaps.core.ui.compose.LocalSnackbarHostState
 import app.aaps.core.ui.compose.preference.LocalNavigateToCompose
+import app.aaps.core.ui.compose.preference.LocalOpenPreferenceSubScreen
 import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
+import app.aaps.core.ui.compose.preference.PreferenceSubScreenHost
 import app.aaps.core.ui.compose.preference.ProvidePreferenceTheme
 import app.aaps.core.ui.compose.preference.addPreferenceContent
 import app.aaps.core.ui.compose.preference.rememberPreferenceSectionState
@@ -54,6 +57,7 @@ import app.aaps.ui.search.BuiltInSearchables
  * @param rh ResourceHelper instance
  * @param builtInSearchables BuiltInSearchables instance (single source of truth for built-in screens)
  * @param onBackClick Callback when back button is clicked
+ * @param onOpenLegacyXmlPreferences Opens the classic PreferenceFragment (XML) screen — same data as before Compose migration
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -61,7 +65,8 @@ fun AllPreferencesScreen(
     activePlugin: ActivePlugin,
     rh: ResourceHelper,
     builtInSearchables: BuiltInSearchables,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    onOpenLegacyXmlPreferences: () -> Unit
 ) {
     val preferences = LocalPreferences.current
     val config = LocalConfig.current
@@ -138,9 +143,13 @@ fun AllPreferencesScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     var composeScreen: ComposeScreenContent? by remember { mutableStateOf(null) }
+    var drilledSubScreen: PreferenceSubScreenDef? by remember { mutableStateOf(null) }
 
     BackHandler(enabled = composeScreen != null) {
         composeScreen = null
+    }
+    BackHandler(enabled = drilledSubScreen != null) {
+        drilledSubScreen = null
     }
 
     composeScreen?.let { screen ->
@@ -148,9 +157,19 @@ fun AllPreferencesScreen(
         return
     }
 
+    drilledSubScreen?.let { sub ->
+        PreferenceSubScreenHost(
+            screenDef = sub,
+            highlightKey = null,
+            onBackClick = { drilledSubScreen = null }
+        )
+        return
+    }
+
     CompositionLocalProvider(
         LocalSnackbarHostState provides snackbarHostState,
-        LocalNavigateToCompose provides { screen -> composeScreen = screen }
+        LocalNavigateToCompose provides { screen -> composeScreen = screen },
+        LocalOpenPreferenceSubScreen provides { sub -> drilledSubScreen = sub }
     ) {
         ProvidePreferenceTheme {
             Scaffold(
@@ -167,6 +186,14 @@ fun AllPreferencesScreen(
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                     contentDescription = stringResource(app.aaps.core.ui.R.string.back)
+                                )
+                            }
+                        },
+                        actions = {
+                            IconButton(onClick = onOpenLegacyXmlPreferences) {
+                                Icon(
+                                    imageVector = Icons.Filled.ViewList,
+                                    contentDescription = stringResource(app.aaps.core.ui.R.string.legacy_xml_preferences)
                                 )
                             }
                         }

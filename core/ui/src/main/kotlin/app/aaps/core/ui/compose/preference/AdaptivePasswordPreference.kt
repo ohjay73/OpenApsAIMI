@@ -48,9 +48,7 @@ fun AdaptivePasswordPreferenceItem(
     val scope = rememberCoroutineScope()
     val snackbarHostState = LocalSnackbarHostState.current
     val effectiveTitleResId = if (titleResId != 0) titleResId else stringKey.titleResId
-
-    // Skip if no title resource is available
-    if (effectiveTitleResId == 0) return
+    val titleText = preferenceDisplayTitle(effectiveTitleResId, stringKey.key)
 
     // Check conditional visibility based on visibilityKey
     if (visibilityKey != null && visibilityValue != null) {
@@ -80,7 +78,7 @@ fun AdaptivePasswordPreferenceItem(
     }
 
     Preference(
-        title = { Text(stringResource(effectiveTitleResId)) },
+        title = { Text(titleText) },
         summary = { Text(summary) },
         enabled = visibility.enabled,
         onClick = if (visibility.enabled) {
@@ -95,7 +93,7 @@ fun AdaptivePasswordPreferenceItem(
         val notChangedMsg = stringResource(if (isPin) R.string.pin_not_changed else R.string.password_not_changed)
 
         SetPasswordDialog(
-            title = stringResource(effectiveTitleResId),
+            title = titleText,
             pinInput = isPin,
             onConfirm = { password1, password2 ->
                 when {

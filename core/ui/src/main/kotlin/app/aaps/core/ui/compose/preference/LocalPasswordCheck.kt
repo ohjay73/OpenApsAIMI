@@ -36,3 +36,9 @@ val LocalHighlightKey = compositionLocalOf<String?> { null }
  * The lambda receives a composable content that takes an onBack callback.
  */
 val LocalNavigateToCompose = compositionLocalOf<((ComposeScreenContent) -> Unit)?> { null }
+
+/**
+ * Opens a nested [PreferenceSubScreenDef] on its own full screen (drill-down).
+ * When null, nested sub-screens stay inline accordions (legacy behaviour).
+ */
+val LocalOpenPreferenceSubScreen = compositionLocalOf<((PreferenceSubScreenDef) -> Unit)?> { null }

@@ -37,9 +37,7 @@ fun AdaptiveSwitchPreferenceItem(
 ) {
     val effectiveTitleResId = if (titleResId != 0) titleResId else booleanKey.titleResId
     val effectiveSummaryResId = summaryResId ?: booleanKey.summaryResId
-
-    // Skip if no title resource is available
-    if (effectiveTitleResId == 0) return
+    val titleText = preferenceDisplayTitle(effectiveTitleResId, booleanKey.key)
 
     val visibility = calculatePreferenceVisibility(
         preferenceKey = booleanKey,
@@ -59,7 +57,7 @@ fun AdaptiveSwitchPreferenceItem(
             { Text(stringResource(if (state.value) summaryOnResId else summaryOffResId)) }
         }
 
-        effectiveSummaryResId != null                     -> {
+        effectiveSummaryResId != null && effectiveSummaryResId != 0 -> {
             { Text(stringResource(effectiveSummaryResId)) }
         }
 
@@ -77,14 +75,14 @@ fun AdaptiveSwitchPreferenceItem(
                     guardMessage = message
                 }
             },
-            title = { Text(stringResource(effectiveTitleResId)) },
+            title = { Text(titleText) },
             summary = summary,
             enabled = visibility.enabled
         )
     } else {
         SwitchPreference(
             state = state,
-            title = { Text(stringResource(effectiveTitleResId)) },
+            title = { Text(titleText) },
             summary = summary,
             enabled = visibility.enabled
         )

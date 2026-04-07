@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -16,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,21 +38,27 @@ import app.aaps.core.ui.compose.ComposeScreenContent
  * @param plugin The plugin whose preferences to display
  * @param visibilityContext Context for evaluating visibility conditions
  * @param onBackClick Callback when back button is clicked
+ * @param onOpenLegacyXmlPreferences If non-null, toolbar action opens the classic XML preference screen for this plugin
  */
 @Composable
 fun PluginPreferencesScreen(
     plugin: PluginBase,
     visibilityContext: PreferenceVisibilityContext? = null,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    onOpenLegacyXmlPreferences: (() -> Unit)? = null
 ) {
     val preferenceScreenContent = plugin.getPreferenceScreenContent()
     val title = plugin.name
 
     // State for inline Compose screen navigation
     var composeScreen: ComposeScreenContent? by remember { mutableStateOf(null) }
+    var drilledSubScreen: PreferenceSubScreenDef? by remember { mutableStateOf(null) }
 
     BackHandler(enabled = composeScreen != null) {
         composeScreen = null
+    }
+    BackHandler(enabled = drilledSubScreen != null) {
+        drilledSubScreen = null
     }
 
     // If a compose sub-screen is active, render it instead of preferences
@@ -59,9 +67,19 @@ fun PluginPreferencesScreen(
         return
     }
 
+    drilledSubScreen?.let { sub ->
+        PreferenceSubScreenHost(
+            screenDef = sub,
+            highlightKey = null,
+            onBackClick = { drilledSubScreen = null }
+        )
+        return
+    }
+
     ProvidePreferenceTheme {
         CompositionLocalProvider(
-            LocalNavigateToCompose provides { screen -> composeScreen = screen }
+            LocalNavigateToCompose provides { screen -> composeScreen = screen },
+            LocalOpenPreferenceSubScreen provides { sub -> drilledSubScreen = sub }
         ) {
             when (preferenceScreenContent) {
                 is PreferenceSubScreenDef -> {
@@ -71,7 +89,8 @@ fun PluginPreferencesScreen(
                         title = title,
                         plugin = plugin,
                         visibilityContext = visibilityContext,
-                        onBackClick = onBackClick
+                        onBackClick = onBackClick,
+                        onOpenLegacyXmlPreferences = onOpenLegacyXmlPreferences
                     )
                 }
 
@@ -92,6 +111,16 @@ fun PluginPreferencesScreen(
                                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                             contentDescription = stringResource(app.aaps.core.ui.R.string.back)
                                         )
+                                    }
+                                },
+                                actions = {
+                                    onOpenLegacyXmlPreferences?.let { openLegacy ->
+                                        IconButton(onClick = openLegacy) {
+                                            Icon(
+                                                imageVector = Icons.Filled.ViewList,
+                                                contentDescription = stringResource(app.aaps.core.ui.R.string.legacy_xml_preferences)
+                                            )
+                                        }
                                     }
                                 }
                             )
@@ -126,7 +155,8 @@ private fun SinglePluginPreferencesRenderer(
     title: String,
     plugin: PluginBase,
     visibilityContext: PreferenceVisibilityContext?,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    onOpenLegacyXmlPreferences: (() -> Unit)? = null
 ) {
     val pluginWithPrefs = plugin as? PluginBaseWithPreferences
     if (pluginWithPrefs == null) {
@@ -138,6 +168,16 @@ private fun SinglePluginPreferencesRenderer(
                     navigationIcon = {
                         IconButton(onClick = onBackClick) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(app.aaps.core.ui.R.string.back))
+                        }
+                    },
+                    actions = {
+                        onOpenLegacyXmlPreferences?.let { openLegacy ->
+                            IconButton(onClick = openLegacy) {
+                                Icon(
+                                    imageVector = Icons.Filled.ViewList,
+                                    contentDescription = stringResource(app.aaps.core.ui.R.string.legacy_xml_preferences)
+                                )
+                            }
                         }
                     }
                 )
@@ -159,11 +199,16 @@ private fun SinglePluginPreferencesRenderer(
         return
     }
 
-    val sectionState = rememberPreferenceSectionState()
+    val sectionState = rememberSaveable(screen.key, saver = PreferenceSectionState.Saver) {
+        PreferenceSectionState()
+    }
 
-    // For single plugin view, start with the main section expanded
+    // Expand the plugin card once when opening (do not toggle — avoids collapsing restored state).
     LaunchedEffect(screen.key) {
-        sectionState.toggle("${screen.key}_main", SectionLevel.TOP_LEVEL)
+        val mainKey = "${screen.key}_main"
+        if (!sectionState.isExpanded(mainKey)) {
+            sectionState.toggle(mainKey, SectionLevel.TOP_LEVEL)
+        }
     }
 
     Scaffold(
@@ -181,6 +226,16 @@ private fun SinglePluginPreferencesRenderer(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = stringResource(app.aaps.core.ui.R.string.back)
                         )
+                    }
+                },
+                actions = {
+                    onOpenLegacyXmlPreferences?.let { openLegacy ->
+                        IconButton(onClick = openLegacy) {
+                            Icon(
+                                imageVector = Icons.Filled.ViewList,
+                                contentDescription = stringResource(app.aaps.core.ui.R.string.legacy_xml_preferences)
+                            )
+                        }
                     }
                 }
             )

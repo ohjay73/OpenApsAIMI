@@ -80,18 +80,47 @@ class PreferenceSectionState(
 
         val Saver: Saver<PreferenceSectionState, Bundle> = Saver(
             save = { state ->
+                val exp = Bundle()
+                state.expandedSections.forEach { (k, v) -> exp.putBoolean(k, v) }
+                val lvl = Bundle()
+                state.sectionLevels.forEach { (k, v) -> lvl.putInt(k, v.ordinal) }
+                val par = Bundle()
+                state.sectionParents.forEach { (k, v) -> par.putString(k, v) }
                 bundleOf(
-                    *state.expandedSections.map { (k, v) -> k to v }.toTypedArray()
+                    "exp" to exp,
+                    "lvl" to lvl,
+                    "par" to par,
                 )
             },
             restore = { bundle ->
-                PreferenceSectionState(
-                    expandedSections = mutableStateMapOf<String, Boolean>().apply {
-                        bundle.keySet().forEach { key ->
-                            put(key, bundle.getBoolean(key))
-                        }
+                val expBundle = bundle.getBundle("exp")
+                if (expBundle != null) {
+                    val levels = mutableMapOf<String, SectionLevel>()
+                    val lvlBundle = bundle.getBundle("lvl")
+                    lvlBundle?.keySet()?.forEach { k ->
+                        val ord = lvlBundle.getInt(k, 0)
+                        levels[k] = SectionLevel.entries.getOrElse(ord) { SectionLevel.TOP_LEVEL }
                     }
-                )
+                    val parents = mutableMapOf<String, String>()
+                    val parBundle = bundle.getBundle("par")
+                    parBundle?.keySet()?.forEach { k ->
+                        parBundle.getString(k)?.let { parents[k] = it }
+                    }
+                    PreferenceSectionState(
+                        expandedSections = mutableStateMapOf<String, Boolean>().apply {
+                            expBundle.keySet().forEach { key -> put(key, expBundle.getBoolean(key)) }
+                        },
+                        sectionLevels = levels,
+                        sectionParents = parents,
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    PreferenceSectionState(
+                        expandedSections = mutableStateMapOf<String, Boolean>().apply {
+                            bundle.keySet().forEach { key -> put(key, bundle.getBoolean(key)) }
+                        },
+                    )
+                }
             }
         )
     }

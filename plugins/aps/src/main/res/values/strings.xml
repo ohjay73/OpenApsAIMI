@@ -441,7 +441,12 @@
     <string name="aimi_sos_threshold_title">Critical Hypo Threshold</string>
     <string name="aimi_sos_threshold_summary">BG below which the SOS will be triggered (mg/dL).</string>
     <string name="aimi_sos_permissions_title">📍 Grant SMS, Call &amp; Location Permissions</string>
-    <string name="aimi_sos_permissions_summary">Tap to authorize AAPS to send SMS, make calls, and access background location for emergencies.</string>>
+    <string name="aimi_sos_permissions_summary">Tap to authorize AAPS to send SMS, make calls, and access background location for emergencies.</string>
+    <string name="aimi_physio_hc_permissions_title">Health Connect permissions</string>
+    <string name="aimi_physio_hc_permissions_summary">Open the screen to grant sleep, HRV, and heart rate access via Health Connect.</string>
+    <string name="aimi_inflammatory_diseases_title">Inflammatory / autoimmune diseases</string>
+    <string name="aimi_ai_auditor_section_title">AI Decision Auditor</string>
+    <string name="aimi_trajectory_section_title">Trajectory Guard</string>
 
     <!-- 🦋 Thyroid Module -->
     <string name="oaps_aimi_thyroid_title">🦋 Hyperthyroidism (Basedow) Module</string>
