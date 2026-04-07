@@ -1245,58 +1245,175 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                 ),
             )
         )
-        add(aimiComposeExtensionRoot())
+        add(
+            PreferenceSubScreenDef(
+                key = "aimi_user_preferences",
+                titleResId = R.string.user_preferences,
+                items = aimiComposeUserPreferenceItems(),
+            )
+        )
+        add(aimiComposeManualModesSubScreen())
+        add(aimiComposeAutodriveSubScreen())
     }
 
-    private fun aimiComposeExtensionRoot(): PreferenceSubScreenDef =
+    private fun aimiComposeUserPreferenceItems(): List<PreferenceItem> = buildList {
+        add(
+            PreferenceSubScreenDef(
+                key = "aimi_compose_ai_keys",
+                titleResId = R.string.aimi_prefs_ai_title,
+                items = listOf(
+                    StringKey.AimiAdvisorProvider,
+                    StringKey.AimiAdvisorOpenAIKey,
+                    StringKey.AimiAdvisorGeminiKey,
+                    StringKey.AimiAdvisorDeepSeekKey,
+                    StringKey.AimiAdvisorClaudeKey,
+                ),
+            )
+        )
+        add(
+            PreferenceSubScreenDef(
+                key = "aimi_compose_sos",
+                titleResId = R.string.aimi_sos_title,
+                items = listOf(
+                    BooleanKey.AimiEmergencySosEnable,
+                    StringKey.AimiEmergencySosPhone,
+                    IntKey.AimiEmergencySosThreshold,
+                ),
+            )
+        )
+        add(
+            PreferenceSubScreenDef(
+                key = "aimi_compose_physio",
+                titleResId = R.string.aimi_physio_title,
+                items = listOf(
+                    BooleanKey.AimiPhysioAssistantEnable,
+                    BooleanKey.AimiPhysioSleepDataEnable,
+                    BooleanKey.AimiPhysioHRVDataEnable,
+                    BooleanKey.AimiPhysioLLMAnalysisEnable,
+                    BooleanKey.AimiPhysioDebugLogs,
+                ),
+            )
+        )
+        add(BooleanKey.OApsAIMIMLtraining)
+        add(DoubleKey.OApsAIMIMaxSMB)
+        add(DoubleKey.OApsAIMIHighBGMaxSMB)
+        add(DoubleKey.OApsAIMIweight)
+        add(DoubleKey.OApsAIMICHO)
+        add(DoubleKey.OApsAIMITDD7)
+        add(aimiComposePkpdSubScreen())
+    }
+
+    private fun aimiComposeManualModesSubScreen(): PreferenceSubScreenDef =
         PreferenceSubScreenDef(
-            key = "aimi_plugin_extensions",
-            titleResId = R.string.aimi_preferences,
-            items = buildList<PreferenceItem> {
+            key = "aimi_compose_training_ml_modes",
+            titleResId = R.string.training_ml_modes_preferences,
+            items = buildList {
+                add(DoubleKey.meal_modes_MaxBasal)
                 add(
                     PreferenceSubScreenDef(
-                        key = "aimi_compose_ai_keys",
-                        titleResId = R.string.aimi_prefs_ai_title,
+                        key = "aimi_compose_mode_breakfast",
+                        titleResId = R.string.training_ml_breakfast_modes_preferences,
                         items = listOf(
-                            StringKey.AimiAdvisorProvider,
-                            StringKey.AimiAdvisorOpenAIKey,
-                            StringKey.AimiAdvisorGeminiKey,
-                            StringKey.AimiAdvisorDeepSeekKey,
-                            StringKey.AimiAdvisorClaudeKey,
+                            DoubleKey.OApsAIMIBFPrebolus,
+                            DoubleKey.OApsAIMIBFPrebolus2,
+                            DoubleKey.OApsAIMIBFFactor,
+                            IntKey.OApsAIMIBFinterval,
                         ),
                     )
                 )
                 add(
                     PreferenceSubScreenDef(
-                        key = "aimi_compose_sos",
-                        titleResId = R.string.aimi_sos_title,
+                        key = "aimi_compose_mode_lunch",
+                        titleResId = R.string.training_ml_lunch_modes_preferences,
                         items = listOf(
-                            BooleanKey.AimiEmergencySosEnable,
-                            StringKey.AimiEmergencySosPhone,
-                            IntKey.AimiEmergencySosThreshold,
+                            DoubleKey.OApsAIMILunchPrebolus,
+                            DoubleKey.OApsAIMILunchPrebolus2,
+                            DoubleKey.OApsAIMILunchFactor,
+                            IntKey.OApsAIMILunchinterval,
                         ),
                     )
                 )
                 add(
                     PreferenceSubScreenDef(
-                        key = "aimi_compose_physio",
-                        titleResId = R.string.aimi_physio_title,
+                        key = "aimi_compose_mode_dinner",
+                        titleResId = R.string.training_ml_dinner_modes_preferences,
                         items = listOf(
-                            BooleanKey.AimiPhysioAssistantEnable,
-                            BooleanKey.AimiPhysioSleepDataEnable,
-                            BooleanKey.AimiPhysioHRVDataEnable,
-                            BooleanKey.AimiPhysioLLMAnalysisEnable,
-                            BooleanKey.AimiPhysioDebugLogs,
+                            DoubleKey.OApsAIMIDinnerPrebolus,
+                            DoubleKey.OApsAIMIDinnerPrebolus2,
+                            DoubleKey.OApsAIMIDinnerFactor,
+                            IntKey.OApsAIMIDinnerinterval,
                         ),
                     )
                 )
-                add(BooleanKey.OApsAIMIMLtraining)
-                add(DoubleKey.OApsAIMIMaxSMB)
-                add(DoubleKey.OApsAIMIHighBGMaxSMB)
-                add(DoubleKey.OApsAIMIweight)
-                add(DoubleKey.OApsAIMICHO)
-                add(DoubleKey.OApsAIMITDD7)
-                add(aimiComposePkpdSubScreen())
+                add(
+                    PreferenceSubScreenDef(
+                        key = "aimi_compose_mode_highcarb",
+                        titleResId = R.string.training_ml_high_carb_modes_preferences,
+                        items = listOf(
+                            DoubleKey.OApsAIMIHighCarbPrebolus,
+                            DoubleKey.OApsAIMIHighCarbPrebolus2,
+                            DoubleKey.OApsAIMIHCFactor,
+                            IntKey.OApsAIMIHCinterval,
+                        ),
+                    )
+                )
+                add(
+                    PreferenceSubScreenDef(
+                        key = "aimi_compose_mode_snack",
+                        titleResId = R.string.training_ml_snack_modes_preferences,
+                        items = listOf(
+                            DoubleKey.OApsAIMISnackPrebolus,
+                            DoubleKey.OApsAIMISnackFactor,
+                            IntKey.OApsAIMISnackinterval,
+                        ),
+                    )
+                )
+                add(
+                    PreferenceSubScreenDef(
+                        key = "aimi_compose_mode_meal",
+                        titleResId = R.string.training_ml_generic_meal_modes_preferences,
+                        items = listOf(
+                            DoubleKey.OApsAIMIMealPrebolus,
+                            DoubleKey.OApsAIMIMealFactor,
+                            IntKey.OApsAIMImealinterval,
+                        ),
+                    )
+                )
+                add(
+                    PreferenceSubScreenDef(
+                        key = "aimi_compose_mode_sleep",
+                        titleResId = R.string.training_ml_sleep_modes_preferences,
+                        items = listOf(
+                            DoubleKey.OApsAIMIsleepFactor,
+                            IntKey.OApsAIMISleepinterval,
+                        ),
+                    )
+                )
+            },
+        )
+
+    private fun aimiComposeAutodriveSubScreen(): PreferenceSubScreenDef =
+        PreferenceSubScreenDef(
+            key = "aimi_compose_autodrive",
+            titleResId = R.string.autodrive_preferences,
+            items = buildList {
+                add(BooleanKey.OApsAIMIautoDrive)
+                add(BooleanKey.OApsAIMIautoDriveActive)
+                add(DoubleKey.autodriveMaxBasal)
+                add(DoubleKey.OApsAIMIMpcInsulinUPerKgPerStep)
+                add(DoubleKey.OApsAIMIautodrivesmallPrebolus)
+                add(DoubleKey.OApsAIMIautodrivePrebolus)
+                add(
+                    PreferenceSubScreenDef(
+                        key = "aimi_compose_autodrive_prebolus_vars",
+                        titleResId = R.string.autodrive_prebolus_variables,
+                        items = listOf(
+                            IntKey.OApsAIMIAutodriveBG,
+                            DoubleKey.OApsAIMIcombinedDelta,
+                            DoubleKey.OApsAIMIAutodriveDeviation,
+                        ),
+                    )
+                )
             },
         )
 
