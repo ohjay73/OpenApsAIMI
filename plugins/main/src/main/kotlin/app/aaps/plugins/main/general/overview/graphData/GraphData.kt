@@ -266,7 +266,13 @@ class GraphData @Inject constructor(
 
     private fun addSeries(s: Series<*>) = series.add(s)
 
-    fun performUpdate() {
+    /**
+     * @param keepViewport If true, [GraphView.onDataChanged] keeps the current X viewport during refresh.
+     *                     Dashboard uses this when the user has panned the glucose graph so the in-range band
+     *                     and series stay aligned; default false preserves legacy behaviour elsewhere.
+     */
+    @JvmOverloads
+    fun performUpdate(keepViewport: Boolean = false) {
         // clear old data - use removeAllSeries() to properly detach GraphView from series
         graph.removeAllSeries()
 
@@ -283,8 +289,7 @@ class GraphData @Inject constructor(
         graph.viewport.setMinY(Round.floorTo(minY, step))
         graph.viewport.isYAxisBoundsManual = true
 
-        // draw it
-        graph.onDataChanged(false, false)
+        graph.onDataChanged(/* keepLabelsSize */ false, /* keepViewport */ keepViewport)
         series.clear()
     }
 

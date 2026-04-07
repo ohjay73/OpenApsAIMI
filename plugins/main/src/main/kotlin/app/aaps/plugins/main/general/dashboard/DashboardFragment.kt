@@ -637,7 +637,7 @@ class DashboardFragment : DaggerFragment() {
             viewportShouldFollowLiveRange(binding.glucoseGraph.graph, overviewData)
         forceGraphViewportReset = false
         graphData.formatAxis(overviewData.fromTime, overviewData.endTime, resetX = followLive)
-        graphData.performUpdate()
+        graphData.performUpdate(keepViewport = true)
     }
 
     private var isHypoRiskDialogShowing = false
