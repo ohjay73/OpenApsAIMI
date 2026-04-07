@@ -434,7 +434,7 @@ class CircleTopDashboardView @JvmOverloads constructor(
             severeHypoMaxMgdl = 54f,
             hypoMaxMgdlAttr = 70f,
             useSteppedColors = true,
-            step1MaxMgdl = 100f,
+            step1MaxMgdl = 120f,
             step2MaxMgdl = 160f,
             step3MaxMgdl = 220f,
             stepColor1 = step1,

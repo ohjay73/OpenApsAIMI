@@ -38,7 +38,7 @@ class GlucoseRingView @JvmOverloads constructor(
     /** Below this mg/dL (exclusive) but ≥ [severeHypoMaxMgdl] → step3 — often aligned with profile target low. */
     private var hypoMaxMgdlAttr: Float = 70f
 
-    private var step1MaxMgdl: Float = 100f
+    private var step1MaxMgdl: Float = 120f
     private var step2MaxMgdl: Float = 160f
     private var step3MaxMgdl: Float = 220f
 
