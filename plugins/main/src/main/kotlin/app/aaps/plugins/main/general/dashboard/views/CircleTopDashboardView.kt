@@ -140,26 +140,28 @@ class CircleTopDashboardView @JvmOverloads constructor(
             // ═══════════════════════════════════════════════════════════════
             // 1. Glucose hero (Compose / AapsTheme)
             // ═══════════════════════════════════════════════════════════════
-            getProp<Int>("glucoseMgdl")?.let { bgMgdl ->
-                val cardState = state as? StatusCardState
-                val arcP = cardState?.let { telemetryArcProgress(it) }
-                val arcC = arcP?.let { telemetryArcColor(it) }
-                heroState.value = buildGlucoseHeroUiState(
-                    bgMgdl = bgMgdl,
-                    cardState = cardState,
-                    glucoseText = getProp<String>("glucoseText") ?: "--",
-                    timeAgo = getProp<String>("timeAgo") ?: "",
-                    deltaText = getProp<String>("deltaText") ?: "",
-                    noseAngle = getProp<Float>("noseAngleDeg"),
-                    glucoseColor = getProp<Int>("glucoseColor"),
-                    arcProgress = arcP,
-                    arcColorArgb = arcC,
-                )
-                binding.glucoseHeroCompose.contentDescription = context.getString(
-                    app.aaps.plugins.main.R.string.dashboard_glucose_ring_content_description,
-                    getProp<String>("glucoseText") ?: "--",
-                    getProp<String>("deltaText") ?: "",
-                )
+            // Use [StatusCardState] fields directly so delta/time/angles are never dropped by reflection.
+            if (state is StatusCardState) {
+                state.glucoseMgdl?.let { bgMgdl ->
+                    val arcP = telemetryArcProgress(state)
+                    val arcC = arcP?.let { telemetryArcColor(it) }
+                    heroState.value = buildGlucoseHeroUiState(
+                        bgMgdl = bgMgdl,
+                        cardState = state,
+                        glucoseText = state.glucoseText,
+                        timeAgo = state.timeAgo,
+                        deltaText = state.deltaText,
+                        noseAngle = state.noseAngleDeg,
+                        glucoseColor = state.glucoseColor,
+                        arcProgress = arcP,
+                        arcColorArgb = arcC,
+                    )
+                    binding.glucoseHeroCompose.contentDescription = context.getString(
+                        app.aaps.plugins.main.R.string.dashboard_glucose_ring_content_description,
+                        state.glucoseText,
+                        state.deltaText,
+                    )
+                }
             }
 
             if (state is StatusCardState) {
@@ -451,7 +453,7 @@ class CircleTopDashboardView @JvmOverloads constructor(
             stepColor3 = step3,
             stepColor4 = step4,
         )
-        // Delta first under the BG value: a large negative margin on the metrics row can cover the lower sub-line.
+        // Delta + time: [GlucoseHeroRing] uses the same order as Overview [BgInfoSection] (delta on top).
         return GlucoseHeroUiState(
             mainText = glucoseText,
             subLeftText = deltaText,

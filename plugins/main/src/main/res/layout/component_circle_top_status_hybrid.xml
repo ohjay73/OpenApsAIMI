@@ -19,6 +19,8 @@
             android:layout_marginTop="0dp"
             android:layout_marginBottom="0dp"
             android:paddingBottom="4dp"
+            android:clipChildren="false"
+            android:clipToPadding="false"
             android:minHeight="@dimen/dashboard_glucose_hero_min_side">
 
             <!-- Glucose hero (Compose + AapsTheme): responsive width, square ratio -->
@@ -26,6 +28,8 @@
                 android:id="@+id/glucose_ring_container"
                 android:layout_width="0dp"
                 android:layout_height="0dp"
+                android:clipChildren="false"
+                android:clipToPadding="false"
                 android:elevation="6dp"
                 app:layout_constraintWidth_percent="0.42"
                 app:layout_constraintWidth_max="@dimen/dashboard_glucose_hero_width_max"

@@ -1,6 +1,7 @@
 package app.aaps.core.ui.compose.dashboard
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -20,8 +21,8 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.coerceAtLeast
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import app.aaps.core.ui.compose.AapsTheme
 import kotlin.math.PI
 import kotlin.math.cos
@@ -105,26 +106,32 @@ fun GlucoseHeroRing(
                 }
             }
 
+            // Same vertical order as [app.aaps.ui.compose.overview.BgInfoSection]: delta on top, BG, time below.
+            // Hybrid dashboard pulls the metrics row up (dashboard_metrics_row_overlap); putting delta under the
+            // big number left it in the obscured band — moving it above matches Overview and keeps it visible.
+            val liftTime = with(density) { (ringRadius * 0.07f).toDp().coerceAtLeast(10.dp) }
+            val deltaStyle = AapsTheme.typography.bgSecondary.copy(color = centerText)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy((-2).dp),
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .offset(y = (-2).dp),
+                    .offset(y = -liftTime),
             ) {
+                if (state.subLeftText.isNotBlank()) {
+                    Text(
+                        text = state.subLeftText,
+                        style = deltaStyle.copy(fontSize = subSp),
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                    )
+                }
                 Text(
                     text = state.mainText,
                     style = mainStyle.copy(fontSize = mainSp),
                     textAlign = TextAlign.Center,
                     maxLines = 1,
                 )
-                if (state.subLeftText.isNotBlank()) {
-                    Text(
-                        text = state.subLeftText,
-                        style = subLineStyle.copy(fontSize = subSp),
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                    )
-                }
                 if (state.subRightText.isNotBlank()) {
                     Text(
                         text = state.subRightText,
