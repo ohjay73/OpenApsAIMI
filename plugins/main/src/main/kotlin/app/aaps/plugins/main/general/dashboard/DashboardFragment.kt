@@ -179,6 +179,9 @@ class DashboardFragment : DaggerFragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        if (isEmbeddedInComposeMainShell()) {
+            binding.bottomNavigation.visibility = View.GONE
+        }
         binding.bottomNavigation.selectedItemId = R.id.dashboard_nav_home
         binding.bottomNavigation.setOnItemSelectedListener { item ->
             when (item.itemId) {
@@ -541,6 +544,12 @@ class DashboardFragment : DaggerFragment() {
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
         startActivity(intent)
         return true
+    }
+
+    /** Embedded in [app.aaps.ComposeMainActivity] — bottom nav duplicates Compose shell (Treatments / Manage). */
+    private fun isEmbeddedInComposeMainShell(): Boolean {
+        val n = activity?.javaClass?.name ?: return false
+        return n == "app.aaps.ComposeMainActivity" || n.endsWith(".ComposeMainActivity")
     }
 
     private fun syncGraphRange(hours: Int, userInitiated: Boolean = true) {

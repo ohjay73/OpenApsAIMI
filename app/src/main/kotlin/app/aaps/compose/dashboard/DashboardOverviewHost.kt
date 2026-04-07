@@ -16,7 +16,7 @@ import app.aaps.R
 
 /**
  * Embeds [app.aaps.plugins.main.general.dashboard.DashboardFragment] inside Compose
- * so the AIMI hybrid dashboard keeps the Compose shell (search, Manage, QuickLaunch, bottom nav).
+ * so the AIMI hybrid dashboard keeps the Compose shell (search, Treatments / Manage bottom bar).
  */
 @Composable
 fun DashboardOverviewHost(

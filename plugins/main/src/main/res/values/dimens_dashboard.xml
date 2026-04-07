@@ -25,6 +25,6 @@
     <!-- Glucose hero: see layout_constraintWidth_percent on container; cap avoids huge circle on tablets -->
     <dimen name="dashboard_glucose_hero_width_max">168dp</dimen>
     <dimen name="dashboard_glucose_hero_min_side">122dp</dimen>
-    <!-- Negative margin: pulls metric columns up; too much hides delta under overlap -->
-    <dimen name="dashboard_metrics_row_overlap">-44dp</dimen>
+    <!-- Negative margin: pulls metric columns up; too much hides the delta line under the left/right chips -->
+    <dimen name="dashboard_metrics_row_overlap">-28dp</dimen>
 </resources>

@@ -150,6 +150,8 @@
     <string name="dashboard_aimi_ml_sensor_low">faible</string>
     <string name="dashboard_cd_aimi_pulse">Résumé du dernier passage AIMI. Double appui pour tout le détail.</string>
     <string name="dashboard_chip_announced_aimi_pulse_details">Détails boucle ouverts</string>
+    <string name="overview_show_hybrid_aimi_pulse_title">Carte « dernière exécution AIMI » sur le tableau de bord</string>
+    <string name="overview_show_hybrid_aimi_pulse_summary">Si activé, affiche le bloc sous le cercle glycémie (dernier passage, SMB, etc.). Désactivé par défaut pour laisser plus de place au graphique.</string>
 
     <!-- Adaptive Smoothing Quality badge (phase 1 informational) -->
     <string name="adaptive_smoothing_quality_badge_a11y">Qualité du lissage adaptatif</string>

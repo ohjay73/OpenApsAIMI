@@ -105,10 +105,6 @@ fun GlucoseHeroRing(
                 }
             }
 
-            val subCombo = listOfNotNull(
-                state.subLeftText.takeIf { it.isNotBlank() },
-                state.subRightText.takeIf { it.isNotBlank() },
-            ).joinToString(" · ")
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
@@ -121,9 +117,17 @@ fun GlucoseHeroRing(
                     textAlign = TextAlign.Center,
                     maxLines = 1,
                 )
-                if (subCombo.isNotEmpty()) {
+                if (state.subLeftText.isNotBlank()) {
                     Text(
-                        text = subCombo,
+                        text = state.subLeftText,
+                        style = subLineStyle.copy(fontSize = subSp),
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                    )
+                }
+                if (state.subRightText.isNotBlank()) {
+                    Text(
+                        text = state.subRightText,
                         style = subLineStyle.copy(fontSize = subSp),
                         textAlign = TextAlign.Center,
                         maxLines = 1,

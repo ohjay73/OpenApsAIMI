@@ -18,6 +18,7 @@ import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.content.ContextCompat
 import androidx.core.view.isGone
 import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualityTier
+import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.LocalPreferences
@@ -76,11 +77,14 @@ class CircleTopDashboardView @JvmOverloads constructor(
 
     private val actionListenerState = mutableStateOf<CircleTopActionListener?>(null)
 
+    private var dashboardPreferences: Preferences? = null
+
     /**
      * Wire les [ComposeView] du hero glucose et de la barre d’actions + [AapsTheme] ([LocalPreferences]).
      * À appeler une fois depuis [androidx.fragment.app.Fragment.onViewCreated], avant [setActionListener].
      */
     fun attachComposeHeroDependencies(preferences: Preferences) {
+        dashboardPreferences = preferences
         if (composeHeroAttached) return
         composeHeroAttached = true
         val heroCompose: ComposeView = binding.glucoseHeroCompose
@@ -291,7 +295,9 @@ class CircleTopDashboardView @JvmOverloads constructor(
             // ═══════════════════════════════════════════════════════════════
             // 5b. AIMI Pulse (real APS reason + facts)
             // ═══════════════════════════════════════════════════════════════
-            if (state is StatusCardState) {
+            val showAimiPulse = dashboardPreferences?.get(BooleanKey.OverviewShowHybridDashboardAimiPulse) == true
+            binding.aimiPulseContainer.isGone = !showAimiPulse
+            if (state is StatusCardState && showAimiPulse) {
                 binding.aimiPulseTitle.text = state.aimiPulseTitle
                 binding.aimiPulseSummary.text = state.aimiPulseSummary
                 val meta = state.aimiPulseMeta
@@ -445,10 +451,11 @@ class CircleTopDashboardView @JvmOverloads constructor(
             stepColor3 = step3,
             stepColor4 = step4,
         )
+        // Delta first under the BG value: a large negative margin on the metrics row can cover the lower sub-line.
         return GlucoseHeroUiState(
             mainText = glucoseText,
-            subLeftText = timeAgo,
-            subRightText = deltaText,
+            subLeftText = deltaText,
+            subRightText = timeAgo,
             noseAngleDeg = noseAngle,
             ringColorArgb = ringArgb,
             centerTextColorArgb = glucoseColor

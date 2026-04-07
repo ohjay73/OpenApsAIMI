@@ -198,8 +198,8 @@ fun MainScreen(
                     )
                 },
             ) { paddingValues ->
-                // Floating QuickLaunch duplicates main/bottom actions when the AIMI dashboard is embedded; keep manual in the top bar.
-                val hasToolbar = quickLaunchItems.isNotEmpty() && dashboardOverview == null
+                // QuickLaunch pill duplicates Treatments / bottom nav and the hybrid dashboard — manual stays in MainTopBar.
+                val hasToolbar = false
                 val fabBottomOffset = if (hasToolbar) 56.dp else 0.dp
                 Box(modifier = Modifier.fillMaxSize()) {
                     if (dashboardOverview != null) {

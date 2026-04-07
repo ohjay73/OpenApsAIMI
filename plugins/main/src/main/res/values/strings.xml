@@ -157,7 +157,9 @@
     <string name="description_overview">Displays the current state of your loop and buttons for most common actions</string>
     <string name="overview_buttons_selection">Buttons</string>
     <string name="overview_use_dashboard_title">Use dashboard as home</string>
-    <string name="overview_use_dashboard_summary">Use the AIMI hybrid dashboard as the main home content. In the modern (Compose) UI, search, Manage, QuickLaunch and the bottom bar stay available; in classic UI this switches the Home tab between dashboard and legacy overview.</string>
+    <string name="overview_use_dashboard_summary">Use the AIMI hybrid dashboard as the main home content. In the modern (Compose) UI, search, Manage and the bottom bar stay available; in classic UI this switches the Home tab between dashboard and legacy overview.</string>
+    <string name="overview_show_hybrid_aimi_pulse_title">Show last AIMI run on dashboard</string>
+    <string name="overview_show_hybrid_aimi_pulse_summary">When enabled, shows the summary card under the glucose ring (last loop, SMB, etc.). Off by default to leave more room for the graph.</string>
     <string name="show_calibration_button_summary">Sends a calibration to xDrip+ (ensure \'Accept Calibrations\' is enabled in xDrip+ under Inter-App settings).</string>
     <string name="show_cgm_button_summary">Opens xDrip+ or Dexcom App (you can use back button to return to AAPS).</string>
     <string name="not_available_full">Not available</string>
