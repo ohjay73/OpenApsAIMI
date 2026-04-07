@@ -374,6 +374,7 @@
     <string name="glucosetype_finger">Finger</string>
     <string name="glucosetype_sensor">Sensor</string>
     <string name="manual">Manual</string>
+    <string name="user_manual">User manual</string>
     <string name="unknown">unknown</string>
     <string name="eatingsoon">Eating Soon</string>
     <string name="hypo">Hypo</string>

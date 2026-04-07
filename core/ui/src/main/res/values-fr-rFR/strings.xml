@@ -243,6 +243,7 @@
     <string name="glucosetype_finger">Doigt</string>
     <string name="glucosetype_sensor">Capteur</string>
     <string name="manual">Manuel</string>
+    <string name="user_manual">Manuel utilisateur</string>
     <string name="unknown">inconnu</string>
     <string name="eatingsoon">Repas imminent</string>
     <string name="hypo">Hypo</string>

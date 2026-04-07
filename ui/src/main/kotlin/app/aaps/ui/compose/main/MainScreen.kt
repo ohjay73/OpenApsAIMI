@@ -77,6 +77,7 @@ fun MainScreen(
     onSearchResultClick: (SearchIndexEntry) -> Unit,
     // Menu/navigation
     onMenuClick: () -> Unit,
+    onUserManualClick: () -> Unit = {},
     onNavigate: (NavigationRequest) -> Unit,
     onDrawerClosed: () -> Unit,
     onSwitchToClassicUi: () -> Unit,
@@ -168,6 +169,7 @@ fun MainScreen(
                                 onMenuClick()
                             }
                         },
+                        onUserManualClick = onUserManualClick,
                         onPreferencesClick = { onNavigate(NavigationRequest.Element(ElementType.SETTINGS)) },
                         onSearchQueryChange = onSearchQueryChange,
                         onSearchClear = onSearchClear,
@@ -196,7 +198,8 @@ fun MainScreen(
                     )
                 },
             ) { paddingValues ->
-                val hasToolbar = quickLaunchItems.isNotEmpty()
+                // Floating QuickLaunch duplicates main/bottom actions when the AIMI dashboard is embedded; keep manual in the top bar.
+                val hasToolbar = quickLaunchItems.isNotEmpty() && dashboardOverview == null
                 val fabBottomOffset = if (hasToolbar) 56.dp else 0.dp
                 Box(modifier = Modifier.fillMaxSize()) {
                     if (dashboardOverview != null) {

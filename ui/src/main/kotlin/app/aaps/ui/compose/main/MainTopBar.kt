@@ -3,6 +3,7 @@ package app.aaps.ui.compose.main
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -21,10 +22,11 @@ import app.aaps.ui.search.SearchUiState
 
 /**
  * Main top bar with M3-style search bar.
- * Layout: [Menu] [----Search Bar----] [Settings]
+ * Layout: [Menu] [----Search Bar----] [User manual] [Settings]
  *
  * @param searchUiState Current search UI state
  * @param onMenuClick Called when menu button is clicked
+ * @param onUserManualClick Called when the in-app user manual button is clicked
  * @param onPreferencesClick Called when preferences button is clicked
  * @param onSearchQueryChange Called when search query changes
  * @param onSearchClear Called when search query is cleared
@@ -36,6 +38,7 @@ import app.aaps.ui.search.SearchUiState
 fun MainTopBar(
     searchUiState: SearchUiState,
     onMenuClick: () -> Unit,
+    onUserManualClick: () -> Unit,
     onPreferencesClick: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onSearchClear: () -> Unit,
@@ -67,6 +70,12 @@ fun MainTopBar(
             }
         },
         actions = {
+            IconButton(onClick = onUserManualClick) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.MenuBook,
+                    contentDescription = stringResource(app.aaps.core.ui.R.string.user_manual)
+                )
+            }
             IconButton(onClick = onPreferencesClick) {
                 Icon(
                     imageVector = Icons.Default.Settings,

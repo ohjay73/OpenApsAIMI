@@ -138,6 +138,7 @@ import app.aaps.implementation.protection.BiometricCheck
 import app.aaps.plugins.configuration.activities.OptimizationPermissionContract
 import app.aaps.plugins.configuration.activities.SingleFragmentActivity
 import app.aaps.plugins.configuration.setupwizard.SetupWizardActivity
+import app.aaps.plugins.main.general.manual.UserManualActivity
 import app.aaps.plugins.source.DexcomPlugin
 import app.aaps.plugins.source.activities.RequestDexcomPermissionActivity
 import app.aaps.ui.compose.automationSheet.AutomationViewModel
@@ -622,6 +623,9 @@ class ComposeMainActivity : AppCompatActivity() {
                         handleSearchResultClick(entry, navController)
                     },
                     onMenuClick = { mainViewModel.openDrawer() },
+                    onUserManualClick = {
+                        startActivity(Intent(this@ComposeMainActivity, UserManualActivity::class.java))
+                    },
                     onNavigate = { request -> handleNavigationRequest(request, navController) },
                     onDrawerClosed = { mainViewModel.closeDrawer() },
                     onSwitchToClassicUi = { switchToClassicUi() },
