@@ -60,9 +60,12 @@ import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.IntentKey
+import app.aaps.core.keys.interfaces.PreferenceItem
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.StringKey
+import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
+import app.aaps.plugins.aps.keys.ApsIntentKey
 import app.aaps.plugins.aps.openAPSAIMI.keys.AimiStringKey
 import app.aaps.core.objects.constraints.ConstraintObject
 import app.aaps.core.objects.extensions.convertedToAbsolute
@@ -1188,6 +1191,141 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
             .store(BooleanKey.ApsUseDynamicSensitivity, preferences)
             .store(IntKey.ApsDynIsfAdjustmentFactor, preferences)
     }
+
+    /**
+     * Required for [app.aaps.ui.compose.preferences.AllPreferencesScreen]: only plugins that return
+     * a [PreferenceSubScreenDef] appear in the Compose settings list. XML-only [addPreferenceScreen]
+     * does not surface there.
+     */
+    override fun getPreferenceScreenContent(): PreferenceSubScreenDef =
+        PreferenceSubScreenDef(
+            key = "openapsaimi_settings",
+            titleResId = R.string.openapsaimi,
+            icon = pluginDescription.icon,
+            items = buildAimiComposePreferenceItems(),
+        )
+
+    /**
+     * OpenAPS/SMB core keys (same order as [app.aaps.plugins.aps.openAPSSMB.OpenAPSSMBPlugin]) +
+     * nested AIMI sections so Compose settings match most of the legacy tree.
+     */
+    private fun buildAimiComposePreferenceItems(): List<PreferenceItem> = buildList {
+        add(DoubleKey.ApsMaxBasal)
+        add(DoubleKey.ApsSmbMaxIob)
+        add(BooleanKey.ApsUseDynamicSensitivity)
+        add(BooleanKey.ApsUseAutosens)
+        add(IntKey.ApsDynIsfAdjustmentFactor)
+        add(UnitDoubleKey.ApsLgsThreshold)
+        add(BooleanKey.ApsDynIsfAdjustSensitivity)
+        add(BooleanKey.ApsSensitivityRaisesTarget)
+        add(BooleanKey.ApsResistanceLowersTarget)
+        add(BooleanKey.ApsUseSmb)
+        add(BooleanKey.ApsUseSmbWithHighTt)
+        add(BooleanKey.ApsUseSmbAlways)
+        add(BooleanKey.ApsUseSmbWithCob)
+        add(BooleanKey.ApsUseSmbWithLowTt)
+        add(BooleanKey.ApsUseSmbAfterCarbs)
+        add(IntKey.ApsMaxSmbFrequency)
+        add(IntKey.ApsMaxMinutesOfBasalToLimitSmb)
+        add(IntKey.ApsUamMaxMinutesOfBasalToLimitSmb)
+        add(BooleanKey.ApsUseUam)
+        add(IntKey.ApsCarbsRequestThreshold)
+        add(
+            PreferenceSubScreenDef(
+                key = "openapsaimi_absorption_advanced",
+                titleResId = app.aaps.core.ui.R.string.advanced_settings_title,
+                items = listOf(
+                    ApsIntentKey.LinkToDocs,
+                    BooleanKey.ApsAlwaysUseShortDeltas,
+                    DoubleKey.ApsMaxDailyMultiplier,
+                    DoubleKey.ApsMaxCurrentBasalMultiplier,
+                ),
+            )
+        )
+        add(aimiComposeExtensionRoot())
+    }
+
+    private fun aimiComposeExtensionRoot(): PreferenceSubScreenDef =
+        PreferenceSubScreenDef(
+            key = "aimi_plugin_extensions",
+            titleResId = R.string.aimi_preferences,
+            items = buildList<PreferenceItem> {
+                add(
+                    PreferenceSubScreenDef(
+                        key = "aimi_compose_ai_keys",
+                        titleResId = R.string.aimi_prefs_ai_title,
+                        items = listOf(
+                            StringKey.AimiAdvisorProvider,
+                            StringKey.AimiAdvisorOpenAIKey,
+                            StringKey.AimiAdvisorGeminiKey,
+                            StringKey.AimiAdvisorDeepSeekKey,
+                            StringKey.AimiAdvisorClaudeKey,
+                        ),
+                    )
+                )
+                add(
+                    PreferenceSubScreenDef(
+                        key = "aimi_compose_sos",
+                        titleResId = R.string.aimi_sos_title,
+                        items = listOf(
+                            BooleanKey.AimiEmergencySosEnable,
+                            StringKey.AimiEmergencySosPhone,
+                            IntKey.AimiEmergencySosThreshold,
+                        ),
+                    )
+                )
+                add(
+                    PreferenceSubScreenDef(
+                        key = "aimi_compose_physio",
+                        titleResId = R.string.aimi_physio_title,
+                        items = listOf(
+                            BooleanKey.AimiPhysioAssistantEnable,
+                            BooleanKey.AimiPhysioSleepDataEnable,
+                            BooleanKey.AimiPhysioHRVDataEnable,
+                            BooleanKey.AimiPhysioLLMAnalysisEnable,
+                            BooleanKey.AimiPhysioDebugLogs,
+                        ),
+                    )
+                )
+                add(BooleanKey.OApsAIMIMLtraining)
+                add(DoubleKey.OApsAIMIMaxSMB)
+                add(DoubleKey.OApsAIMIHighBGMaxSMB)
+                add(DoubleKey.OApsAIMIweight)
+                add(DoubleKey.OApsAIMICHO)
+                add(DoubleKey.OApsAIMITDD7)
+                add(aimiComposePkpdSubScreen())
+            },
+        )
+
+    private fun aimiComposePkpdSubScreen(): PreferenceSubScreenDef =
+        PreferenceSubScreenDef(
+            key = "aimi_compose_pkpd",
+            titleResId = R.string.oaps_aimi_pkpd_section_title,
+            items = listOf(
+                BooleanKey.OApsAIMIPkpdEnabled,
+                DoubleKey.OApsAIMIPkpdInitialDiaH,
+                DoubleKey.OApsAIMIPkpdInitialPeakMin,
+                DoubleKey.OApsAIMIPkpdBoundsDiaMinH,
+                DoubleKey.OApsAIMIPkpdBoundsDiaMaxH,
+                DoubleKey.OApsAIMIPkpdBoundsPeakMinMin,
+                DoubleKey.OApsAIMIPkpdBoundsPeakMinMax,
+                DoubleKey.OApsAIMIPkpdMaxDiaChangePerDayH,
+                DoubleKey.OApsAIMIPkpdMaxPeakChangePerDayMin,
+                DoubleKey.OApsAIMIIsfFusionMinFactor,
+                DoubleKey.OApsAIMIIsfFusionMaxFactor,
+                DoubleKey.OApsAIMIIsfFusionMaxChangePerTick,
+                DoubleKey.OApsAIMISmbTailThreshold,
+                DoubleKey.OApsAIMISmbTailDamping,
+                BooleanKey.OApsAIMIPkpdPragmaticReliefEnabled,
+                DoubleKey.OApsAIMIPkpdPragmaticReliefMinFactor,
+                DoubleKey.OApsAIMIRedCarpetRestoreThreshold,
+                BooleanKey.OApsAIMIIobSurveillanceGuard,
+                DoubleKey.OApsAIMIPriorityMaxIobFactor,
+                DoubleKey.OApsAIMIPriorityMaxIobExtraU,
+                DoubleKey.OApsAIMISmbExerciseDamping,
+                DoubleKey.OApsAIMISmbLateFatDamping,
+            ),
+        )
 
     override fun addPreferenceScreen(preferenceManager: PreferenceManager, parent: PreferenceScreen, context: Context, requiredKey: String?) {
         val category = PreferenceCategory(context)
