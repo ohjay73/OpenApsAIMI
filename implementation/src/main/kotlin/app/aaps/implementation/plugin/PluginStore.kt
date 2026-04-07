@@ -233,9 +233,8 @@ class PluginStore @Inject constructor(
     override val activeProfileSource: ProfileSource
         get() = getSpecificPluginsListByInterface(ProfileSource::class.java).first() as ProfileSource
 
-    // App may not be initialized yet. Wait before second return
-    override val activeAPS: APS
-        get() = activeAPSStore ?: checkNotNull(activeAPSStore) { "No APS selected" }
+    override val activeAPS: APS?
+        get() = activeAPSStore
 
     override val activePump: PumpWithConcentration
         get() = pumpWithConcentration.get()
@@ -271,11 +270,11 @@ class PluginStore @Inject constructor(
 
     @Suppress("UNCHECKED_CAST")
     override val firstActiveSync: Sync?
-        get() = (getSpecificPluginsList(PluginType.SYNC) as ArrayList<Sync>).firstOrNull { it.connected }
+        get() = (getSpecificPluginsListByInterface(Sync::class.java) as ArrayList<Sync>).firstOrNull { it.connected }
 
     @Suppress("UNCHECKED_CAST")
     override val activeSyncs: ArrayList<Sync>
-        get() = getSpecificPluginsList(PluginType.SYNC) as ArrayList<Sync>
+        get() = getSpecificPluginsListByInterface(Sync::class.java) as ArrayList<Sync>
 
     override fun getPluginsList(): ArrayList<PluginBase> = ArrayList(plugins)
 

@@ -74,9 +74,11 @@ fun SecondaryGraphCompose(
 ) {
     if (seriesTypes.isEmpty()) return
 
-    // Ensure DEVIATIONS is always primary — it requires the column layer which only works for the primary series
+    // Ensure DEVIATIONS/DEV_SLOPE is always primary — DEVIATIONS requires the column layer,
+    // DEV_SLOPE needs primary to render both dsMax and dsMin lines
     val orderedTypes = remember(seriesTypes) {
-        if (seriesTypes.size >= 2 && seriesTypes[0] != SeriesType.DEVIATIONS && seriesTypes[1] == SeriesType.DEVIATIONS)
+        val mustBePrimary = setOf(SeriesType.DEVIATIONS, SeriesType.DEV_SLOPE)
+        if (seriesTypes.size >= 2 && seriesTypes[0] !in mustBePrimary && seriesTypes[1] in mustBePrimary)
             listOf(seriesTypes[1], seriesTypes[0])
         else
             seriesTypes
@@ -519,8 +521,7 @@ fun SecondaryGraphCompose(
     val secondaryAxisLine = remember(secondaryAxisColor) {
         LineCartesianLayer.Line(
             fill = LineCartesianLayer.LineFill.single(Fill(secondaryAxisColor)),
-            areaFill = LineCartesianLayer.AreaFill.single(
-                Fill(Brush.verticalGradient(listOf(secondaryAxisColor.copy(alpha = 0.3f), Color.Transparent)))
+            areaFill = LineCartesianLayer.AreaFill.single(fill = Fill(Color.Transparent)
             )
         )
     }
