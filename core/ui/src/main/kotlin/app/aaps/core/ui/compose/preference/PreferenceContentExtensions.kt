@@ -21,6 +21,7 @@ import app.aaps.core.keys.interfaces.BooleanPreferenceKey
 import app.aaps.core.keys.interfaces.IntPreferenceKey
 import app.aaps.core.keys.interfaces.IntentPreferenceKey
 import app.aaps.core.keys.interfaces.LongPreferenceKey
+import app.aaps.core.keys.interfaces.PreferenceItem
 import app.aaps.core.keys.interfaces.PreferenceKey
 import app.aaps.core.keys.interfaces.PreferenceVisibilityContext
 import kotlinx.coroutines.delay
@@ -76,7 +77,7 @@ fun LazyListScope.addPreferenceSubScreenDef(
  */
 @Composable
 private fun RenderPreferenceItems(
-    items: List<Any>,
+    items: List<PreferenceItem>,
     parentKey: String,
     sectionState: PreferenceSectionState?,
     visibilityContext: PreferenceVisibilityContext?
@@ -113,19 +114,18 @@ private fun RenderPreferenceItems(
                         iconResId = null  // No icon for nested subscreens
                     )
 
-                    // Content without card wrapper
-                    if (isSubExpanded) {
-                        if (item.items.isNotEmpty()) {
-                            val theme = LocalPreferenceTheme.current
-                            Column(
-                                modifier = Modifier.padding(start = theme.nestedContentIndent)
-                            ) {
-                                AdaptivePreferenceList(
-                                    items = item.items,
-                                    visibilityContext = visibilityContext,
-                                    onNavigateToSubScreen = null // Nested subscreens not supported here
-                                )
-                            }
+                    // Content without card wrapper — recurse so nested PreferenceSubScreenDef render
+                    if (isSubExpanded && item.items.isNotEmpty()) {
+                        val theme = LocalPreferenceTheme.current
+                        Column(
+                            modifier = Modifier.padding(start = theme.nestedContentIndent)
+                        ) {
+                            RenderPreferenceItems(
+                                items = item.items,
+                                parentKey = item.key,
+                                sectionState = sectionState,
+                                visibilityContext = visibilityContext
+                            )
                         }
                     }
                 }
