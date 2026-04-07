@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dashboard_aimi_telemetry_label">Couche trajectoire</string>
+    <string name="dashboard_telemetry_inner_ring_summary">L’anneau intérieur fin est un arc télémétrie AIMI : il combine la pertinence de trajectoire, la santé de trajectoire et (si dispo) un indicateur de qualité du lissage capteur. Ce n’est pas un interrupteur « ML oui/non ».</string>
+    <string name="dashboard_glucose_ring_content_description">Glycémie %1$s. %2$s. Anneau extérieur : zone. Triangle : tendance. Arc intérieur : confiance AIMI (pertinence et santé trajectoire).</string>
+</resources>

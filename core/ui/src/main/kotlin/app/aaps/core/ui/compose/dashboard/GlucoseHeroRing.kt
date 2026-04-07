@@ -41,6 +41,7 @@ data class GlucoseHeroUiState(
     val centerTextColorArgb: Int,
     val subTextColorArgb: Int,
     val surfaceColorArgb: Int,
+    /** Inner arc fill (0..1): trajectory relevance + health ± sensor-quality proxy — not a generic “ML %”. */
     val telemetryProgress: Float? = null,
     val telemetryColorArgb: Int? = null,
     val strokeWidthDp: Float = 4f,
@@ -58,8 +59,7 @@ fun GlucoseHeroRing(
     val subTextC = Color(state.subTextColorArgb)
     val noseAngle = state.noseAngleDeg
     val mainStyle = AapsTheme.typography.bgValue.copy(color = centerText)
-    val subLeftStyle = AapsTheme.typography.bgTimeAgo.copy(color = subTextC)
-    val subRightStyle = AapsTheme.typography.bgSecondary.copy(color = subTextC)
+    val subLineStyle = AapsTheme.typography.bgTimeAgo.copy(color = subTextC)
 
     BoxWithConstraints(modifier) {
         val minSidePx = with(density) { minOf(maxWidth, maxHeight).toPx() }
@@ -105,11 +105,15 @@ fun GlucoseHeroRing(
                 }
             }
 
+            val subCombo = listOfNotNull(
+                state.subLeftText.takeIf { it.isNotBlank() },
+                state.subRightText.takeIf { it.isNotBlank() },
+            ).joinToString(" · ")
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .offset(y = (-10).dp),
+                    .offset(y = (-2).dp),
             ) {
                 Text(
                     text = state.mainText,
@@ -117,18 +121,14 @@ fun GlucoseHeroRing(
                     textAlign = TextAlign.Center,
                     maxLines = 1,
                 )
-                Text(
-                    text = state.subLeftText,
-                    style = subLeftStyle.copy(fontSize = subSp),
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                )
-                Text(
-                    text = state.subRightText,
-                    style = subRightStyle.copy(fontSize = subSp),
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                )
+                if (subCombo.isNotEmpty()) {
+                    Text(
+                        text = subCombo,
+                        style = subLineStyle.copy(fontSize = subSp),
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }

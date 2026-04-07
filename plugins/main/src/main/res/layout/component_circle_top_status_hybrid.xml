@@ -17,14 +17,20 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="0dp"
-            android:layout_marginBottom="0dp">
+            android:layout_marginBottom="0dp"
+            android:paddingBottom="4dp"
+            android:minHeight="@dimen/dashboard_glucose_hero_min_side">
 
-            <!-- Glucose hero (Compose + AapsTheme) -->
+            <!-- Glucose hero (Compose + AapsTheme): responsive width, square ratio -->
             <FrameLayout
                 android:id="@+id/glucose_ring_container"
-                android:layout_width="132dp"
-                android:layout_height="132dp"
-                android:elevation="3dp"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:elevation="6dp"
+                app:layout_constraintWidth_percent="0.42"
+                app:layout_constraintWidth_max="@dimen/dashboard_glucose_hero_width_max"
+                app:layout_constraintWidth_min="@dimen/dashboard_glucose_hero_min_side"
+                app:layout_constraintDimensionRatio="1:1"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
@@ -101,7 +107,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginTop="-58dp"
+            android:layout_marginTop="@dimen/dashboard_metrics_row_overlap"
             android:layout_marginBottom="@dimen/dashboard_row_spacing_small">
 
             <!-- LEFT COLUMN -->

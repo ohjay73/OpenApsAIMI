@@ -151,6 +151,11 @@ class CircleTopDashboardView @JvmOverloads constructor(
                     arcProgress = arcP,
                     arcColorArgb = arcC,
                 )
+                binding.glucoseHeroCompose.contentDescription = context.getString(
+                    app.aaps.plugins.main.R.string.dashboard_glucose_ring_content_description,
+                    getProp<String>("glucoseText") ?: "--",
+                    getProp<String>("deltaText") ?: "",
+                )
             }
 
             if (state is StatusCardState) {

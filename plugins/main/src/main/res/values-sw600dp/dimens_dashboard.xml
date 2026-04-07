@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <dimen name="dashboard_graph_height_min">260dp</dimen>
-    <dimen name="dashboard_graph_height_max">420dp</dimen>
+    <!-- Wider tablets: allow a slightly larger hero; less vertical overlap -->
+    <dimen name="dashboard_glucose_hero_width_max">192dp</dimen>
+    <dimen name="dashboard_metrics_row_overlap">-38dp</dimen>
 </resources>
