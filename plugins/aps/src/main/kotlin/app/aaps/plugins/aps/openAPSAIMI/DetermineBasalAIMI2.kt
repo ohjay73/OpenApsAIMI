@@ -56,6 +56,7 @@ import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdLogRow
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdRuntime
 import app.aaps.plugins.aps.openAPSAIMI.ports.PkpdPort
 import app.aaps.plugins.aps.openAPSAIMI.safety.HypoTools
+import app.aaps.plugins.aps.openAPSAIMI.safety.InsulinStackingStance
 import app.aaps.plugins.aps.openAPSAIMI.safety.SafetyDecision
 import app.aaps.plugins.aps.openAPSAIMI.smb.SmbDampingUsecase
 import app.aaps.plugins.aps.openAPSAIMI.smb.SmbInstructionExecutor
@@ -116,7 +117,49 @@ internal data class AimiDecisionContext(
     data class Adjustments(
         var dynamic_isf: DynamicIsf? = null,
         var basal_safety_cap: BasalCap? = null,
-        var physiological_context: PhysioContext? = null
+        var physiological_context: PhysioContext? = null,
+        /** IOB surveillance / anti-stacking snapshot for AIMI_Decisions.jsonl analysis */
+        var iob_surveillance: IobSurveillanceExport? = null
+    )
+
+    /**
+     * One row-friendly snapshot for external analytics (plateau + high IOB + predicted drop).
+     */
+    data class IobSurveillanceExport(
+        val pref_enabled: Boolean,
+        val preference_key: String,
+        val kind: String,
+        val active_reason: String?,
+        val meal_priority_context: Boolean,
+        val bg_mgdl: Double,
+        val target_bg_mgdl: Double,
+        val delta_mgdl_5m: Double,
+        val short_avg_delta_mgdl_5m: Double,
+        val iob_u: Double,
+        val max_iob_u: Double,
+        val iob_floor_u: Double,
+        val eventual_bg: Double?,
+        val min_predicted_bg: Double?,
+        val trajectory_energy: Double?,
+        val signal_eventual_drop: Boolean,
+        val signal_min_pred_drop: Boolean,
+        val signal_trajectory_stack: Boolean,
+        val smb_multiplier: Double,
+        val smb_cap_u: Double,
+        val suppress_red_carpet_restore: Boolean,
+        val tbr_boost_floor: Double,
+        val smb_u_after_pkpd_before_stacking: Double,
+        val smb_u_after_stacking_step: Double,
+        val stacking_reduced_smb: Boolean,
+        val pkpd_tbr_boost_after_finalize: Double,
+        /** SMB after [capSmbDose] (maxSMB / IOB space), before Red Carpet restore. */
+        val smb_u_after_cap_smb_dose: Double,
+        /** Dose written to [RT.units] — aligns with pump / enacted SMB for this path. */
+        val smb_u_final_for_delivery: Double,
+        /** How [smb_u_final_for_delivery] was chosen: standard_safe_cap vs red_carpet. */
+        val smb_final_source: String,
+        val summary_line: String,
+        val tuning_reference: String
     )
     data class DynamicIsf(
         var final_value_mgdl: Double = 0.0,
@@ -170,6 +213,41 @@ internal data class AimiDecisionContext(
                 cJson.put("limit_uph", c.limit_uph)
                 cJson.put("reason", c.safety_reason)
                 adj.put("basal_cap", cJson)
+            }
+            adjustments.iob_surveillance?.let { s ->
+                val sJson = org.json.JSONObject()
+                sJson.put("pref_enabled", s.pref_enabled)
+                sJson.put("preference_key", s.preference_key)
+                sJson.put("kind", s.kind)
+                sJson.put("active_reason", s.active_reason ?: org.json.JSONObject.NULL)
+                sJson.put("meal_priority_context", s.meal_priority_context)
+                sJson.put("bg_mgdl", s.bg_mgdl)
+                sJson.put("target_bg_mgdl", s.target_bg_mgdl)
+                sJson.put("delta_mgdl_5m", s.delta_mgdl_5m)
+                sJson.put("short_avg_delta_mgdl_5m", s.short_avg_delta_mgdl_5m)
+                sJson.put("iob_u", s.iob_u)
+                sJson.put("max_iob_u", s.max_iob_u)
+                sJson.put("iob_floor_u", s.iob_floor_u)
+                sJson.put("eventual_bg", s.eventual_bg ?: org.json.JSONObject.NULL)
+                sJson.put("min_predicted_bg", s.min_predicted_bg ?: org.json.JSONObject.NULL)
+                sJson.put("trajectory_energy", s.trajectory_energy ?: org.json.JSONObject.NULL)
+                sJson.put("signal_eventual_drop", s.signal_eventual_drop)
+                sJson.put("signal_min_pred_drop", s.signal_min_pred_drop)
+                sJson.put("signal_trajectory_stack", s.signal_trajectory_stack)
+                sJson.put("smb_multiplier", s.smb_multiplier)
+                sJson.put("smb_cap_u", s.smb_cap_u)
+                sJson.put("suppress_red_carpet_restore", s.suppress_red_carpet_restore)
+                sJson.put("tbr_boost_floor", s.tbr_boost_floor)
+                sJson.put("smb_u_after_pkpd_before_stacking", s.smb_u_after_pkpd_before_stacking)
+                sJson.put("smb_u_after_stacking_step", s.smb_u_after_stacking_step)
+                sJson.put("stacking_reduced_smb", s.stacking_reduced_smb)
+                sJson.put("pkpd_tbr_boost_after_finalize", s.pkpd_tbr_boost_after_finalize)
+                sJson.put("smb_u_after_cap_smb_dose", s.smb_u_after_cap_smb_dose)
+                sJson.put("smb_u_final_for_delivery", s.smb_u_final_for_delivery)
+                sJson.put("smb_final_source", s.smb_final_source)
+                sJson.put("summary_line", s.summary_line)
+                sJson.put("tuning_reference", s.tuning_reference)
+                adj.put("iob_surveillance", sJson)
             }
             json.put("adjustments", adj)
 
@@ -517,6 +595,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private var lastPredictionSize: Int = 0
     private var lastEventualBgSnapshot: Double = 0.0
     private var lastSmbProposed: Double = 0.0
+    /** Latest IOB surveillance snapshot for JSONL (updated each [finalizeAndCapSMB]). */
+    private var lastIobSurveillanceExport: AimiDecisionContext.IobSurveillanceExport? = null
     private var lastSmbCapped: Double = 0.0
     private var currentThyroidEffects = app.aaps.plugins.aps.openAPSAIMI.physio.thyroid.ThyroidEffects()
     private var lastSmbFinal: Double = 0.0
@@ -1666,6 +1746,16 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val maxSmbLimit: Double
     )
 
+    /** Lowest BG across available prediction traces (conservative for hypo risk). */
+    private fun minPredictedAcrossCurves(rT: RT): Double? {
+        val p = rT.predBGs ?: return null
+        val seriesMins = listOfNotNull(p.IOB, p.COB, p.UAM, p.ZT)
+            .filter { it.isNotEmpty() }
+            .map { row -> row.minOf { it } }
+        if (seriesMins.isEmpty()) return null
+        return seriesMins.minOf { it.toDouble() }.takeIf { it.isFinite() }
+    }
+
     private fun finalizeAndCapSMB(
         rT: RT,
         proposedUnits: Double,
@@ -1702,6 +1792,27 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     "UAM=${"%.2f".format(uamConfidence)} IOB=${"%.2f".format(this.iob)}/${"%.2f".format(this.maxIob)})"
             )
         }
+        val eventualForStacking = when {
+            this.eventualBG > 1.0 -> this.eventualBG
+            rT.eventualBG != null && rT.eventualBG!! > 1.0 -> rT.eventualBG!!
+            else -> null
+        }
+        val stackingEval = InsulinStackingStance.evaluate(
+            bg = this.bg,
+            delta = this.delta.toDouble(),
+            shortAvgDelta = this.shortAvgDelta.toDouble(),
+            targetBg = targetBg.toDouble(),
+            iob = this.iob.toDouble(),
+            maxIob = this.maxIob,
+            eventualBg = eventualForStacking?.takeIf { it.isFinite() },
+            minPredBg = minPredictedAcrossCurves(rT),
+            trajectoryEnergy = rT.trajectoryEnergy,
+            isExplicitUserAction = isExplicitUserAction,
+            enabled = preferences.get(BooleanKey.OApsAIMIIobSurveillanceGuard),
+            mealPriorityContext = mealPriorityContext
+        )
+        var iobSurveillanceSuppressRedCarpet = stackingEval.suppressRedCarpetRestore
+
         var chainBaseLimit = 0.0
         var chainSafetyCapped = 0f
         var chainAfterRefractory = 0f
@@ -1890,6 +2001,29 @@ class DetermineBasalaimiSMB2 @Inject constructor(
          }
         chainAfterThrottle = gatedUnits
 
+        var stackingReducedSmbThisFinalize = false
+        if (stackingEval.kind == InsulinStackingStance.Kind.SURVEILLANCE_IOB) {
+            val beforeSurv = gatedUnits
+            val scaledSurv = (gatedUnits * stackingEval.smbMultiplier.toFloat())
+                .coerceAtMost(stackingEval.smbAbsoluteCapU.toFloat())
+                .coerceAtLeast(0f)
+            gatedUnits = scaledSurv
+            stackingReducedSmbThisFinalize = beforeSurv > gatedUnits + 0.02f
+            pkpdPreferTbrBoost = max(pkpdPreferTbrBoost, stackingEval.tbrBoostFloor)
+            if (beforeSurv > gatedUnits + 0.02f) {
+                consoleLog.add(
+                    "🧭 IOB_SURVEILLANCE SMB ${"%.2f".format(beforeSurv)}→${"%.2f".format(gatedUnits)} | ${stackingEval.summary}"
+                )
+                rT.reason.append(" | ")
+                rT.reason.append(context.getString(R.string.aimi_iob_surveillance_applied))
+                rT.reason.append(" [${stackingEval.summary}]")
+            } else if (beforeSurv > 0.05f) {
+                rT.reason.append(" | ")
+                rT.reason.append(context.getString(R.string.aimi_iob_surveillance_applied))
+                rT.reason.append(" [${stackingEval.summary}]")
+            }
+        }
+
          val safeCap = capSmbDose(
              proposedSmb = gatedUnits, // Use the safety-reduced amount as base
             bg = this.bg,
@@ -1918,7 +2052,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val isRedCarpetSituation = isExplicitUserAction || isMealModeCondition() || isAimiContextMeal || ((isMealChaos || isMealActive) && proposedUnits > 0.5f)
 
         // On entre dans la logique forcée si on est en situation "Red Carpet" et qu'il y a une demande
-        if (isRedCarpetSituation && proposedUnits > 0.0) {
+        if (isRedCarpetSituation && proposedUnits > 0.0 && !iobSurveillanceSuppressRedCarpet) {
             
             // 1. Restauration de la demande
             // Si les sécurités mineures ont coupé plus de 40% du bolus, on restaure la demande initiale.
@@ -2003,7 +2137,58 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             consoleLog.add(chainLine)
             rT.reason.append(" | $chainLine")
         }
+
+        val smbFinalSource =
+            if (isRedCarpetSituation && proposedUnits > 0.0 && !iobSurveillanceSuppressRedCarpet) "red_carpet" else "standard_safe_cap"
+
+        val minPredForExport = minPredictedAcrossCurves(rT)
+        val evExp = eventualForStacking?.takeIf { it.isFinite() }
+        val mnExp = minPredForExport?.takeIf { it.isFinite() }
+        val teExp = rT.trajectoryEnergy
+        val iobFloorExp = InsulinStackingStance.iobFloorU(this.maxIob)
+        lastIobSurveillanceExport = AimiDecisionContext.IobSurveillanceExport(
+            pref_enabled = preferences.get(BooleanKey.OApsAIMIIobSurveillanceGuard),
+            preference_key = BooleanKey.OApsAIMIIobSurveillanceGuard.key,
+            kind = stackingEval.kind.name,
+            active_reason = stackingEval.activeReason,
+            meal_priority_context = mealPriorityContext,
+            bg_mgdl = this.bg,
+            target_bg_mgdl = targetBg.toDouble(),
+            delta_mgdl_5m = this.delta.toDouble(),
+            short_avg_delta_mgdl_5m = this.shortAvgDelta.toDouble(),
+            iob_u = this.iob.toDouble(),
+            max_iob_u = this.maxIob,
+            iob_floor_u = iobFloorExp,
+            eventual_bg = evExp,
+            min_predicted_bg = mnExp,
+            trajectory_energy = teExp?.takeIf { it.isFinite() },
+            signal_eventual_drop = evExp != null && evExp < this.bg - 6.0,
+            signal_min_pred_drop = mnExp != null && mnExp < this.bg - 10.0,
+            signal_trajectory_stack = teExp != null && teExp.isFinite() && teExp > 2.0,
+            smb_multiplier = stackingEval.smbMultiplier,
+            smb_cap_u = stackingEval.smbAbsoluteCapU,
+            suppress_red_carpet_restore = stackingEval.suppressRedCarpetRestore,
+            tbr_boost_floor = stackingEval.tbrBoostFloor,
+            smb_u_after_pkpd_before_stacking = chainAfterThrottle.toDouble(),
+            smb_u_after_stacking_step = gatedUnits.toDouble(),
+            stacking_reduced_smb = stackingReducedSmbThisFinalize,
+            pkpd_tbr_boost_after_finalize = pkpdPreferTbrBoost,
+            smb_u_after_cap_smb_dose = safeCap.toDouble(),
+            smb_u_final_for_delivery = chainFinal,
+            smb_final_source = smbFinalSource,
+            summary_line = when (stackingEval.kind) {
+                InsulinStackingStance.Kind.SURVEILLANCE_IOB -> stackingEval.summary
+                InsulinStackingStance.Kind.CORRECTION_ACTIVE ->
+                    "CORRECTION_ACTIVE reason=${stackingEval.activeReason ?: "default"} meal_priority=$mealPriorityContext " +
+                        "signals(ev=${signalEventualDrop(evExp)} mn=${signalMinPredDrop(mnExp)} traj=${signalTrajectoryStack(teExp)})"
+            },
+            tuning_reference = InsulinStackingStance.tuningReferenceAscii()
+        )
     }
+
+    private fun signalEventualDrop(ev: Double?): Boolean = ev != null && ev < this.bg - 6.0
+    private fun signalMinPredDrop(mn: Double?): Boolean = mn != null && mn < this.bg - 10.0
+    private fun signalTrajectoryStack(te: Double?): Boolean = te != null && te.isFinite() && te > 2.0
 
     /**
      * 🛡️ Sécurité Ultime : Plafonne le SMB final juste avant l'envoi.
@@ -4709,6 +4894,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         applyThyroidModule(profile)
         
         // 🏥 AIMI DECISION CONTEXT INITIALIZATION (For Medical Transparency)
+        lastIobSurveillanceExport = null
         val decisionCtx = AimiDecisionContext(
             event_id = "evt_${currentTime}",
             timestamp = currentTime,
@@ -8211,6 +8397,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 target_basal_uph = finalResult.rate, 
                 narrative_explanation = finalResult.reason.toString().replace("\n", " | ").take(2048) // Headline
             )
+
+            decisionCtx.adjustments.iob_surveillance = lastIobSurveillanceExport
             
             // Log the 'Medical Record'
             val medicalJson = decisionCtx.toMedicalJson()

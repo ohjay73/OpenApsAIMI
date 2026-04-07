@@ -1391,6 +1391,9 @@
     <string name="aimi_t3c_aggressiveness_summary">Scales the intensity of basal adjustments (Default: 1.0)</string>
     <string name="aimi_t3c_anticipation_strength_title">T3C anticipation (predictions)</string>
     <string name="aimi_t3c_anticipation_strength_summary">0 = legacy (local projection only). Increase to blend eventual BG and IOB/COB curve timing into basal (earlier hypo relief and hyper lead). Range 0–1.</string>
+    <string name="aimi_iob_surveillance_guard_title">IOB surveillance (anti-stacking)</string>
+    <string name="aimi_iob_surveillance_guard_summary">When BG is above target with meaningful IOB, the trend is no longer a fast rise (plateau), and predictions point downward, SMB is capped and temp basal is slightly favoured so onboard insulin can act—without blocking sharp rises or strong meal absorption (COB/UAM). Meal-rise bypass: Δ≥2.0 or short-avg≥2.5 mg/dL/5m while meal-priority context is on. Constants: InsulinStackingStance.kt. Analytics: adjustments.iob_surveillance in Documents/AAPS/AIMI_Decisions.jsonl each loop.</string>
+    <string name="aimi_iob_surveillance_applied">IOB surveillance: high active insulin and falling prediction — SMB reduced; prefer TBR. Wait for stacked insulin to work.</string>
     <string name="aimi_t3c_settings_title">T3C Brittle Mode Settings</string>
 
     <string name="oaps_aimi_adaptive_basal_title">Universal Adaptive Basal</string>

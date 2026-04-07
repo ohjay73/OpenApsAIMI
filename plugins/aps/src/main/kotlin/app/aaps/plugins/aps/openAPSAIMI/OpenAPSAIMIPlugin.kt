@@ -1573,6 +1573,14 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                         )
                     )
                     addPreference(
+                        AdaptiveSwitchPreference(
+                            ctx = context,
+                            booleanKey = BooleanKey.OApsAIMIIobSurveillanceGuard,
+                            title = R.string.aimi_iob_surveillance_guard_title,
+                            summary = R.string.aimi_iob_surveillance_guard_summary
+                        )
+                    )
+                    addPreference(
                         AdaptiveDoublePreference(
                             ctx = context,
                             doubleKey = DoubleKey.OApsAIMIPriorityMaxIobFactor,
