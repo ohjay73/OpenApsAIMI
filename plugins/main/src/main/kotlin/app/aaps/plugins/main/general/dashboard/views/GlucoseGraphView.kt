@@ -16,6 +16,11 @@ class GlucoseGraphView @JvmOverloads constructor(
 
     private val binding = ViewGlucoseGraphPlaceholderBinding.inflate(LayoutInflater.from(context), this, true)
 
+    init {
+        isClickable = false
+        isFocusable = false
+    }
+
     val graph: GraphView get() = binding.graphView
     val rangeButton: android.widget.Button get() = binding.graphRangeButton
 

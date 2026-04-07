@@ -254,10 +254,12 @@ class GraphData @Inject constructor(
         graph.gridLabelRenderer.numVerticalLabels = max(3, if (units == GlucoseUnit.MGDL) (maxY / 40 + 1).toInt() else (maxY / 2 + 1).toInt())
     }
 
-    fun formatAxis(fromTime: Long, endTime: Long) {
-        graph.viewport.setMaxX(endTime.toDouble())
-        graph.viewport.setMinX(fromTime.toDouble())
-        graph.viewport.isXAxisBoundsManual = true
+    fun formatAxis(fromTime: Long, endTime: Long, resetX: Boolean = true) {
+        if (resetX) {
+            graph.viewport.setMaxX(endTime.toDouble())
+            graph.viewport.setMinX(fromTime.toDouble())
+            graph.viewport.isXAxisBoundsManual = true
+        }
         graph.gridLabelRenderer.labelFormatter = TimeAsXAxisLabelFormatter("HH")
         graph.gridLabelRenderer.numHorizontalLabels = 7 // only 7 because of the space
     }

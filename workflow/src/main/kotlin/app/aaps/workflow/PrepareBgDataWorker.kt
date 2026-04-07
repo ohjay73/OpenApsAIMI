@@ -80,12 +80,12 @@ class PrepareBgDataWorker(
         }
 
         // ========== MIGRATION: DELETE - Start GraphView-specific code ==========
-        // Process data for OLD GraphView system using OLD time range
+        // Process data for GraphView: full loaded X extent (viewport can pan within it)
         data.overviewData.maxBgValue = Double.MIN_VALUE
         data.overviewData.bgReadingsArray = bgReadingsArray
         val bgListArray: MutableList<DataPointWithLabelInterface> = ArrayList()
         for (bg in bgReadingsArray) {
-            if (bg.timestamp !in fromTimeOld..toTimeOld) continue
+            if (bg.timestamp !in fromTime..toTime) continue
             if (bg.value > data.overviewData.maxBgValue) data.overviewData.maxBgValue = bg.value
             bgListArray.add(GlucoseValueDataPoint(bg, profileUtil, rh, dateUtil))
         }

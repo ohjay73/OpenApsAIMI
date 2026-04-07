@@ -54,9 +54,8 @@ class PrepareBucketedDataWorker(
         val data = dataWorkerStorage.pickupObject(inputData.getLong(DataWorkerStorage.STORE_KEY, -1)) as? PrepareBucketedData?
             ?: return Result.failure(workDataOf("Error" to "missing input data"))
 
-        // MIGRATION: DELETE - Get time range from old OverviewData
         val toTime = data.overviewData.toTime
-        val fromTime = data.overviewData.fromTime
+        val fromTime = overviewGraphDataFromTime(data.overviewData)
         // MIGRATION: KEEP (replace with) - After cleanup, get from new cache:
         // val toTime = overviewDataCache.timeRange?.toTime ?: return Result.failure()
         // val fromTime = overviewDataCache.timeRange?.fromTime ?: return Result.failure()

@@ -59,7 +59,7 @@ class PrepareTreatmentsDataWorker(
             ?: return Result.failure(workDataOf("Error" to "missing input data"))
 
         val endTime = data.overviewData.endTime
-        val fromTime = data.overviewData.fromTime
+        val fromTime = overviewGraphDataFromTime(data.overviewData)
 
         rxBus.send(EventIobCalculationProgress(CalculationWorkflow.ProgressData.PREPARE_TREATMENTS_DATA, 0, false))
 

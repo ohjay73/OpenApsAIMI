@@ -47,7 +47,7 @@ class PrepareTemporaryTargetDataWorker(
         rxBus.send(EventIobCalculationProgress(CalculationWorkflow.ProgressData.PREPARE_TEMPORARY_TARGET_DATA, 0, false))
         val profile = profileFunction.getProfile() ?: return Result.success(workDataOf("Error" to "missing profile"))
         var endTime = data.overviewData.endTime
-        val fromTime = data.overviewData.fromTime
+        val fromTime = overviewGraphDataFromTime(data.overviewData)
         val targetsSeriesArray: MutableList<DataPoint> = ArrayList()
         var lastTarget = -1.0
         loop.lastRun?.constraintsProcessed?.let { endTime = max(it.latestPredictionsTime, endTime) }

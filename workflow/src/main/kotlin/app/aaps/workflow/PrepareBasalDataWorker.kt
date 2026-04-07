@@ -50,7 +50,7 @@ class PrepareBasalDataWorker(
         var lastBaseBasal = 0.0
         var lastTempBasal = 0.0
         val endTime = data.overviewData.endTime
-        val fromTime = data.overviewData.fromTime
+        val fromTime = overviewGraphDataFromTime(data.overviewData)
         var time = fromTime
         while (time < endTime) {
             if (isStopped) return Result.failure(workDataOf("Error" to "stopped"))

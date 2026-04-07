@@ -45,7 +45,7 @@ class PrepareRunningModeDataWorker(
 
         rxBus.send(EventIobCalculationProgress(CalculationWorkflow.ProgressData.PREPARE_RUNNING_MODE_DATA, 0, false))
         var endTime = data.overviewData.endTime
-        val fromTime = data.overviewData.fromTime
+        val fromTime = overviewGraphDataFromTime(data.overviewData)
         val modesSeriesArray: MutableList<RunningModeDataPoint> = ArrayList()
         var lastMode = RM.Mode.RESUME
         var lastModeChange = fromTime

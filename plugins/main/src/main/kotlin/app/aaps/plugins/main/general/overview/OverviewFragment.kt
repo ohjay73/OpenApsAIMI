@@ -15,8 +15,10 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.util.TypedValue
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.View.OnLongClickListener
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -109,6 +111,7 @@ import app.aaps.plugins.main.R
 import app.aaps.plugins.main.databinding.OverviewFragmentBinding
 import app.aaps.plugins.main.databinding.OverviewNotificationItemBinding
 import app.aaps.plugins.main.general.overview.graphData.GraphData
+import app.aaps.plugins.main.general.overview.graphData.viewportShouldFollowLiveRange
 import app.aaps.plugins.main.general.overview.notifications.NotificationUiBinder
 import app.aaps.plugins.main.general.overview.ui.StatusLightHandler
 import app.aaps.plugins.main.skins.SkinProvider
@@ -194,6 +197,8 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
 
     private val secondaryGraphs = ArrayList<GraphView>()
     private val secondaryGraphsLabel = ArrayList<TextView>()
+    private var forceGraphViewportReset = false
+    private var lastGraphFormatRangeHours: Int? = null
 
     private var carbAnimation: AnimationDrawable? = null
     private var lastUserAction = ""
@@ -250,12 +255,15 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
         binding.graphsLayout.bgGraph.gridLabelRenderer?.reloadStyles()
         binding.graphsLayout.bgGraph.gridLabelRenderer?.labelVerticalWidth = axisWidth
         binding.graphsLayout.bgGraph.layoutParams?.height = rh.dpToPx(skinProvider.activeSkin().mainGraphHeight)
+        binding.graphsLayout.bgGraph.viewport.isScrollable = true
+        binding.graphsLayout.bgGraph.viewport.isScalable = true
 
         carbAnimation = binding.infoLayout.carbsIcon.background as AnimationDrawable?
         carbAnimation?.setEnterFadeDuration(1200)
         carbAnimation?.setExitFadeDuration(1200)
 
         binding.graphsLayout.bgGraph.setOnLongClickListener {
+            forceGraphViewportReset = true
             overviewData.rangeToDisplay = when (overviewData.rangeToDisplay) {
                 6    -> 9
                 9    -> 12
@@ -265,6 +273,29 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             }
             preferences.put(IntNonKey.RangeToDisplay, overviewData.rangeToDisplay)
             preferences.put(BooleanNonKey.ObjectivesScaleUsed, true)
+            false
+        }
+        val graphTouchSlop = ViewConfiguration.get(requireContext()).scaledTouchSlop
+        var graphPanStartX = 0f
+        var graphPanStartY = 0f
+        binding.graphsLayout.bgGraph.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    graphPanStartX = event.x
+                    graphPanStartY = event.y
+                    binding.topPartScrollbar.requestDisallowInterceptTouchEvent(false)
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = abs(event.x - graphPanStartX)
+                    val dy = abs(event.y - graphPanStartY)
+                    if (dx > dy + graphTouchSlop) {
+                        binding.topPartScrollbar.requestDisallowInterceptTouchEvent(true)
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    binding.topPartScrollbar.requestDisallowInterceptTouchEvent(false)
+                }
+            }
             false
         }
         prepareGraphsIfNeeded(overviewMenus.setting.size)
@@ -357,6 +388,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             .toObservable(EventScale::class.java)
             .observeOn(aapsSchedulers.main)
             .subscribe({
+                           forceGraphViewportReset = true
                            overviewData.rangeToDisplay = it.hours
                            preferences.put(IntNonKey.RangeToDisplay, it.hours)
                            preferences.put(BooleanNonKey.ObjectivesScaleUsed, true)
@@ -583,6 +615,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
         // Remove listeners and detach series to prevent memory leaks
         _binding?.graphsLayout?.bgGraph?.let { graph ->
             graph.setOnLongClickListener(null)
+            graph.setOnTouchListener(null)
             graph.removeAllSeries()
         }
         for (graph in secondaryGraphs) {
@@ -1443,7 +1476,13 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
 
         // set manual x bounds to have nice steps
         graphData.setNumVerticalLabels()
-        graphData.formatAxis(overviewData.fromTime, overviewData.endTime)
+        val rangeChanged =
+            lastGraphFormatRangeHours != null && lastGraphFormatRangeHours != overviewData.rangeToDisplay
+        lastGraphFormatRangeHours = overviewData.rangeToDisplay
+        val followLive = forceGraphViewportReset || rangeChanged ||
+            viewportShouldFollowLiveRange(binding.graphsLayout.bgGraph, overviewData)
+        forceGraphViewportReset = false
+        graphData.formatAxis(overviewData.fromTime, overviewData.endTime, resetX = followLive)
 
         graphData.performUpdate()
 
@@ -1494,7 +1533,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             if (menuChartSettings[g + 1][OverviewMenus.CharType.STEPS.ordinal]) secondGraphData.addSteps(useSTEPSForScale, if (useSTEPSForScale) 1.0 else 0.8)
 
             // set manual x bounds to have nice steps
-            secondGraphData.formatAxis(overviewData.fromTime, overviewData.endTime)
+            secondGraphData.formatAxis(overviewData.fromTime, overviewData.endTime, resetX = followLive)
             secondGraphData.addNowLine(now)
             secondaryGraphsData.add(secondGraphData)
         }

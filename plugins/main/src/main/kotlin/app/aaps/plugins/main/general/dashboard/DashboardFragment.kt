@@ -5,9 +5,12 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import androidx.annotation.RequiresApi
+import androidx.core.widget.NestedScrollView
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.lifecycleScope
 import app.aaps.core.interfaces.automation.Automation
@@ -49,8 +52,8 @@ import app.aaps.plugins.main.databinding.FragmentDashboardBinding
 import app.aaps.plugins.main.general.dashboard.viewmodel.AdjustmentCardState
 import app.aaps.plugins.main.general.dashboard.viewmodel.OverviewViewModel
 import app.aaps.plugins.main.general.overview.graphData.GraphData
+import app.aaps.plugins.main.general.overview.graphData.viewportShouldFollowLiveRange
 import app.aaps.plugins.main.general.overview.notifications.NotificationUiBinder
-import androidx.core.widget.NestedScrollView
 import androidx.recyclerview.widget.LinearLayoutManager
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
@@ -105,6 +108,8 @@ class DashboardFragment : DaggerFragment() {
     private var currentRange = 0
     private var auditorIndicator: AuditorStatusIndicator? = null
     private var graphViewportLayoutListener: View.OnLayoutChangeListener? = null
+    private var forceGraphViewportReset = false
+    private var lastGraphFormatRangeHours: Int? = null
     private fun sensor(): Boolean {
         val ctx = context ?: return false
 
@@ -308,9 +313,29 @@ class DashboardFragment : DaggerFragment() {
             }
         })
 
+        val scrollParent = binding.root.getChildAt(0) as? NestedScrollView
+        val touchSlop = ViewConfiguration.get(requireContext()).scaledTouchSlop
+        var panStartX = 0f
+        var panStartY = 0f
         binding.glucoseGraph.graph.setOnTouchListener { v, event ->
             gestureDetector.onTouchEvent(event)
-            v.parent.requestDisallowInterceptTouchEvent(true)
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    panStartX = event.x
+                    panStartY = event.y
+                    scrollParent?.requestDisallowInterceptTouchEvent(false)
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = kotlin.math.abs(event.x - panStartX)
+                    val dy = kotlin.math.abs(event.y - panStartY)
+                    if (dx > dy + touchSlop) {
+                        scrollParent?.requestDisallowInterceptTouchEvent(true)
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    scrollParent?.requestDisallowInterceptTouchEvent(false)
+                }
+            }
             false
         }
 
@@ -568,6 +593,7 @@ class DashboardFragment : DaggerFragment() {
         binding.glucoseGraph.rangeButton.text = overviewMenus.scaleString(clampedHours)
         preferences.put(IntNonKey.RangeToDisplay, clampedHours)
         preferences.put(BooleanNonKey.ObjectivesScaleUsed, true)
+        forceGraphViewportReset = true
         rxBus.send(EventPreferenceChange(IntNonKey.RangeToDisplay.key))
         if (userInitiated) {
             app.aaps.core.ui.toast.ToastUtils.infoToast(context, getString(R.string.graph_range_updated, clampedHours))
@@ -604,7 +630,13 @@ class DashboardFragment : DaggerFragment() {
         graphData.addRunningModes()
         graphData.addNowLine(now)
         graphData.setNumVerticalLabels()
-        graphData.formatAxis(overviewData.fromTime, overviewData.endTime)
+        val rangeChanged =
+            lastGraphFormatRangeHours != null && lastGraphFormatRangeHours != overviewData.rangeToDisplay
+        lastGraphFormatRangeHours = overviewData.rangeToDisplay
+        val followLive = forceGraphViewportReset || rangeChanged ||
+            viewportShouldFollowLiveRange(binding.glucoseGraph.graph, overviewData)
+        forceGraphViewportReset = false
+        graphData.formatAxis(overviewData.fromTime, overviewData.endTime, resetX = followLive)
         graphData.performUpdate()
     }
 
