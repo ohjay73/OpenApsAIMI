@@ -4,7 +4,7 @@ import android.content.Context
 import android.graphics.DashPathEffect
 import android.graphics.Paint
 import app.aaps.core.data.model.GlucoseUnit
-import app.aaps.core.graph.data.AreaGraphSeries
+import app.aaps.core.graph.data.ViewportClampedInRangeAreaSeries
 import app.aaps.core.graph.data.BarGraphSeries
 import app.aaps.core.graph.data.BolusDataPoint
 import app.aaps.core.graph.data.DataPointWithLabelInterface
@@ -68,15 +68,18 @@ class GraphData @Inject constructor(
     }
 
     fun addInRangeArea(fromTime: Long, toTime: Long, lowLine: Double, highLine: Double) {
-        val inRangeAreaDataPoints = arrayOf(
-            DoubleDataPoint(fromTime.toDouble(), lowLine, highLine),
-            DoubleDataPoint(toTime.toDouble(), lowLine, highLine)
+        addSeries(
+            ViewportClampedInRangeAreaSeries(
+                rangeStartMs = fromTime.toDouble(),
+                rangeEndMs = toTime.toDouble(),
+                lowLine = lowLine,
+                highLine = highLine,
+            ).also {
+                it.color = 0
+                it.isDrawBackground = true
+                it.backgroundColor = rh.gac(graph.context, app.aaps.core.ui.R.attr.inRangeBackground)
+            }
         )
-        addSeries(AreaGraphSeries(inRangeAreaDataPoints).also {
-            it.color = 0
-            it.isDrawBackground = true
-            it.backgroundColor = rh.gac(graph.context, app.aaps.core.ui.R.attr.inRangeBackground)
-        })
     }
 
     fun addBasals() {

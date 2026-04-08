@@ -33,7 +33,8 @@ import com.jjoe64.graphview.series.BaseSeries
  *
  * @author jjoe64
  */
-@Suppress("unused") class AreaGraphSeries<E : DoubleDataPoint?> : BaseSeries<E>, SeriesData {
+@Suppress("unused")
+open class AreaGraphSeries<E : DoubleDataPoint?> : BaseSeries<E>, SeriesData {
 
     /**
      * wrapped styles regarding the line
