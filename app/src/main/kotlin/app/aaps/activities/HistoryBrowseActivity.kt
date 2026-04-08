@@ -309,7 +309,6 @@ class HistoryBrowseActivity : TranslatedDaggerAppCompatActivity() {
         val graphData = graphDataProvider.get().with(binding.bgGraph, historyBrowserData.overviewData)
         val menuChartSettings = overviewMenus.setting
         graphData.addInRangeArea(
-            historyBrowserData.overviewData.fromTime, historyBrowserData.overviewData.endTime,
             preferences.get(UnitDoubleKey.OverviewLowMark),
             preferences.get(UnitDoubleKey.OverviewHighMark)
         )

@@ -615,8 +615,6 @@ class DashboardFragment : DaggerFragment() {
         }
 
         graphData.addInRangeArea(
-            overviewData.fromTime,
-            overviewData.endTime,
             preferences.get(UnitDoubleKey.OverviewLowMark),
             preferences.get(UnitDoubleKey.OverviewHighMark)
         )

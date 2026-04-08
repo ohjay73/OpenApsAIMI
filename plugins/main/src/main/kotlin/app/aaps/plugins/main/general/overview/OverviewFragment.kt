@@ -1403,7 +1403,6 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
         val menuChartSettings = overviewMenus.setting
         if (menuChartSettings.isEmpty()) return
         graphData.addInRangeArea(
-            overviewData.fromTime, overviewData.endTime,
             preferences.get(UnitDoubleKey.OverviewLowMark),
             preferences.get(UnitDoubleKey.OverviewHighMark)
         )

@@ -67,11 +67,9 @@ class GraphData @Inject constructor(
         }
     }
 
-    fun addInRangeArea(fromTime: Long, toTime: Long, lowLine: Double, highLine: Double) {
+    fun addInRangeArea(lowLine: Double, highLine: Double) {
         addSeries(
             ViewportClampedInRangeAreaSeries(
-                rangeStartMs = fromTime.toDouble(),
-                rangeEndMs = toTime.toDouble(),
                 lowLine = lowLine,
                 highLine = highLine,
             ).also {
