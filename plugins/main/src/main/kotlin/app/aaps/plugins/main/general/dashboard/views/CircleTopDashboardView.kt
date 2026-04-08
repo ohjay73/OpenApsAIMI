@@ -219,7 +219,7 @@ class CircleTopDashboardView @JvmOverloads constructor(
         binding.dashboardCompactSteps.text = state.stepsText ?: "--"
         binding.dashboardCompactIob.text = state.lastSensorValueText ?: "--"
         binding.dashboardCompactHr.text = state.hrText ?: "--"
-        binding.dashboardCompactBasal.text = state.basalText ?: "--"
+        binding.dashboardCompactBasal.text = state.tbrRateText ?: "--"
     }
 
     /**

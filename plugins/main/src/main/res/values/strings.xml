@@ -149,13 +149,13 @@
     <string name="overview_show_hybrid_aimi_pulse_title">Show last AIMI run on dashboard</string>
     <string name="overview_show_hybrid_aimi_pulse_summary">When enabled, shows the summary card under the glucose ring (last loop, SMB, etc.). Off by default to leave more room for the graph.</string>
     <string name="overview_dashboard_extended_metrics_title">Dashboard: extended metrics</string>
-    <string name="overview_dashboard_extended_metrics_summary">Full two-column stats and AIMI trajectory strip. Off = compact row (steps, IOB, heart rate, basal).</string>
+    <string name="overview_dashboard_extended_metrics_summary">Full two-column stats and AIMI trajectory strip. Off = compact row (steps, IOB, heart rate, TBR).</string>
     <string name="dashboard_metrics_mode_simple">Simple</string>
     <string name="dashboard_metrics_mode_extended">Étendu</string>
     <string name="dashboard_compact_label_steps">Pas</string>
     <string name="dashboard_compact_label_iob">IOB</string>
     <string name="dashboard_compact_label_hr">FC</string>
-    <string name="dashboard_compact_label_basal">Basal</string>
+    <string name="dashboard_compact_label_tbr">TBR</string>
     <string name="show_calibration_button_summary">Sends a calibration to xDrip+ (ensure \'Accept Calibrations\' is enabled in xDrip+ under Inter-App settings).</string>
     <string name="show_cgm_button_summary">Opens xDrip+ or Dexcom App (you can use back button to return to AAPS).</string>
     <string name="not_available_full">Not available</string>

@@ -324,8 +324,10 @@ class OverviewViewModel(
             decimalFormatter.to2Decimal(currentBasal) + " IE"
         }
         
+        val activeTempBasal = processedTbrEbData.getTempBasalIncludingConvertedExtended(dateUtil.now())?.takeIf { it.isInProgress }
+
         // 6. Activity % — delta vs scheduled basal during an active TBR (not the same framing as the "% of profile" on the TBR line).
-        val activityPctText = processedTbrEbData.getTempBasalIncludingConvertedExtended(dateUtil.now())?.takeIf { it.isInProgress }?.let { tbr ->
+        val activityPctText = activeTempBasal?.let { tbr ->
             profileFunction.getProfile()?.let { profile ->
                 val currentBasal = profile.getBasal(dateUtil.now())
                 if (currentBasal > 0) {
@@ -350,7 +352,7 @@ class OverviewViewModel(
             decimalFormatter.to2Decimal(bolusForSensorLine.iob + basalForSensorLine.basaliob) + " IE"
         
         // 9. TBR Rate (Combined U/h and %)
-        val tbrRateText = processedTbrEbData.getTempBasalIncludingConvertedExtended(dateUtil.now())?.takeIf { it.isInProgress }?.let { tbr ->
+        val tbrRateText = activeTempBasal?.let { tbr ->
             val rateUh = decimalFormatter.to2Decimal(tbr.rate) + " U/h"
             val pctStr = profileFunction.getProfile()?.let { profile ->
                 val currentBasal = profile.getBasal(dateUtil.now())

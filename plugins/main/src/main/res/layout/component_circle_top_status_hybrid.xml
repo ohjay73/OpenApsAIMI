@@ -277,7 +277,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="@string/dashboard_compact_label_basal"
+                        android:text="@string/dashboard_compact_label_tbr"
                         android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel" />
 
                     <TextView
