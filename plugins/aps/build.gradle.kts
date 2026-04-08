@@ -19,7 +19,11 @@ dependencies {
     implementation(project(":core:nssdk"))
     implementation(project(":core:objects"))
     implementation(project(":core:utils"))
+    implementation(project(":core:graph"))
     implementation(project(":core:ui"))
+
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    debugImplementation(libs.androidx.compose.ui.tooling)
     implementation(project(":core:validators"))
     // Align core + GPU on the same version so AndroidManifest namespace is not duplicated (2.3 GPU + 2.4 core).
     implementation("org.tensorflow:tensorflow-lite:2.4.0")
@@ -35,8 +39,6 @@ dependencies {
     testImplementation(project(":shared:tests"))
 
     api(libs.androidx.appcompat)
-    api(libs.androidx.swiperefreshlayout)
-    api(libs.androidx.gridlayout)
     api(kotlin("reflect"))
 
     // APS (it should be androidTestImplementation but it doesn't work)
