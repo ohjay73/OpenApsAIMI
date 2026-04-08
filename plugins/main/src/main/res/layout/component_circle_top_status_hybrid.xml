@@ -23,20 +23,27 @@
             android:clipToPadding="false"
             android:minHeight="@dimen/dashboard_glucose_hero_min_side">
 
-            <!-- Glucose hero (Compose + AapsTheme): responsive width, square ratio -->
+            <androidx.constraintlayout.widget.Guideline
+                android:id="@+id/dashboard_hero_split_guideline"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                app:layout_constraintGuide_percent="0.42" />
+
+            <!-- Glucose hero (Compose): left column, square; frees space for status stack on the right -->
             <FrameLayout
                 android:id="@+id/glucose_ring_container"
                 android:layout_width="0dp"
                 android:layout_height="0dp"
+                android:layout_marginEnd="@dimen/dashboard_hero_ring_margin_end"
                 android:clipChildren="false"
                 android:clipToPadding="false"
                 android:elevation="6dp"
-                app:layout_constraintWidth_percent="0.42"
                 app:layout_constraintWidth_max="@dimen/dashboard_glucose_hero_width_max"
                 app:layout_constraintWidth_min="@dimen/dashboard_glucose_hero_min_side"
                 app:layout_constraintDimensionRatio="1:1"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintEnd_toStartOf="@id/dashboard_hero_split_guideline"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintBottom_toBottomOf="parent">
 
@@ -46,7 +53,7 @@
                     android:layout_height="match_parent" />
             </FrameLayout>
 
-            <!-- Context Badge (Top-Left of Circle, like × on photo) -->
+            <!-- Context Badge (on ring) -->
             <ImageView
                 android:id="@+id/aimi_context_indicator"
                 android:layout_width="28dp"
@@ -61,7 +68,7 @@
                 android:layout_marginStart="8dp"
                 android:layout_marginTop="8dp" />
 
-            <!-- Auditor Badge (Top-Right of Circle, like × on photo) -->
+            <!-- Auditor Badge (on ring) -->
             <FrameLayout
                 android:id="@+id/aimi_auditor_indicator_container"
                 android:layout_width="28dp"
@@ -72,35 +79,73 @@
                 android:layout_marginEnd="8dp"
                 android:layout_marginTop="8dp" />
 
-            <!-- Loop Status (Top-Right, outside circle) -->
+            <!-- Right column: loop + IOB + reading / sensor (overview-style density) -->
             <LinearLayout
-                android:id="@+id/loop_status_container"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
+                android:id="@+id/dashboard_hero_status_column"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_marginStart="@dimen/dashboard_hero_status_column_margin_start"
                 android:gravity="center_vertical"
+                android:orientation="vertical"
+                app:layout_constraintStart_toStartOf="@id/dashboard_hero_split_guideline"
+                app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintEnd_toEndOf="parent">
+                app:layout_constraintBottom_toBottomOf="parent">
 
-                <TextView
-                    android:id="@+id/loop_status"
+                <!-- MaterialButton (style chip) : évite crash d’inflation / thème fréquent avec Chip dans un <merge> custom view. -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/loop_status_chip"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginEnd="6dp"
-                    android:alpha="0.7"
+                    android:minHeight="40dp"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="12dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
                     android:text="@string/closed_loop"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
                     android:textColor="@color/dashboard_on_surface"
-                    android:textSize="12sp" />
+                    android:maxLines="2"
+                    android:ellipsize="end"
+                    app:cornerRadius="18dp"
+                    app:backgroundTint="@color/dashboard_chip_background"
+                    app:strokeWidth="2dp"
+                    app:strokeColor="@color/dashboard_card_stroke"
+                    app:icon="@drawable/dashboard_loop_chip_dot"
+                    app:iconGravity="textStart"
+                    app:iconPadding="8dp"
+                    app:iconSize="14dp"
+                    app:iconTint="@color/dashboard_metric_info"
+                    tools:text="Boucle fermée" />
 
-                <View
-                    android:id="@+id/loop_indicator"
-                    android:layout_width="12dp"
-                    android:layout_height="12dp"
-                    android:background="@drawable/dashboard_loop_indicator" />
+                <TextView
+                    android:id="@+id/dashboard_hero_status_iob"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/dashboard_row_spacing_small"
+                    android:textAppearance="@style/TextAppearance.AAPS.Dashboard.PrimaryLine"
+                    android:textColor="@color/dashboard_on_surface"
+                    android:textSize="13sp"
+                    android:maxLines="2"
+                    android:ellipsize="end"
+                    tools:text="IOB: 1,32 IE" />
+
+                <TextView
+                    android:id="@+id/dashboard_hero_status_meta"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel"
+                    android:textColor="@color/dashboard_on_surface_muted"
+                    android:textSize="11sp"
+                    android:alpha="0.85"
+                    android:lineSpacingMultiplier="1.12"
+                    android:maxLines="4"
+                    android:ellipsize="end"
+                    tools:text="Lecture · Il y a 3 min\nCapteur · 8d 5h" />
             </LinearLayout>
-
-
-
 
         </androidx.constraintlayout.widget.ConstraintLayout>
 
@@ -267,6 +312,16 @@
                 android:orientation="vertical"
                 android:layout_marginEnd="6dp">
 
+                <TextView
+                    android:id="@+id/dashboard_extended_section_left_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="4dp"
+                    android:text="@string/dashboard_extended_section_left"
+                    android:textAllCaps="true"
+                    android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel"
+                    android:letterSpacing="0.06" />
+
                 <!-- STEPS (First Item) -->
                 <LinearLayout
                     android:layout_width="wrap_content"
@@ -398,6 +453,17 @@
                 android:orientation="vertical"
                 android:gravity="end"
                 android:layout_marginStart="6dp">
+
+                <TextView
+                    android:id="@+id/dashboard_extended_section_right_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="4dp"
+                    android:gravity="end"
+                    android:text="@string/dashboard_extended_section_right"
+                    android:textAllCaps="true"
+                    android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel"
+                    android:letterSpacing="0.06" />
 
                 <!-- HEART RATE (First Item) -->
                 <LinearLayout

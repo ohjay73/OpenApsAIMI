@@ -1,6 +1,7 @@
 package app.aaps.plugins.main.general.dashboard.views
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.HapticFeedbackConstants
@@ -152,9 +153,23 @@ class CircleTopDashboardView @JvmOverloads constructor(
         binding.dashboardMetricsCompactScroll.isVisible = !extended
         binding.aimiInsightsContainer.isVisible = extended
         binding.aimiTelemetrySectionLabel.isVisible = extended
+        binding.dashboardHeroStatusIob.isVisible = extended
         if (!extended) {
             binding.aimiMlConfidenceStrip.isGone = true
         }
+    }
+
+    private fun applyLoopStatusChip(loopIsRunning: Boolean) {
+        val btn = binding.loopStatusChip
+        val bg = ContextCompat.getColor(context, app.aaps.plugins.main.R.color.dashboard_chip_background)
+        val strokeOk = ContextCompat.getColor(context, app.aaps.core.ui.R.color.glucose_ring_step1)
+        val strokeWarn = ContextCompat.getColor(context, app.aaps.plugins.main.R.color.dashboard_metric_attention)
+        val iconOk = ContextCompat.getColor(context, app.aaps.plugins.main.R.color.dashboard_metric_info)
+        val iconWarn = ContextCompat.getColor(context, app.aaps.plugins.main.R.color.dashboard_metric_attention)
+        btn.backgroundTintList = ColorStateList.valueOf(bg)
+        btn.strokeColor = ColorStateList.valueOf(if (loopIsRunning) strokeOk else strokeWarn)
+        btn.iconTint = ColorStateList.valueOf(if (loopIsRunning) iconOk else iconWarn)
+        btn.alpha = if (loopIsRunning) 1f else 0.92f
     }
 
     /**
@@ -373,10 +388,52 @@ class CircleTopDashboardView @JvmOverloads constructor(
             updateBar(binding.tirVeryHighBar, binding.tirVeryHighLabel, vh)
 
             // ═══════════════════════════════════════════════════════════════
-            // 5. Loop Status & New Metrics (Steps/HR)
+            // 5. Loop chip + hero column (IOB si étendu, lecture / capteur)
             // ═══════════════════════════════════════════════════════════════
-            binding.loopStatus.text = getProp<String>("loopStatusText")
+            val loopLabel = getProp<String>("loopStatusText")
                 ?: context.getString(app.aaps.plugins.main.R.string.closed_loop)
+            binding.loopStatusChip.text = loopLabel
+            binding.loopStatusChip.contentDescription = loopLabel
+            val loopRunning =
+                if (state is StatusCardState) state.loopIsRunning
+                else getProp<Boolean>("loopIsRunning") ?: true
+            applyLoopStatusChip(loopRunning)
+
+            val extendedMetrics =
+                dashboardPreferences?.get(BooleanKey.OverviewDashboardExtendedMetrics) == true
+            binding.dashboardHeroStatusIob.isVisible = extendedMetrics
+            if (extendedMetrics) {
+                val iobLine =
+                    if (state is StatusCardState) state.iobText else getProp<String>("iobText")
+                binding.dashboardHeroStatusIob.text =
+                    iobLine?.trim().takeUnless { it.isNullOrEmpty() } ?: "—"
+            }
+
+            // Prefer human-readable age (minAgoLong), not minAgoShort "(-2)" delta convention.
+            val readingAgeHuman =
+                if (state is StatusCardState) state.timeAgoDescription
+                else getProp<String>("timeAgoDescription")
+            val sensorAge =
+                if (state is StatusCardState) state.sensorAgeText else getProp<String>("sensorAgeText")
+            val readingPart = readingAgeHuman?.trim().orEmpty().ifBlank { "—" }
+            binding.dashboardHeroStatusMeta.text = buildString {
+                append(
+                    context.getString(
+                        app.aaps.plugins.main.R.string.dashboard_hero_status_reading_line,
+                        readingPart,
+                    ),
+                )
+                val s = sensorAge?.trim().orEmpty()
+                if (s.isNotEmpty()) {
+                    append('\n')
+                    append(
+                        context.getString(
+                            app.aaps.plugins.main.R.string.dashboard_hero_status_sensor_line,
+                            s,
+                        ),
+                    )
+                }
+            }
             
             // Steps & HR
             binding.stepsText.text = getProp<String>("stepsText") ?: "--"
@@ -472,8 +529,8 @@ class CircleTopDashboardView @JvmOverloads constructor(
     /** Get AIMI Context indicator (visibility controlled by DashboardFragment) */
     fun getContextIndicator(): View = binding.aimiContextIndicator
     
-    /** Get Loop indicator (icon updated by DashboardFragment) */
-    fun getLoopIndicator(): View = binding.loopIndicator
+    /** Cible tactile pour ouvrir le dialog boucle ([DashboardFragment]). */
+    fun getLoopIndicator(): View = binding.loopStatusChip
 
     /**
      * Blended telemetry arc progress (0..1): relevance, health, or sensor-quality proxy when APS data sparse.

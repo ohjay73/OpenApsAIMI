@@ -261,6 +261,10 @@
     <string name="dashboard_aimi_ml_sensor_uncertain">uncertain</string>
     <string name="dashboard_aimi_ml_sensor_low">low</string>
     <string name="dashboard_activity_tbr_basal_delivery_stopped">Basal off (TBR 0 U/h)</string>
+    <string name="dashboard_hero_status_reading_line">Reading · %1$s</string>
+    <string name="dashboard_hero_status_sensor_line">Sensor · %1$s</string>
+    <string name="dashboard_extended_section_left">Activity &amp; stock</string>
+    <string name="dashboard_extended_section_right">Insulin &amp; delivery</string>
     <string name="dashboard_cd_aimi_pulse">Last AIMI loop summary. Double tap to open full details.</string>
     <string name="dashboard_chip_announced_aimi_pulse_details">Loop details opened</string>
     <string name="closed_loop">Closed Loop</string>

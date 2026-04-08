@@ -25,6 +25,8 @@
     <!-- Glucose hero: see layout_constraintWidth_percent on container; cap avoids huge circle on tablets -->
     <dimen name="dashboard_glucose_hero_width_max">168dp</dimen>
     <dimen name="dashboard_glucose_hero_min_side">122dp</dimen>
+    <dimen name="dashboard_hero_ring_margin_end">4dp</dimen>
+    <dimen name="dashboard_hero_status_column_margin_start">6dp</dimen>
     <!-- Extra inset so the TIR block reads as a card inside the hero, not edge-to-edge -->
     <dimen name="dashboard_tir_horizontal_inset">10dp</dimen>
     <dimen name="dashboard_compact_metric_min_width">76dp</dimen>

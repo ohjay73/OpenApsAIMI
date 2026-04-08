@@ -63,4 +63,5 @@
         <item name="android:checkable">true</item>
         <item name="checkedIconVisible">false</item>
     </style>
+
 </resources>

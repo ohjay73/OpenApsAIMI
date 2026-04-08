@@ -20,4 +20,8 @@
     <string name="dashboard_aimi_ml_sensor_uncertain">incertain</string>
     <string name="dashboard_aimi_ml_sensor_low">faible</string>
     <string name="dashboard_activity_tbr_basal_delivery_stopped">Basal arrêté (TBR 0 U/h)</string>
+    <string name="dashboard_hero_status_reading_line">Lecture · %1$s</string>
+    <string name="dashboard_hero_status_sensor_line">Capteur · %1$s</string>
+    <string name="dashboard_extended_section_left">Activité &amp; réserves</string>
+    <string name="dashboard_extended_section_right">Insuline &amp; débits</string>
 </resources>
