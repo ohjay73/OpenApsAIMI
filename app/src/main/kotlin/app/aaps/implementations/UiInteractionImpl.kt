@@ -20,8 +20,6 @@ import app.aaps.core.objects.extensions.toJson
 import app.aaps.plugins.configuration.activities.SingleFragmentActivity
 import app.aaps.ui.activities.ErrorActivity
 import app.aaps.ui.activities.ProfileViewerActivity
-import app.aaps.ui.activities.QuickWizardListActivity
-import app.aaps.ui.activities.TDDStatsActivity
 import app.aaps.ui.dialogs.AlertDialogs
 import app.aaps.ui.dialogs.CalibrationDialog
 import app.aaps.ui.dialogs.CarbsDialog
@@ -31,11 +29,9 @@ import app.aaps.ui.dialogs.FillDialog
 import app.aaps.ui.dialogs.InsulinDialog
 import app.aaps.ui.dialogs.LoopDialog
 import app.aaps.ui.dialogs.ProfileSwitchDialog
-import app.aaps.ui.dialogs.SiteRotationDialog
 import app.aaps.ui.dialogs.TempBasalDialog
 import app.aaps.ui.dialogs.TempTargetDialog
 import app.aaps.ui.dialogs.TreatmentDialog
-import app.aaps.ui.dialogs.WizardDialog
 import app.aaps.ui.services.AlarmSoundService
 import app.aaps.ui.services.AlarmSoundServiceHelper
 import app.aaps.ui.widget.Widget
@@ -63,7 +59,6 @@ class UiInteractionImpl @Inject constructor(
     override val singleFragmentActivity: Class<*> = SingleFragmentActivity::class.java
     override val preferencesActivity: Class<*> = PreferencesActivity::class.java
     override val myPreferenceFragment: Class<*> = MyPreferenceFragment::class.java
-    override val quickWizardListActivity: Class<*> = QuickWizardListActivity::class.java
 
     override val unitsEntries = arrayOf<CharSequence>("mg/dL", "mmol/L")
     override val unitsValues = arrayOf<CharSequence>("mg/dl", "mmol")
@@ -79,16 +74,6 @@ class UiInteractionImpl @Inject constructor(
 
     override fun updateWidget(context: Context, from: String) {
         Widget.updateWidget(context, from)
-    }
-
-    override fun runWizardDialog(fragmentManager: FragmentManager, carbs: Int?, name: String?) {
-        WizardDialog().also { dialog ->
-            dialog.arguments = Bundle().also { bundle ->
-                carbs?.let { bundle.putDouble("carbs_input", carbs.toDouble()) }
-                name?.let { bundle.putString("notes_input", " $name - ${carbs}g") }
-            }
-        }.show(fragmentManager, "Food Item")
-
     }
 
     override fun runLoopDialog(fragmentManager: FragmentManager, showOkCancel: Int) {
@@ -146,11 +131,6 @@ class UiInteractionImpl @Inject constructor(
     override fun runFillDialog(fragmentManager: FragmentManager) {
         FillDialog(fragmentManager)
             .show(fragmentManager, "FillDialog")
-    }
-
-    override fun runSiteRotationDialog(fragmentManager: FragmentManager) {
-        SiteRotationDialog()
-            .show(fragmentManager, "SiteRotationDialog")
     }
 
     override fun runProfileViewerActivity(context: Context, time: Long, mode: UiInteraction.Mode, customProfile: String?, customProfileName: String?, customProfile2: String?) {
