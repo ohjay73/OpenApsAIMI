@@ -107,7 +107,7 @@ fun GlucoseHeroRing(
             }
 
             // Same vertical order as [app.aaps.ui.compose.overview.BgInfoSection]: delta on top, BG, time below.
-            // Hybrid dashboard pulls the metrics row up (dashboard_metrics_row_overlap); putting delta under the
+            // Hybrid dashboard places metrics below the mode toggle with normal spacing; putting delta under the
             // big number left it in the obscured band — moving it above matches Overview and keeps it visible.
             val liftTime = with(density) { (ringRadius * 0.07f).toDp().coerceAtLeast(10.dp) }
             val deltaStyle = AapsTheme.typography.bgSecondary.copy(color = centerText)

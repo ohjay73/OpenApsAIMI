@@ -324,14 +324,18 @@ class OverviewViewModel(
             decimalFormatter.to2Decimal(currentBasal) + " IE"
         }
         
-        // 6. Activity % - simplified (TBR percentage)
+        // 6. Activity % — delta vs scheduled basal during an active TBR (not the same framing as the "% of profile" on the TBR line).
         val activityPctText = processedTbrEbData.getTempBasalIncludingConvertedExtended(dateUtil.now())?.takeIf { it.isInProgress }?.let { tbr ->
             profileFunction.getProfile()?.let { profile ->
                 val currentBasal = profile.getBasal(dateUtil.now())
                 if (currentBasal > 0) {
-                    val pct = ((tbr.rate / currentBasal) * 100 - 100).toInt()
-                    val sign = if (pct >= 0) "+" else ""
-                    "$sign$pct%"
+                    if (tbr.rate <= 1e-4) {
+                        resourceHelper.gs(R.string.dashboard_activity_tbr_basal_delivery_stopped)
+                    } else {
+                        val pct = ((tbr.rate / currentBasal) * 100 - 100).toInt()
+                        val sign = if (pct >= 0) "+" else ""
+                        "$sign$pct%"
+                    }
                 } else "0%"
             } ?: "0%"
         } ?: "0%"

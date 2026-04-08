@@ -105,13 +105,157 @@
         </androidx.constraintlayout.widget.ConstraintLayout>
 
         <!-- ═══════════════════════════════════════════════════ -->
-        <!-- METRICS ROW: Left Column + Right Column             -->
+        <!-- Metrics display mode + compact row / extended grid -->
+        <!-- ═══════════════════════════════════════════════════ -->
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/dashboard_metrics_mode_toggle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="0dp"
+            android:layout_marginBottom="@dimen/dashboard_row_spacing_small"
+            android:elevation="2dp"
+            app:singleSelection="true"
+            app:selectionRequired="true">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_dashboard_metrics_simple"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:minHeight="40dp"
+                android:text="@string/dashboard_metrics_mode_simple"
+                android:textSize="12sp"
+                app:cornerRadius="14dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_dashboard_metrics_extended"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:minHeight="40dp"
+                android:text="@string/dashboard_metrics_mode_extended"
+                android:textSize="12sp"
+                app:cornerRadius="14dp" />
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <HorizontalScrollView
+            android:id="@+id/dashboard_metrics_compact_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="0dp"
+            android:scrollbars="none"
+            android:overScrollMode="never">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="@dimen/dashboard_compact_metric_min_width"
+                    android:orientation="vertical"
+                    android:paddingEnd="@dimen/dashboard_chip_spacing"
+                    android:gravity="center_horizontal">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/dashboard_compact_label_steps"
+                        android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel" />
+
+                    <TextView
+                        android:id="@+id/dashboard_compact_steps"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="--"
+                        android:textAppearance="@style/TextAppearance.AAPS.Dashboard.PrimaryLine"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="@dimen/dashboard_compact_metric_min_width"
+                    android:orientation="vertical"
+                    android:paddingEnd="@dimen/dashboard_chip_spacing"
+                    android:gravity="center_horizontal">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/dashboard_compact_label_iob"
+                        android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel" />
+
+                    <TextView
+                        android:id="@+id/dashboard_compact_iob"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="--"
+                        android:textAppearance="@style/TextAppearance.AAPS.Dashboard.PrimaryLine"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="@dimen/dashboard_compact_metric_min_width"
+                    android:orientation="vertical"
+                    android:paddingEnd="@dimen/dashboard_chip_spacing"
+                    android:gravity="center_horizontal">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/dashboard_compact_label_hr"
+                        android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel" />
+
+                    <TextView
+                        android:id="@+id/dashboard_compact_hr"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="--"
+                        android:textAppearance="@style/TextAppearance.AAPS.Dashboard.PrimaryLine"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="@dimen/dashboard_compact_metric_min_width"
+                    android:orientation="vertical"
+                    android:gravity="center_horizontal">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/dashboard_compact_label_basal"
+                        android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel" />
+
+                    <TextView
+                        android:id="@+id/dashboard_compact_basal"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="--"
+                        android:textAppearance="@style/TextAppearance.AAPS.Dashboard.PrimaryLine"
+                        android:textSize="14sp" />
+                </LinearLayout>
+            </LinearLayout>
+        </HorizontalScrollView>
+
+        <!-- ═══════════════════════════════════════════════════ -->
+        <!-- METRICS ROW: Left Column + Right Column (Étendu)   -->
         <!-- ═══════════════════════════════════════════════════ -->
         <LinearLayout
+            android:id="@+id/dashboard_metrics_extended_container"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginTop="@dimen/dashboard_metrics_row_overlap"
+            android:visibility="gone"
+            android:layout_marginTop="0dp"
             android:layout_marginBottom="@dimen/dashboard_row_spacing_small">
 
             <!-- LEFT COLUMN -->
@@ -458,6 +602,7 @@
         </LinearLayout>
 
         <TextView
+            android:id="@+id/aimi_telemetry_section_label"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/dashboard_row_spacing_small"
@@ -553,14 +698,25 @@
         </LinearLayout>
 
         <!-- ═══════════════════════════════════════════════════ -->
-        <!-- TIR BAR (24H)                                       -->
+        <!-- TIR BAR (24H) — inset card                           -->
         <!-- ═══════════════════════════════════════════════════ -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/dashboard_tir_horizontal_inset"
+            android:layout_marginEnd="@dimen/dashboard_tir_horizontal_inset"
+            android:layout_marginTop="@dimen/dashboard_section_spacing"
+            android:layout_marginBottom="6dp"
+            app:cardElevation="0dp"
+            app:strokeWidth="1dp"
+            app:strokeColor="@color/dashboard_card_stroke"
+            app:cardBackgroundColor="@color/dashboard_card_background"
+            app:contentPadding="@dimen/dashboard_row_spacing_medium">
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:layout_marginTop="@dimen/dashboard_section_spacing"
-            android:layout_marginBottom="6dp">
+            android:orientation="vertical">
             
             <LinearLayout
                 android:layout_width="match_parent"
@@ -636,6 +792,7 @@
                 <TextView android:id="@+id/tir_very_high_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="0.05" android:text="" android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel" android:textColor="@color/dashboard_tir_very_low" android:gravity="end"/>
             </LinearLayout>
         </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
 
         <!-- ═══════════════════════════════════════════════════ -->
         <!-- BOTTOM ROW: quick actions (Compose, même 4 entrées) -->

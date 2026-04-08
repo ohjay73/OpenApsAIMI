@@ -42,6 +42,7 @@ import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.interfaces.utils.TrendCalculator
 import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
+import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.BooleanNonKey
 import app.aaps.core.keys.IntNonKey
 import app.aaps.core.keys.UnitDoubleKey
@@ -363,6 +364,7 @@ class DashboardFragment : DaggerFragment() {
     override fun onResume() {
         super.onResume()
         updateContextBadge()
+        binding.statusCard.syncDashboardMetricsModeFromPreferences()
         viewModel.start()
         notificationUiBinder.bind(
             overviewBus = activePlugin.activeOverview.overviewBus,
@@ -378,6 +380,9 @@ class DashboardFragment : DaggerFragment() {
                 }
                 if (event.isChanged(app.aaps.core.keys.StringKey.OApsAIMIContextStorage.key)) {
                     updateContextBadge()
+                }
+                if (event.isChanged(BooleanKey.OverviewDashboardExtendedMetrics.key)) {
+                    binding.statusCard.syncDashboardMetricsModeFromPreferences()
                 }
             }, fabricPrivacy::logException)
     }

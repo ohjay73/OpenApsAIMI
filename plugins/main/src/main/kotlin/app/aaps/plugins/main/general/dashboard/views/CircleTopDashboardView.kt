@@ -17,8 +17,9 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.content.ContextCompat
 import androidx.core.view.isGone
-import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualityTier
+import androidx.core.view.isVisible
 import app.aaps.core.keys.BooleanKey
+import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualityTier
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.LocalPreferences
@@ -76,6 +77,9 @@ class CircleTopDashboardView @JvmOverloads constructor(
 
     private var dashboardPreferences: Preferences? = null
 
+    private var suppressDashboardMetricsModeCallback: Boolean = false
+    private var metricsModeToggleListenerInstalled: Boolean = false
+
     /**
      * Wire les [ComposeView] du hero glucose et de la barre d’actions + [AapsTheme] ([LocalPreferences]).
      * À appeler une fois depuis [androidx.fragment.app.Fragment.onViewCreated], avant [setActionListener].
@@ -110,6 +114,97 @@ class CircleTopDashboardView @JvmOverloads constructor(
                 }
             }
         }
+        installDashboardMetricsModeToggle()
+    }
+
+    /**
+     * Reconcile chip + visibilité avec les préférences (ex. changement depuis l’écran Paramètres).
+     */
+    fun syncDashboardMetricsModeFromPreferences() {
+        val prefs = dashboardPreferences ?: return
+        val extended = prefs.get(BooleanKey.OverviewDashboardExtendedMetrics)
+        suppressDashboardMetricsModeCallback = true
+        val checkedId =
+            if (extended) app.aaps.plugins.main.R.id.btn_dashboard_metrics_extended
+            else app.aaps.plugins.main.R.id.btn_dashboard_metrics_simple
+        binding.dashboardMetricsModeToggle.check(checkedId)
+        suppressDashboardMetricsModeCallback = false
+        applyDashboardMetricsMode(extended)
+    }
+
+    private fun installDashboardMetricsModeToggle() {
+        val prefs = dashboardPreferences ?: return
+        if (!metricsModeToggleListenerInstalled) {
+            metricsModeToggleListenerInstalled = true
+            binding.dashboardMetricsModeToggle.addOnButtonCheckedListener { _, checkedId, isChecked ->
+                if (!isChecked || checkedId == View.NO_ID) return@addOnButtonCheckedListener
+                if (suppressDashboardMetricsModeCallback) return@addOnButtonCheckedListener
+                val extended = checkedId == app.aaps.plugins.main.R.id.btn_dashboard_metrics_extended
+                prefs.put(BooleanKey.OverviewDashboardExtendedMetrics, extended)
+                applyDashboardMetricsMode(extended)
+            }
+        }
+        syncDashboardMetricsModeFromPreferences()
+    }
+
+    private fun applyDashboardMetricsMode(extended: Boolean) {
+        binding.dashboardMetricsExtendedContainer.isVisible = extended
+        binding.dashboardMetricsCompactScroll.isVisible = !extended
+        binding.aimiInsightsContainer.isVisible = extended
+        binding.aimiTelemetrySectionLabel.isVisible = extended
+        if (!extended) {
+            binding.aimiMlConfidenceStrip.isGone = true
+        }
+    }
+
+    /**
+     * Text strip under trajectory insights: sensor tier (if any) + relevance + health. Shown only in extended metrics mode.
+     */
+    private fun updateAimiMlConfidenceStrip(state: StatusCardState) {
+        val extended = dashboardPreferences?.get(BooleanKey.OverviewDashboardExtendedMetrics) == true
+        if (!extended) {
+            binding.aimiMlConfidenceStrip.isGone = true
+            return
+        }
+        val sep = context.getString(app.aaps.plugins.main.R.string.dashboard_aimi_ml_strip_separator)
+        val parts = mutableListOf<String>()
+        state.adaptiveSmoothingQualityTier?.let { tier ->
+            val wordRes = when (tier) {
+                AdaptiveSmoothingQualityTier.OK -> app.aaps.plugins.main.R.string.dashboard_aimi_ml_sensor_ok
+                AdaptiveSmoothingQualityTier.UNCERTAIN -> app.aaps.plugins.main.R.string.dashboard_aimi_ml_sensor_uncertain
+                AdaptiveSmoothingQualityTier.BAD -> app.aaps.plugins.main.R.string.dashboard_aimi_ml_sensor_low
+            }
+            parts.add(
+                context.getString(
+                    app.aaps.plugins.main.R.string.dashboard_aimi_ml_strip_part_sensor,
+                    context.getString(wordRes),
+                ),
+            )
+        }
+        val rel = state.trajectoryRelevanceScore ?: 0.0
+        val relPct = when {
+            rel in 0.0..1.0 -> (rel * 100.0).toInt().coerceIn(0, 100)
+            rel > 1.0 -> rel.toInt().coerceIn(0, 100)
+            else -> 0
+        }
+        parts.add(
+            context.getString(app.aaps.plugins.main.R.string.dashboard_aimi_ml_strip_relevance, relPct),
+        )
+        val health = (state.aimiHealthScore ?: 0.0).coerceIn(0.0, 1.0)
+        val healthPct = (health * 100.0).toInt().coerceIn(0, 100)
+        parts.add(
+            context.getString(app.aaps.plugins.main.R.string.dashboard_aimi_ml_strip_health, healthPct),
+        )
+        val detail = parts.joinToString(separator = sep)
+        binding.aimiMlConfidenceDetail.text = detail
+        binding.aimiMlConfidenceStrip.isGone = detail.isBlank()
+    }
+
+    private fun updateCompactMetricChips(state: StatusCardState) {
+        binding.dashboardCompactSteps.text = state.stepsText ?: "--"
+        binding.dashboardCompactIob.text = state.lastSensorValueText ?: "--"
+        binding.dashboardCompactHr.text = state.hrText ?: "--"
+        binding.dashboardCompactBasal.text = state.basalText ?: "--"
     }
 
     /**
@@ -139,6 +234,7 @@ class CircleTopDashboardView @JvmOverloads constructor(
             // ═══════════════════════════════════════════════════════════════
             // Use [StatusCardState] fields directly so delta/time/angles are never dropped by reflection.
             if (state is StatusCardState) {
+                updateCompactMetricChips(state)
                 state.glucoseMgdl?.let { bgMgdl ->
                     val arcP = telemetryArcProgress(state)
                     val arcC = arcP?.let { telemetryArcColor(it) }
@@ -161,8 +257,11 @@ class CircleTopDashboardView @JvmOverloads constructor(
                 }
             }
 
-            // "Signaux AIMI" strip hidden to save vertical space; tier + trajectory info remains on the hero arc and chips.
-            binding.aimiMlConfidenceStrip.isGone = true
+            if (state is StatusCardState) {
+                updateAimiMlConfidenceStrip(state)
+            } else {
+                binding.aimiMlConfidenceStrip.isGone = true
+            }
 
             // ═══════════════════════════════════════════════════════════════
             // 2. Left Column Metrics

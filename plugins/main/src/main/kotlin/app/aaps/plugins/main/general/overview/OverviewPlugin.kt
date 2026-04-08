@@ -206,6 +206,7 @@ class OverviewPlugin @Inject constructor(
             initialExpandedChildrenCount = 0
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.OverviewUseDashboardLayout, summary = R.string.overview_use_dashboard_summary, title = R.string.overview_use_dashboard_title))
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.OverviewShowHybridDashboardAimiPulse, summary = R.string.overview_show_hybrid_aimi_pulse_summary, title = R.string.overview_show_hybrid_aimi_pulse_title))
+            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.OverviewDashboardExtendedMetrics, summary = R.string.overview_dashboard_extended_metrics_summary, title = R.string.overview_dashboard_extended_metrics_title))
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.OverviewKeepScreenOn, summary = app.aaps.core.keys.R.string.pref_summary_keep_screen_on, title = app.aaps.core.keys.R.string.pref_title_keep_screen_on))
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key = "overview_buttons_settings"
