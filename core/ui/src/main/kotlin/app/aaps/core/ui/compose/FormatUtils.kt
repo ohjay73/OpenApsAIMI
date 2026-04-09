@@ -70,7 +70,7 @@ fun formatSliderDisplayValue(
     return when {
         isMinutesUnit                  -> formatMinutesAsDuration(value.roundToInt())
 
-        valueFormatResId != null       -> {
+        valueFormatResId != null && valueFormatResId != 0 -> {
             if (formatAsInt) stringResource(valueFormatResId, value.roundToInt())
             else stringResource(valueFormatResId, value)
         }

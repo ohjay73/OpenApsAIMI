@@ -116,7 +116,7 @@ fun AdaptivePreferenceItem(
                     entries = entries,
                     visibilityContext = visibilityContext
                 )
-            } else if (emptyMessageResId != null) {
+            } else if (emptyMessageResId != null && emptyMessageResId != 0) {
                 // Show disabled preference with empty message
                 Preference(
                     title = { Text(preferenceDisplayTitle(key.titleResId, key.key)) },
@@ -209,7 +209,7 @@ fun AdaptivePreferenceItem(
             val resolvedCompose = key.composeScreen as? ComposeScreenContent
             val onNavigateToCompose = LocalNavigateToCompose.current
             val resolvedActivity = key.runtimeActivityClass ?: intentActivityClass ?: key.activityClass
-            val resolvedUrl = key.runtimeUrl ?: intentUrl ?: key.urlResId?.let { stringResource(it) }
+            val resolvedUrl = key.runtimeUrl ?: intentUrl ?: key.urlResId?.takeIf { it != 0 }?.let { stringResource(it) }
 
             when {
                 resolvedClick != null                                   -> {

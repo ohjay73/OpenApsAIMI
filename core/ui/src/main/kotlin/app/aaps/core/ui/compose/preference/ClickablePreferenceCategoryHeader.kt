@@ -71,7 +71,7 @@ internal fun ClickablePreferenceCategoryHeader(
     )
 
     // Build summary text from list of resource IDs — resolve each string in composable context
-    val resolvedSummaries = summaryItems.map { stringResource(it) }
+    val resolvedSummaries = summaryItems.filter { it != 0 }.map { stringResource(it) }
     val summaryText = if (resolvedSummaries.isNotEmpty()) {
         resolvedSummaries.joinToString(", ")
     } else null
@@ -116,7 +116,7 @@ internal fun ClickablePreferenceCategoryHeader(
             }
             Column(modifier = Modifier.weight(1f)) {
                 ProvideTextStyle(value = theme.categoryTextStyle) {
-                    Text(text = stringResource(titleResId))
+                    Text(text = if (titleResId != 0) stringResource(titleResId) else "")
                 }
                 // Show summary when collapsed
                 if (!expanded && summaryText != null) {

@@ -79,7 +79,7 @@ fun AdaptiveDoublePreferenceItem(
 
     // Get unit label from UnitType (for dialog input suffix)
     val unitLabelResId = unitType.unitLabelResId()
-    val unitLabel = unitLabelResId?.let { stringResource(it) } ?: unit
+    val unitLabel = unitLabelResId?.takeIf { it != 0 }?.let { stringResource(it) } ?: unit
 
     val valueFormat = when (decimalPlaces) {
         0    -> DecimalFormat("0")
@@ -134,7 +134,7 @@ fun AdaptiveDoublePreferenceItem(
     } else {
         // For unspecified ranges, use text field with range summary
         val rangeFormatResId = unitType.rangeResId()
-        val summaryText = if (rangeFormatResId != null) {
+        val summaryText = if (rangeFormatResId != null && rangeFormatResId != 0) {
             stringResource(rangeFormatResId, value, doubleKey.min, doubleKey.max)
         } else {
             stringResource(R.string.preference_range_summary, valueFormat.format(value), unitLabel, valueFormat.format(doubleKey.min), valueFormat.format(doubleKey.max))

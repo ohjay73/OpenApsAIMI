@@ -95,7 +95,7 @@ private fun PreferenceSubScreenDrillDownRow(
     modifier: Modifier = Modifier,
 ) {
     val theme = LocalPreferenceTheme.current
-    val resolvedSummaries = summaryItems.map { stringResource(it) }
+    val resolvedSummaries = summaryItems.filter { it != 0 }.map { stringResource(it) }
     val summaryText = if (resolvedSummaries.isNotEmpty()) {
         resolvedSummaries.joinToString(", ")
     } else {
@@ -110,7 +110,7 @@ private fun PreferenceSubScreenDrillDownRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = stringResource(titleResId),
+                text = if (titleResId != 0) stringResource(titleResId) else "",
                 style = theme.categoryTextStyle,
                 color = theme.categoryColor
             )
