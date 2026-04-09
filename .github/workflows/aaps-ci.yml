@@ -4,41 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       tagName:
-        description: 'Select AAPS Version'
+        description: >-
+          Nom exact du tag sur github.com/nightscout/AndroidAPS (ex. 3.4.2.1, 4.0.0.0).
+          Le tag doit exister en upstream ; le JDK est choisi via .github/jdk-map.json selon le préfixe (3.x, 4.x, …).
         required: true
         default: '3.4.2.1'
-        type: choice
-        options:
-          # ── 3.4.x (JDK 21) ──────────────────────────────
-          - 3.4.2.1
-          - 3.4.2.0
-          - 3.4.1.0
-          - 3.4.0.0
-          # ── 3.3.x (JDK 21) ──────────────────────────────
-          - 3.3.2.1
-          - 3.3.2.0
-          - 3.3.1.3
-          # ── 3.2.x (JDK 17) ──────────────────────────────
-          - 3.2.0.4
-          - 3.2.0.3
-          - 3.2.0.2
-          - 3.2.0.1
-          - 3.2.0.0
-          # ── 3.1.x (JDK 17) ──────────────────────────────
-          - 3.1.0.3
-          - 3.1.0.2
-          - 3.1.0.1
-          - 3.1.0
-          # ── 3.0.x (JDK 11) ──────────────────────────────
-          - 3.0.0.2
-          - 3.0.0.1
-          - 3.0.0
-          # ── 2.x (build not supported) ────────────────────
-          # ⚠️  2.x versions depend on packages such as
-          #     com.google.android:flexbox that were only published
-          #     on JCenter. JCenter shut down in 2022 and these
-          #     dependencies can no longer be resolved, causing
-          #     the build to fail.
+        type: string
       buildVariant:
         description: 'Select Build Variant'
         required: true
