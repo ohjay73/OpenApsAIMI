@@ -6,7 +6,8 @@
     <dimen name="dashboard_block_spacing">8dp</dimen>
     <!-- Slightly tighter horizontal inset so the hero card uses more of the screen width. -->
     <dimen name="dashboard_content_padding">14dp</dimen>
-    <dimen name="dashboard_scroll_padding_horizontal">4dp</dimen>
+    <!-- Single horizontal gutter for scroll; card inner padding handles insets (avoids double inset). -->
+    <dimen name="dashboard_scroll_padding_horizontal">0dp</dimen>
     <dimen name="dashboard_scroll_padding_vertical">6dp</dimen>
     <dimen name="dashboard_hero_bottom_inset">6dp</dimen>
     <dimen name="dashboard_notification_padding">10dp</dimen>
@@ -15,7 +16,9 @@
     <dimen name="dashboard_graph_height">320dp</dimen>
     <dimen name="dashboard_graph_height_min">176dp</dimen>
     <dimen name="dashboard_graph_height_max">340dp</dimen>
-    <dimen name="dashboard_card_inner_padding">10dp</dimen>
+    <!-- Split so hero content can use more width without shrinking vertical breathing room. -->
+    <dimen name="dashboard_card_inner_padding_horizontal">6dp</dimen>
+    <dimen name="dashboard_card_inner_padding_vertical">10dp</dimen>
     <dimen name="dashboard_section_spacing">6dp</dimen>
     <dimen name="dashboard_row_spacing_small">4dp</dimen>
     <dimen name="dashboard_row_spacing_medium">6dp</dimen>

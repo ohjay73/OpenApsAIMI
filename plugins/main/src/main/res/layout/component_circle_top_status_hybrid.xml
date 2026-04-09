@@ -8,7 +8,10 @@
         android:layout_height="wrap_content"
         android:background="@android:color/transparent"
         android:orientation="vertical"
-        android:padding="@dimen/dashboard_card_inner_padding">
+        android:paddingStart="@dimen/dashboard_card_inner_padding_horizontal"
+        android:paddingEnd="@dimen/dashboard_card_inner_padding_horizontal"
+        android:paddingTop="@dimen/dashboard_card_inner_padding_vertical"
+        android:paddingBottom="@dimen/dashboard_card_inner_padding_vertical">
 
         <!-- ═══════════════════════════════════════════════════ -->
         <!-- TOP SECTION: Circle + Badges + Trend               -->

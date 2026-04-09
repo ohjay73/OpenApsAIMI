@@ -57,8 +57,8 @@
                     <View
                         android:layout_width="match_parent"
                         android:layout_height="1dp"
-                        android:layout_marginStart="@dimen/dashboard_card_inner_padding"
-                        android:layout_marginEnd="@dimen/dashboard_card_inner_padding"
+                        android:layout_marginStart="@dimen/dashboard_card_inner_padding_horizontal"
+                        android:layout_marginEnd="@dimen/dashboard_card_inner_padding_horizontal"
                         android:background="@color/dashboard_card_stroke" />
 
                     <app.aaps.plugins.main.general.dashboard.views.GlucoseGraphView
