@@ -125,10 +125,8 @@ class CircleTopDashboardView @JvmOverloads constructor(
         val prefs = dashboardPreferences ?: return
         val extended = prefs.get(BooleanKey.OverviewDashboardExtendedMetrics)
         suppressDashboardMetricsModeCallback = true
-        val checkedId =
-            if (extended) app.aaps.plugins.main.R.id.btn_dashboard_metrics_extended
-            else app.aaps.plugins.main.R.id.btn_dashboard_metrics_simple
-        binding.dashboardMetricsModeToggle.check(checkedId)
+        binding.btnDashboardMetricsSimple.isChecked = !extended
+        binding.btnDashboardMetricsExtended.isChecked = extended
         suppressDashboardMetricsModeCallback = false
         applyDashboardMetricsMode(extended)
     }
@@ -137,15 +135,42 @@ class CircleTopDashboardView @JvmOverloads constructor(
         val prefs = dashboardPreferences ?: return
         if (!metricsModeToggleListenerInstalled) {
             metricsModeToggleListenerInstalled = true
-            binding.dashboardMetricsModeToggle.addOnButtonCheckedListener { _, checkedId, isChecked ->
-                if (!isChecked || checkedId == View.NO_ID) return@addOnButtonCheckedListener
-                if (suppressDashboardMetricsModeCallback) return@addOnButtonCheckedListener
-                val extended = checkedId == app.aaps.plugins.main.R.id.btn_dashboard_metrics_extended
-                prefs.put(BooleanKey.OverviewDashboardExtendedMetrics, extended)
-                applyDashboardMetricsMode(extended)
+            binding.btnDashboardMetricsSimple.setOnClickListener {
+                if (suppressDashboardMetricsModeCallback) return@setOnClickListener
+                if (!prefs.get(BooleanKey.OverviewDashboardExtendedMetrics)) {
+                    suppressDashboardMetricsModeCallback = true
+                    binding.btnDashboardMetricsSimple.isChecked = true
+                    binding.btnDashboardMetricsExtended.isChecked = false
+                    suppressDashboardMetricsModeCallback = false
+                    return@setOnClickListener
+                }
+                applyDashboardMetricsModeFromUserSelection(prefs, extended = false)
+            }
+            binding.btnDashboardMetricsExtended.setOnClickListener {
+                if (suppressDashboardMetricsModeCallback) return@setOnClickListener
+                if (prefs.get(BooleanKey.OverviewDashboardExtendedMetrics)) {
+                    suppressDashboardMetricsModeCallback = true
+                    binding.btnDashboardMetricsSimple.isChecked = false
+                    binding.btnDashboardMetricsExtended.isChecked = true
+                    suppressDashboardMetricsModeCallback = false
+                    return@setOnClickListener
+                }
+                applyDashboardMetricsModeFromUserSelection(prefs, extended = true)
             }
         }
         syncDashboardMetricsModeFromPreferences()
+    }
+
+    private fun applyDashboardMetricsModeFromUserSelection(
+        prefs: Preferences,
+        extended: Boolean,
+    ) {
+        suppressDashboardMetricsModeCallback = true
+        binding.btnDashboardMetricsSimple.isChecked = !extended
+        binding.btnDashboardMetricsExtended.isChecked = extended
+        suppressDashboardMetricsModeCallback = false
+        prefs.put(BooleanKey.OverviewDashboardExtendedMetrics, extended)
+        applyDashboardMetricsMode(extended)
     }
 
     private fun applyDashboardMetricsMode(extended: Boolean) {

@@ -152,15 +152,17 @@
         <!-- ═══════════════════════════════════════════════════ -->
         <!-- Metrics display mode + compact row / extended grid -->
         <!-- ═══════════════════════════════════════════════════ -->
-        <com.google.android.material.button.MaterialButtonToggleGroup
+        <!-- LinearLayout à la place de MaterialButtonToggleGroup : évite crash d’inflation
+             (ChipGroup.LayoutParams / layout_width) observé avec certaines combinaisons SDK + Material 1.13. -->
+        <LinearLayout
             android:id="@+id/dashboard_metrics_mode_toggle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="0dp"
             android:layout_marginBottom="@dimen/dashboard_row_spacing_small"
             android:elevation="2dp"
-            app:singleSelection="true"
-            app:selectionRequired="true">
+            android:orientation="horizontal"
+            android:baselineAligned="false">
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btn_dashboard_metrics_simple"
@@ -169,6 +171,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:minHeight="40dp"
+                android:checkable="true"
                 android:text="@string/dashboard_metrics_mode_simple"
                 android:textSize="12sp"
                 app:cornerRadius="14dp" />
@@ -180,10 +183,11 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:minHeight="40dp"
+                android:checkable="true"
                 android:text="@string/dashboard_metrics_mode_extended"
                 android:textSize="12sp"
                 app:cornerRadius="14dp" />
-        </com.google.android.material.button.MaterialButtonToggleGroup>
+        </LinearLayout>
 
         <HorizontalScrollView
             android:id="@+id/dashboard_metrics_compact_scroll"
