@@ -3,11 +3,20 @@ name: AAPS CI
 on:
   workflow_dispatch:
     inputs:
+      source:
+        description: >-
+          fork = compiler ce dépôt (la branche choisie dans « Use workflow from ») — OpenApsAIMI / AIMI inclus.
+          upstream_tag = clone strict nightscout/AndroidAPS au tag ci-dessous (sans tes commits).
+        required: true
+        default: 'fork'
+        type: choice
+        options:
+          - fork
+          - upstream_tag
       tagName:
         description: >-
-          Nom exact du tag sur github.com/nightscout/AndroidAPS (ex. 3.4.2.1).
-          Vérifier https://github.com/nightscout/AndroidAPS/tags — une valeur par défaut inexistante fait échouer fetch.
-          Le JDK est choisi via .github/jdk-map.json selon le préfixe (3.x, 4.x, …).
+          upstream_tag uniquement : tag exact sur github.com/nightscout/AndroidAPS (ex. 3.4.2.1).
+          En mode fork cette valeur est ignorée pour le checkout ; le JDK suit Versions.kt + jdk-map.json.
         required: true
         default: '3.4.2.1'
         type: string
@@ -156,22 +165,21 @@ jobs:
           echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
           echo "✅ Access token obtained."
 
-      - name: Checkout source code at tag
+      - name: Checkout repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Fetch selected tag from upstream
+      - name: Determine JVM version (jdk-map.json)
         run: |
-          git remote add upstream https://github.com/nightscout/AndroidAPS.git || true
-          git fetch upstream refs/tags/${{ github.event.inputs.tagName }}:refs/tags/${{ github.event.inputs.tagName }}
-          echo "✅ Tag ${{ github.event.inputs.tagName }} fetched from upstream."
-
-      - name: Determine JVM version from tag
-        run: |
-          # jdk-map.json must be read before switching to the upstream tag,
-          # as the upstream tag does not contain this file.
-          TAG="${{ github.event.inputs.tagName }}"
+          if [ "${{ github.event.inputs.source }}" = "upstream_tag" ]; then
+            TAG="${{ github.event.inputs.tagName }}"
+            echo "ℹ️ Upstream release: JDK mapping from input tag → $TAG"
+          else
+            APP_VER=$(grep 'val appVersion' buildSrc/src/main/kotlin/Versions.kt | awk -F '"' '{print $2}')
+            TAG="${APP_VER%%-*}"
+            echo "ℹ️ Fork build: JDK mapping from Versions.kt base → $TAG (full appVersion=$APP_VER)"
+          fi
           JAVA_VERSION=$(jq -r '.default' .github/jdk-map.json)
           while IFS=$'\t' read -r pattern jdk; do
             if [[ "$TAG" == $pattern ]]; then
@@ -180,12 +188,15 @@ jobs:
             fi
           done < <(jq -r '.mappings[] | "\(.pattern)\t\(.jdk)"' .github/jdk-map.json)
           echo "JAVA_VERSION=$JAVA_VERSION" >> $GITHUB_ENV
-          echo "ℹ️ Tag $TAG → JDK $JAVA_VERSION (from jdk-map.json)"
+          echo "ℹ️ Pattern match on '$TAG' → JDK $JAVA_VERSION (jdk-map.json)"
 
-      - name: Switch to selected tag
+      - name: Fetch and use upstream release tag
+        if: github.event.inputs.source == 'upstream_tag'
         run: |
+          git remote add upstream https://github.com/nightscout/AndroidAPS.git || true
+          git fetch upstream refs/tags/${{ github.event.inputs.tagName }}:refs/tags/${{ github.event.inputs.tagName }}
           git checkout refs/tags/${{ github.event.inputs.tagName }}
-          echo "✅ Checked out tag ${{ github.event.inputs.tagName }}"
+          echo "✅ Checked out upstream tag ${{ github.event.inputs.tagName }}"
 
       - name: Set BUILD_VARIANT
         run: |
