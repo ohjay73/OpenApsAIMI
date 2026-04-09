@@ -289,12 +289,12 @@ sealed class ProfileSealed(
     override fun getBasal(): Double = basalBlocks.blockValueBySeconds(MidnightUtils.secondsFromMidnight(), percentage / 100.0, timeshift)
     override fun getBasal(timestamp: Long): Double = basalBlocks.blockValueBySeconds(MidnightUtils.secondsFromMidnight(timestamp), percentage / 100.0, timeshift)
     override fun getIc(): Double =
-        if (aps?.supportsDynamicIc() ?: error("APS not defined"))
+        if (aps != null && aps.supportsDynamicIc())
             aps.getIc(this) ?: icBlocks.blockValueBySeconds(MidnightUtils.secondsFromMidnight(), 100.0 / percentage, timeshift)
         else icBlocks.blockValueBySeconds(MidnightUtils.secondsFromMidnight(), 100.0 / percentage, timeshift)
 
     override fun getIc(timestamp: Long): Double =
-        if (aps?.supportsDynamicIc() ?: error("APS not defined"))
+        if (aps != null && aps.supportsDynamicIc())
             aps.getIc(timestamp, this) ?: icBlocks.blockValueBySeconds(MidnightUtils.secondsFromMidnight(timestamp), 100.0 / percentage, timeshift)
         else icBlocks.blockValueBySeconds(MidnightUtils.secondsFromMidnight(timestamp), 100.0 / percentage, timeshift)
 
@@ -302,7 +302,7 @@ sealed class ProfileSealed(
         toMgdl(isfBlocks.blockValueBySeconds(MidnightUtils.secondsFromMidnight(), 100.0 / percentage, timeshift), units)
 
     override fun getIsfMgdl(caller: String): Double =
-        if (aps?.supportsDynamicIsf() ?: error("APS not defined"))
+        if (aps != null && aps.supportsDynamicIsf())
             aps.getIsfMgdl(this, caller) ?: toMgdl(isfBlocks.blockValueBySeconds(MidnightUtils.secondsFromMidnight(), 100.0 / percentage, timeshift), units)
         else getProfileIsfMgdl()
 
@@ -310,7 +310,7 @@ sealed class ProfileSealed(
         if (config.AAPSCLIENT) {
             processedDeviceStatusData.getAPSResult()?.isfMgdlForCarbs ?: toMgdl(isfBlocks.blockValueBySeconds(MidnightUtils.secondsFromMidnight(timestamp), 100.0 / percentage, timeshift), units)
         } else {
-            if (aps?.supportsDynamicIsf() ?: error("APS not defined"))
+            if (aps != null && aps.supportsDynamicIsf())
                 aps.getAverageIsfMgdl(timestamp, caller) ?: toMgdl(isfBlocks.blockValueBySeconds(MidnightUtils.secondsFromMidnight(timestamp), 100.0 / percentage, timeshift), units)
             else toMgdl(isfBlocks.blockValueBySeconds(MidnightUtils.secondsFromMidnight(timestamp), 100.0 / percentage, timeshift), units)
         }
