@@ -268,13 +268,13 @@ class PluginStore @Inject constructor(
     override val activeNsClient: NsClient?
         get() = getTheOneEnabledInArray(getSpecificPluginsListByInterface(NsClient::class.java), PluginType.SYNC) as NsClient?
 
-    @Suppress("UNCHECKED_CAST")
     override val firstActiveSync: Sync?
-        get() = (getSpecificPluginsListByInterface(Sync::class.java) as ArrayList<Sync>).firstOrNull { it.connected }
+        get() = getSpecificPluginsListByInterface(Sync::class.java)
+            .filterIsInstance<Sync>()
+            .firstOrNull { it.connected }
 
-    @Suppress("UNCHECKED_CAST")
     override val activeSyncs: ArrayList<Sync>
-        get() = getSpecificPluginsListByInterface(Sync::class.java) as ArrayList<Sync>
+        get() = ArrayList(getSpecificPluginsListByInterface(Sync::class.java).filterIsInstance<Sync>())
 
     override fun getPluginsList(): ArrayList<PluginBase> = ArrayList(plugins)
 
