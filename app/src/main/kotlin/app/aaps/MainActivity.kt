@@ -64,6 +64,7 @@ import app.aaps.databinding.ActivityMainBinding
 import app.aaps.plugins.configuration.activities.DaggerAppCompatActivityWithResult
 import app.aaps.plugins.configuration.activities.SingleFragmentActivity
 import app.aaps.plugins.configuration.setupwizard.SetupWizardActivity
+import app.aaps.plugins.main.skins.SkinDashboardPreferenceSync
 import app.aaps.plugins.constraints.signatureVerifier.SignatureVerifierPlugin
 import app.aaps.ui.tabs.TabPageAdapter
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -107,6 +108,7 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
     @Inject lateinit var cryptoUtil: CryptoUtil
     @Inject lateinit var exportPasswordDataStore: ExportPasswordDataStore
     @Inject lateinit var insulin: Insulin
+    @Inject lateinit var skinDashboardPreferenceSync: SkinDashboardPreferenceSync
 
     private lateinit var actionBarDrawerToggle: ActionBarDrawerToggle
     private var pluginPreferencesMenuItem: MenuItem? = null
@@ -145,8 +147,12 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
                        }, fabricPrivacy::logException)
         val newScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
         scope = newScope
+        skinDashboardPreferenceSync.onStartup()
         preferences.observe(BooleanKey.OverviewKeepScreenOn).drop(1).onEach { setWakeLock() }.launchIn(newScope)
-        preferences.observe(StringKey.GeneralSkin).drop(1).onEach { recreate() }.launchIn(newScope)
+        preferences.observe(StringKey.GeneralSkin).drop(1).onEach {
+            skinDashboardPreferenceSync.onSkinSelectionChanged()
+            recreate()
+        }.launchIn(newScope)
         disposable += rxBus
             .toObservable(EventAppInitialized::class.java)
             .observeOn(aapsSchedulers.main)

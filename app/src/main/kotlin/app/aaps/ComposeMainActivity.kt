@@ -120,6 +120,7 @@ import app.aaps.plugins.configuration.activities.OptimizationPermissionContract
 import app.aaps.plugins.configuration.activities.SingleFragmentActivity
 import app.aaps.plugins.configuration.setupwizard.SetupWizardActivity
 import app.aaps.plugins.main.general.manual.UserManualActivity
+import app.aaps.plugins.main.skins.SkinDashboardPreferenceSync
 import app.aaps.plugins.source.DexcomPlugin
 import app.aaps.plugins.source.activities.RequestDexcomPermissionActivity
 import app.aaps.ui.compose.automationSheet.AutomationViewModel
@@ -186,6 +187,7 @@ class ComposeMainActivity : AppCompatActivity() {
     @Inject lateinit var localProfileManager: LocalProfileManager
     @Inject lateinit var bolusProgressData: BolusProgressData
     @Inject lateinit var commandQueue: CommandQueue
+    @Inject lateinit var skinDashboardPreferenceSync: SkinDashboardPreferenceSync
 
     private var accessTree: ActivityResultLauncher<Uri?>? = null
     private var callForBatteryOptimization: ActivityResultLauncher<Void?>? = null
@@ -793,9 +795,16 @@ class ComposeMainActivity : AppCompatActivity() {
     }
 
     private fun observePreferences() {
+        skinDashboardPreferenceSync.onStartup()
         // Wake lock: initial value applies on startup, subsequent changes update the flag
         lifecycleScope.launch {
             preferences.observe(BooleanKey.OverviewKeepScreenOn).collect { setupWakeLock() }
+        }
+        // Align hybrid overview with skin (e.g. "New skin dashboard" enables dashboard layout)
+        lifecycleScope.launch {
+            preferences.observe(StringKey.GeneralSkin).drop(1).collect {
+                skinDashboardPreferenceSync.onSkinSelectionChanged()
+            }
         }
         // Language change requires full restart to reload resources
         lifecycleScope.launch {
