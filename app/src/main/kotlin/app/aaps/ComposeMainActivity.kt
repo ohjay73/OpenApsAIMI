@@ -507,12 +507,8 @@ class ComposeMainActivity : AppCompatActivity() {
                 val notifications by notificationManager.notifications.collectAsStateWithLifecycle()
                 val quickLaunchItems by mainViewModel.quickLaunchItems.collectAsStateWithLifecycle()
 
-                var useDashboardLayout by remember {
-                    mutableStateOf(preferences.get(BooleanKey.OverviewUseDashboardLayout))
-                }
-                LaunchedEffect(Unit) {
-                    preferences.observe(BooleanKey.OverviewUseDashboardLayout).collect { useDashboardLayout = it }
-                }
+                val useDashboardLayout by preferences.observe(BooleanKey.OverviewUseDashboardLayout)
+                    .collectAsStateWithLifecycle()
 
                 // Pump setup button in bottom bar
                 val pumpPlugin = activePlugin.activePumpInternal as PluginBase

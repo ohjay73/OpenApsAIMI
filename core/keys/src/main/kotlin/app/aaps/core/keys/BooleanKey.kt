@@ -30,7 +30,8 @@ enum class BooleanKey(
     OverviewShowInsulinButton("show_insulin_button", true, R.string.pref_title_show_insulin_button, defaultedBySM = true),
     OverviewShowCarbsButton("show_carbs_button", true, R.string.pref_title_show_carbs_button, defaultedBySM = true),
     OverviewShowCgmButton("show_cgm_button", false, R.string.pref_title_show_cgm_button, R.string.pref_summary_show_cgm_button, defaultedBySM = true, showInNsClientMode = false),
-    OverviewUseDashboardLayout("overview_use_dashboard", true, defaultedBySM = true),
+    /** Must read stored value in simple mode so Home can switch AIMI dashboard vs legacy overview. */
+    OverviewUseDashboardLayout("overview_use_dashboard", true),
     /** "Last AIMI run" summary card on the hybrid dashboard (Compose + classic). */
     OverviewShowHybridDashboardAimiPulse("overview_show_hybrid_aimi_pulse", false, defaultedBySM = true),
     /** When true, hybrid dashboard shows the full two-column metrics grid + AIMI insight strip; when false, compact metric row. Must not use [defaultedBySM]: simple mode would ignore stored value via [calculatedDefaultValue] path. */
