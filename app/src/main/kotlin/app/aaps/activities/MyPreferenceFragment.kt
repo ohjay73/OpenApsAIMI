@@ -270,14 +270,22 @@ class MyPreferenceFragment : PreferenceFragmentCompat(), OnSharedPreferenceChang
         return visible
     }
 
+    /**
+     * [Preference.setSummary] throws [IllegalStateException] when a [Preference.summaryProvider]
+     * is already set (e.g. [androidx.preference.ListPreference.SimpleSummaryProvider]).
+     */
+    private fun Preference.setSummaryUnlessProvider(summary: CharSequence?) {
+        if (this.summaryProvider == null) this.summary = summary
+    }
+
     private fun updatePrefSummary(pref: Preference?) {
         pref ?: return
         val keyDefinition = pref.key?.let { preferences.getIfExists(it) }
         when (keyDefinition) {
             is IntPreferenceKey,
             is DoublePreferenceKey -> {
-                if (pref is EditTextPreference && pref.text != null) pref.summary = pref.text
-                if (pref is ListPreference) pref.summary = pref.entry
+                if (pref is EditTextPreference && pref.text != null) pref.setSummaryUnlessProvider(pref.text)
+                if (pref is ListPreference) pref.setSummaryUnlessProvider(pref.entry)
             }
 
             is StringPreferenceKey -> {
@@ -285,11 +293,11 @@ class MyPreferenceFragment : PreferenceFragmentCompat(), OnSharedPreferenceChang
                 when {
                     // We use Preference and custom editor instead of EditTextPreference
                     // to hash password while it is saved and never have to show it, even hashed
-                    (keyDefinition.isPin || keyDefinition.isPassword) && value.isNotEmpty() -> pref.summary = "******"
-                    keyDefinition.isPin                                                     -> pref.summary = rh.gs(app.aaps.core.ui.R.string.pin_not_set)
-                    keyDefinition.isPassword                                                -> pref.summary = rh.gs(app.aaps.core.ui.R.string.password_not_set)
-                    pref is EditTextPreference && value.isNotEmpty()                        -> pref.summary = value
-                    pref is ListPreference                                                  -> pref.summary = pref.entry
+                    (keyDefinition.isPin || keyDefinition.isPassword) && value.isNotEmpty() -> pref.setSummaryUnlessProvider("******")
+                    keyDefinition.isPin                                                     -> pref.setSummaryUnlessProvider(rh.gs(app.aaps.core.ui.R.string.pin_not_set))
+                    keyDefinition.isPassword                                                -> pref.setSummaryUnlessProvider(rh.gs(app.aaps.core.ui.R.string.password_not_set))
+                    pref is EditTextPreference && value.isNotEmpty()                        -> pref.setSummaryUnlessProvider(value)
+                    pref is ListPreference                                                  -> pref.setSummaryUnlessProvider(pref.entry)
                 }
             }
 
