@@ -3,7 +3,6 @@
 package app.aaps.plugins.automation.services
 
 import android.Manifest
-import android.app.Notification
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
@@ -84,17 +83,19 @@ class LocationService : DaggerService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
+        aapsLogger.debug("Starting LocationService with ID ${notificationHolder.notificationID} notification ${notificationHolder.notification}")
+        startForeground(notificationHolder.notificationID, notificationHolder.notification)
         try {
             aapsLogger.debug("Starting LocationService with ID ${notificationHolder.notificationID} notification ${notificationHolder.notification}")
-            
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 // Ensure permission is granted before starting with LOCATION type (Android 14 requirement)
                 if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
                     ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                    
+
                     startForeground(
-                        notificationHolder.notificationID, 
-                        notificationHolder.notification, 
+                        notificationHolder.notificationID,
+                        notificationHolder.notification,
                         ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
                     )
                 } else {
@@ -122,14 +123,14 @@ class LocationService : DaggerService() {
         super.onCreate()
         try {
             aapsLogger.debug("Starting LocationService with ID ${notificationHolder.notificationID} notification ${notificationHolder.notification}")
-            
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
                     ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                    
+
                     startForeground(
-                        notificationHolder.notificationID, 
-                        notificationHolder.notification, 
+                        notificationHolder.notificationID,
+                        notificationHolder.notification,
                         ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
                     )
                 } else {
