@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.ui.activities.TranslatedDaggerAppCompatActivity
 import app.aaps.plugins.aps.R
+import app.aaps.plugins.aps.openAPSAIMI.advisor.oref.OrefAnalysisReport
 import javax.inject.Inject
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -106,7 +107,7 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val history = historyRepo.getRecentActions(7)
-                val report = advisorService.generateReport(periodDays = 7, history = history)
+                val report = advisorService.generateReport(periodDays = 7, history = history, assetContext = applicationContext)
                 val context = advisorService.collectContext(7)
 
                 withContext(Dispatchers.Main) {
@@ -141,6 +142,11 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                     // 4. Section: COGNITIVE BRIDGE (BRAIN)
                     rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_adv_section_brain)))
                     rootLayout.addView(createCognitiveCard(context.prefs.unifiedReactivityFactor, cardColor))
+
+                    report.orefAnalysis?.let { oref ->
+                        rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_adv_section_oref)))
+                        rootLayout.addView(createOrefAnalysisCard(oref, cardColor))
+                    }
 
                     // 5. Section: AI Coach (ChatGPT/Gemini)
                     rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_adv_section_coach)))
@@ -836,6 +842,30 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         
         row.addView(textLayout)
         card.addView(row)
+        return card
+    }
+
+    private fun createOrefAnalysisCard(oref: OrefAnalysisReport, cardBg: Int): CardView {
+        val card = CardView(this).apply {
+            radius = 16f
+            setCardBackgroundColor(cardBg)
+            cardElevation = 0f
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(0, 0, 0, 32)
+            }
+        }
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24, 24, 24, 24)
+        }
+        layout.addView(TextView(this).apply {
+            text = oref.toPromptSection().trim()
+            textSize = 13f
+            setTextColor(Color.parseColor("#CBD5E1"))
+            setLineSpacing(5f, 1.15f)
+            setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
+        })
+        card.addView(layout)
         return card
     }
 

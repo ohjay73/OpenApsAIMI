@@ -1277,6 +1277,7 @@
     <string name="aimi_adv_section_obs">OBSERVATIONS</string>
     <string name="aimi_adv_section_pkpd">AJUSTEMENTS PKPD</string>
     <string name="aimi_adv_section_brain">ÉTAT COGNITIF</string>
+    <string name="aimi_adv_section_oref">ANALYSE OREF (LOCAL)</string>
     <string name="aimi_adv_section_coach">COACH IA</string>
 
     <string name="aimi_adv_brain_protect">PROTECTEUR (x%1$.2f)</string>

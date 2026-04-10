@@ -1,9 +1,11 @@
 package app.aaps.plugins.aps.openAPSAIMI.advisor
 
+import android.content.Context
 import app.aaps.core.interfaces.profile.EffectiveProfile
 import kotlinx.coroutines.runBlocking
 import kotlin.math.roundToInt
 import app.aaps.plugins.aps.R
+import app.aaps.plugins.aps.openAPSAIMI.advisor.oref.OrefLocalPipeline
 import kotlin.math.max
 import kotlin.math.min
 import app.aaps.core.keys.DoubleKey
@@ -92,7 +94,11 @@ class AimiAdvisorService {
     /**
      * Generate a full advisor report for the specified period.
      */
-    fun generateReport(periodDays: Int = 7, history: List<app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository.AdvisorActionLog> = emptyList()): AdvisorReport {
+    fun generateReport(
+        periodDays: Int = 7,
+        history: List<app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository.AdvisorActionLog> = emptyList(),
+        assetContext: Context? = null,
+    ): AdvisorReport {
         val context = collectContext(periodDays)
         val score = computeGlobalScore(context.metrics)
         val severity = classifySeverity(score)
@@ -107,7 +113,22 @@ class AimiAdvisorService {
                 recommendations.add(rec)
             }
         }
-        
+
+        val orefInsight = if (persistenceLayer != null) {
+            runBlocking {
+                try {
+                    OrefLocalPipeline(persistenceLayer).run(
+                        profileSnapshot = context.profile,
+                        windowDays = 30L,
+                        assetContext = assetContext,
+                    )
+                } catch (t: Throwable) {
+                    aapsLogger?.error(app.aaps.core.interfaces.logging.LTag.APS, "OrefLocalPipeline failed", t)
+                    null
+                }
+            }
+        } else null
+
         return AdvisorReport(
             generatedAt = System.currentTimeMillis(),
             metrics = context.metrics,
@@ -115,7 +136,8 @@ class AimiAdvisorService {
             overallSeverity = severity,
             overallAssessment = getAssessmentLabel(score),
             recommendations = recommendations,
-            summary = formatSummary(context.metrics)
+            summary = formatSummary(context.metrics),
+            orefAnalysis = orefInsight,
         )
     }
 
@@ -559,6 +581,11 @@ class AimiAdvisorService {
                 }
             } else {
                 sb.append(rh.gs(R.string.aimi_adv_analysis_all_good))
+            }
+
+            report.orefAnalysis?.let { oref ->
+                sb.append("\n\n--- OREF local ---\n")
+                sb.append(oref.toPromptSection())
             }
             
             sb.append("\n" + rh.gs(R.string.aimi_adv_generated_footer, formatTime(report.generatedAt)))
