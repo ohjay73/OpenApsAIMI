@@ -46,6 +46,7 @@ import app.aaps.plugins.aps.openAPSAIMI.model.Constants
 import app.aaps.core.data.model.HR
 import app.aaps.plugins.aps.openAPSAIMI.model.DecisionResult
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.AuditorVerdict
+import app.aaps.plugins.aps.openAPSAIMI.advisor.oref.OrefPredictionReasonSuffix
 import app.aaps.plugins.aps.openAPSAIMI.model.LoopContext
 import app.aaps.plugins.aps.openAPSAIMI.model.PumpCaps
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdCsvLogger
@@ -7532,7 +7533,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             "COB: ${round(mealData.mealCOB, 1).withoutZeros()}, Dev: ${convertBG(deviation.toDouble())}, BGI: ${convertBG(bgi)}, ISF: ${convertBG(sens)}, CR: ${
                 round(profile.carb_ratio, 2)
                     .withoutZeros()
-            }, Target: ${convertBG(target_bg)} \uD83D\uDCD2 "
+            }, Target: ${convertBG(target_bg)}${
+                OrefPredictionReasonSuffix.build(rT) { v -> convertBG(v) }
+            } \uD83D\uDCD2 "
         )
         val zeroSinceMin = BasalHistoryUtils.historyProvider.zeroBasalDurationMinutes(2)
         val minutesSinceLastChange = BasalHistoryUtils.historyProvider.minutesSinceLastChange()

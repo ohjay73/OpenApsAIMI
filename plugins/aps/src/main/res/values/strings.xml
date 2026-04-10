@@ -1285,6 +1285,15 @@
     <string name="aimi_adv_oref_bar_low">&lt;70</string>
     <string name="aimi_adv_oref_bar_in_range">70–180</string>
     <string name="aimi_adv_oref_bar_high">&gt;180</string>
+    <string name="aimi_adv_oref_user_insight_title">What this means for you</string>
+    <string name="aimi_adv_oref_user_data_insufficient">There is not enough CGM and loop history in this period to draw firm conclusions. Keep looping and open Advisor again after more data is collected.</string>
+    <string name="aimi_adv_oref_user_data_limited">There is some data, but the window is still thin. Treat trends as hints only; confirm with your usual metrics and care team if something worries you.</string>
+    <string name="aimi_adv_oref_user_data_good">Enough aligned loop and CGM points for a stable snapshot of the last days.</string>
+    <string name="aimi_adv_oref_user_priority">Focus suggested by simple rules: %1$s (not a diagnosis).</string>
+    <string name="aimi_adv_oref_user_personal_off">Personal on-device risk model is off. Enable it under AIMI → AI keys if you want a small model trained from your recent features when you open Advisor.</string>
+    <string name="aimi_adv_oref_user_personal_training">Personal model: training needs more labelled 4-hour outcomes in this window.</string>
+    <string name="aimi_adv_oref_user_personal_failed">Personal model could not be updated; technical details are in the analysis block below.</string>
+    <string name="aimi_adv_oref_user_personal_ok">Personal on-device signals (informational, not treatment advice): hypo-related ≈%1$d%%, hyper-related ≈%2$d%%. Discuss persistent issues with your care team.</string>
     <string name="aimi_adv_section_coach">COACH IA</string>
 
     <string name="aimi_adv_brain_protect">PROTECTEUR (x%1$.2f)</string>

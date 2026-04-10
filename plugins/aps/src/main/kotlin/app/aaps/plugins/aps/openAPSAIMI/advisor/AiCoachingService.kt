@@ -53,12 +53,13 @@ class AiCoachingService @Inject constructor() {
         report: AdvisorReport, 
         apiKey: String,
         provider: Provider,
-        history: List<app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository.AdvisorActionLog> = emptyList()
+        history: List<app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository.AdvisorActionLog> = emptyList(),
+        includeRichOref: Boolean = true,
     ): String = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) return@withContext "Clé API manquante. Veuillez configurer votre clé ${provider.name}."
 
         try {
-            val prompt = buildPrompt(androidContext, context, report, history)
+            val prompt = buildPrompt(androidContext, context, report, history, includeRichOref)
             
             return@withContext when (provider) {
                 Provider.GEMINI -> callGemini(androidContext, apiKey, prompt)
@@ -230,14 +231,15 @@ class AiCoachingService @Inject constructor() {
         androidContext: Context, 
         ctx: AdvisorContext, 
         report: AdvisorReport,
-        history: List<app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository.AdvisorActionLog>
+        history: List<app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository.AdvisorActionLog>,
+        includeRichOref: Boolean,
     ): String {
         val sb = StringBuilder()
         val deviceLang = java.util.Locale.getDefault().displayLanguage
         
         // Persona
         sb.append("You are AIMI, an expert 'Certified Diabetes Educator' specializing in Automated Insulin Delivery (AID).\n")
-        sb.append("Your Goal: Analyze the patient's 7-day glucose & insulin data to identify patterns and suggest specific algorithm tuning.\n")
+        sb.append("Your Goal: Analyze the patient's recent glucose & insulin data to identify patterns and suggest specific algorithm tuning.\n")
         sb.append("Tone: Professional, encouraging, precise, and safety-first.\n\n")
 
         // 0.5 STABILITY CONTEXT (History)
@@ -254,7 +256,7 @@ class AiCoachingService @Inject constructor() {
         }
 
         // 1. Context: Metrics
-        sb.append("--- PATIENT METRICS (7 Days) ---\n")
+        sb.append("--- PATIENT METRICS (Advisor period) ---\n")
         sb.append("Score: ${report.overallScore}/10 | GMI: ${ctx.metrics.gmi}%\n")
         sb.append("TIR (70-180): ${(ctx.metrics.tir70_180 * 100).roundToInt()}%\n")
         sb.append("Hypo (<70): ${(ctx.metrics.timeBelow70 * 100).roundToInt()}% | Severe (<54): ${(ctx.metrics.timeBelow54 * 100).roundToInt()}%\n")
@@ -266,6 +268,10 @@ class AiCoachingService @Inject constructor() {
         report.orefAnalysis?.let { oref ->
             sb.append(oref.toPromptSection())
             sb.append("CRITICAL: Treat this block as factual telemetry + heuristics only; do not invent LGBM percentages.\n\n")
+            if (includeRichOref) {
+                sb.append(oref.toCoachUserInsightsSection())
+                sb.append("\n")
+            }
         }
 
         // 1.5 Context: Active Profile & Preferences

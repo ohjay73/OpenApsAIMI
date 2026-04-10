@@ -18,7 +18,9 @@ import androidx.core.content.ContextCompat
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.ui.activities.TranslatedDaggerAppCompatActivity
 import app.aaps.plugins.aps.R
+import app.aaps.core.keys.BooleanKey
 import app.aaps.plugins.aps.openAPSAIMI.advisor.oref.OrefAnalysisReport
+import app.aaps.plugins.aps.openAPSAIMI.advisor.oref.OrefUserInsightFormatter
 import javax.inject.Inject
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -108,8 +110,8 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         // Bound to activity lifecycle: avoids UI updates after destroy (crash) and cancels when user leaves
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val history = historyRepo.getRecentActions(7)
-                val report = advisorService.generateReport(periodDays = 7, history = history, assetContext = applicationContext)
+                val history = historyRepo.getRecentActions(10)
+                val report = advisorService.generateReport(periodDays = 10, history = history, assetContext = applicationContext)
                 val advisorCtx = report.advisorContext
 
                 withContext(Dispatchers.Main) {
@@ -868,6 +870,20 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             setPadding(24, 24, 24, 24)
         }
         layout.addView(TextView(this).apply {
+            text = getString(R.string.aimi_adv_oref_user_insight_title)
+            textSize = 15f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#E2E8F0"))
+            setPadding(0, 0, 0, 8)
+        })
+        layout.addView(TextView(this).apply {
+            text = OrefUserInsightFormatter.buildParagraph(this@AimiProfileAdvisorActivity, oref)
+            textSize = 14f
+            setTextColor(Color.parseColor("#94A3B8"))
+            setLineSpacing(6f, 1.2f)
+            setPadding(0, 0, 0, 20)
+        })
+        layout.addView(TextView(this).apply {
             text = oref.toPromptSection().trim()
             textSize = 13f
             setTextColor(Color.parseColor("#CBD5E1"))
@@ -1024,7 +1040,7 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         }
         
         if (activeKey.isBlank()) {
-            val basicAnalysis = advisorService.generatePlainTextAnalysis(context, report)
+            val basicAnalysis = advisorService.generatePlainTextAnalysis(context, report, insightContext = this@AimiProfileAdvisorActivity)
             val placeholder = rh.gs(R.string.aimi_coach_placeholder) + " (${provider.name})"
             contentText.text = "$basicAnalysis\n\n⚙️ $placeholder"
         } else {
@@ -1033,13 +1049,15 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                     val history = withContext(Dispatchers.IO) {
                         historyRepo.getRecentActions(7)
                     }
+                    val richOref = preferences.get(BooleanKey.OApsAIMIAdvisorLlmRichOref)
                     val advice = AiCoachingService().fetchAdvice(
                         this@AimiProfileAdvisorActivity,
                         context,
                         report,
                         activeKey,
                         provider,
-                        history
+                        history,
+                        includeRichOref = richOref,
                     )
                     if (!isFinishing) {
                         contentText.text = advice

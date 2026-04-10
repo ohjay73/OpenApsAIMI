@@ -210,4 +210,19 @@ enum class BooleanKey(
 
     // 🚨 Emergency SOS (Hypo)
     AimiEmergencySosEnable("aimi_emergency_sos_enable", false),
+
+    /** On-device MLP risk models for AIMI Advisor (OREF features); trains when Advisor runs if enough rows. */
+    OApsAIMIAdvisorPersonalOrefMl(
+        "key_aimi_advisor_personal_oref_ml",
+        false,
+        R.string.pref_title_aimi_advisor_personal_oref_ml,
+        R.string.pref_summary_aimi_advisor_personal_oref_ml,
+    ),
+    /** When true, AI Coach prompt includes structured user-insight block from OREF (easier plain-language coaching). */
+    OApsAIMIAdvisorLlmRichOref(
+        "key_aimi_advisor_llm_rich_oref",
+        true,
+        R.string.pref_title_aimi_advisor_llm_rich_oref,
+        R.string.pref_summary_aimi_advisor_llm_rich_oref,
+    ),
 }

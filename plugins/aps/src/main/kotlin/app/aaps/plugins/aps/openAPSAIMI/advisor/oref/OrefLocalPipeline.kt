@@ -21,6 +21,7 @@ class OrefLocalPipeline(
         profileSnapshot: AimiProfileSnapshot,
         windowDays: Long = DEFAULT_HISTORY_DAYS,
         assetContext: Context? = null,
+        personalMlEnabled: Boolean = false,
     ): OrefAnalysisReport = withContext(Dispatchers.Default) {
         // APS rows carry large JSON per loop; loading 30d on a 256MB heap can OOM (see APSResultDao cursor).
         val effectiveWindowDays = min(windowDays, MAX_HISTORY_DAYS_FOR_MEMORY)
@@ -46,6 +47,8 @@ class OrefLocalPipeline(
                 mlStatus = OrefMlStatus.NOT_BUNDLED,
                 featureMissingPct = emptyMap(),
                 hints = listOf("Insufficient local data (need more CGM and APS history)."),
+                dataSufficiency = OrefDataSufficiency.INSUFFICIENT,
+                personalMlStatus = OrefPersonalMlStatus.OFF,
             )
         }
 
@@ -83,6 +86,8 @@ class OrefLocalPipeline(
                 mlStatus = OrefMlStatus.NOT_BUNDLED,
                 featureMissingPct = emptyMap(),
                 hints = listOf("Few APS-aligned CGM rows (${slices.size}). Sync/history retention may be limited."),
+                dataSufficiency = OrefDataSufficiency.INSUFFICIENT,
+                personalMlStatus = OrefPersonalMlStatus.OFF,
             )
         }
 
@@ -127,6 +132,19 @@ class OrefLocalPipeline(
 
         val onnx = computeOnnxSummaries(assetContext, slices, outcomePerSlice)
 
+        val sufficiency = computeDataSufficiency(slices.size, labelled)
+        var personalStatus = OrefPersonalMlStatus.OFF
+        var personalHypoPct: Double? = null
+        var personalHyperPct: Double? = null
+        var personalDetail: String? = null
+        if (personalMlEnabled && assetContext != null) {
+            val pr = OrefPersonalMlTrainer.trainAndSummarize(assetContext, slices, outcomePerSlice)
+            personalStatus = pr.status
+            personalHypoPct = pr.meanHypoSignalPct
+            personalHyperPct = pr.meanHyperSignalPct
+            personalDetail = pr.detail
+        }
+
         OrefAnalysisReport(
             windowDays = effectiveWindowDays.toInt(),
             mergedRowCount = slices.size,
@@ -146,7 +164,18 @@ class OrefLocalPipeline(
             meanCalHyperRiskPct = onnx.meanCalHyperPct,
             meanBgChangePred = onnx.meanBgChange,
             mlErrorDetail = onnx.mlErrorDetail,
+            dataSufficiency = sufficiency,
+            personalMlStatus = personalStatus,
+            personalMeanHypoSignalPct = personalHypoPct,
+            personalMeanHyperSignalPct = personalHyperPct,
+            personalMlDetail = personalDetail,
         )
+    }
+
+    private fun computeDataSufficiency(mergedRows: Int, labelled: Int): OrefDataSufficiency = when {
+        mergedRows < 50 -> OrefDataSufficiency.INSUFFICIENT
+        mergedRows < 350 || labelled < 150 -> OrefDataSufficiency.LIMITED
+        else -> OrefDataSufficiency.GOOD
     }
 
     private data class OnnxSummaries(
@@ -328,13 +357,13 @@ class OrefLocalPipeline(
     }
 
     companion object {
-        /** Default window when caller does not override (keeps Advisor heap use predictable). */
-        const val DEFAULT_HISTORY_DAYS: Long = 7L
+        /** Default window when caller does not override (AIMI Advisor: 10-day view). */
+        const val DEFAULT_HISTORY_DAYS: Long = 10L
 
         /**
-         * Hard cap: each APSResult holds full loop JSON; Room cursor + merge buffers can OOM on ~256MB heaps.
+         * Hard cap: each APSResult holds full loop JSON; Room cursor + merge buffers can OOM on small heaps.
          */
-        const val MAX_HISTORY_DAYS_FOR_MEMORY: Long = 7L
+        const val MAX_HISTORY_DAYS_FOR_MEMORY: Long = 10L
 
         private const val MERGE_TOLERANCE_MS = 600_000L
         private const val ONNX_BATCH = 256

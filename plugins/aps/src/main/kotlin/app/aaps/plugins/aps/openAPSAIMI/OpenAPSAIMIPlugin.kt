@@ -1285,6 +1285,8 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                     StringKey.AimiAdvisorGeminiKey,
                     StringKey.AimiAdvisorDeepSeekKey,
                     StringKey.AimiAdvisorClaudeKey,
+                    BooleanKey.OApsAIMIAdvisorPersonalOrefMl,
+                    BooleanKey.OApsAIMIAdvisorLlmRichOref,
                 ),
             )
         )

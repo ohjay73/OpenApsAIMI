@@ -95,7 +95,7 @@ class AimiAdvisorService {
      * Generate a full advisor report for the specified period.
      */
     fun generateReport(
-        periodDays: Int = 7,
+        periodDays: Int = 10,
         history: List<app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository.AdvisorActionLog> = emptyList(),
         assetContext: Context? = null,
     ): AdvisorReport {
@@ -114,14 +114,17 @@ class AimiAdvisorService {
             }
         }
 
-        // Pass application Context so assets/oref/*.onnx can be loaded when present. Window stays capped (OrefLocalPipeline) to limit heap.
+        // Pass application Context so assets/oref/*.onnx can be loaded when present. Window capped by OrefLocalPipeline.
+        val orefWindowDays = periodDays.toLong().coerceIn(1, OrefLocalPipeline.MAX_HISTORY_DAYS_FOR_MEMORY)
+        val personalOrefMl = preferences?.get(BooleanKey.OApsAIMIAdvisorPersonalOrefMl) == true
         val orefInsight = if (persistenceLayer != null) {
             runBlocking {
                 try {
                     OrefLocalPipeline(persistenceLayer).run(
                         profileSnapshot = context.profile,
-                        windowDays = OrefLocalPipeline.DEFAULT_HISTORY_DAYS,
+                        windowDays = orefWindowDays,
                         assetContext = assetContext,
+                        personalMlEnabled = personalOrefMl,
                     )
                 } catch (t: Throwable) {
                     aapsLogger?.error(app.aaps.core.interfaces.logging.LTag.APS, "OrefLocalPipeline failed", t)
@@ -560,7 +563,11 @@ class AimiAdvisorService {
     /**
      * Level 1 Analysis: Generates a deterministic text summary of the recommendations.
      */
-    fun generatePlainTextAnalysis(context: AdvisorContext, report: AdvisorReport): String {
+    fun generatePlainTextAnalysis(
+        context: AdvisorContext,
+        report: AdvisorReport,
+        insightContext: Context? = null,
+    ): String {
         val sb = StringBuilder()
         
         if (rh != null) {
@@ -588,6 +595,15 @@ class AimiAdvisorService {
             report.orefAnalysis?.let { oref ->
                 sb.append("\n\n--- OREF local ---\n")
                 sb.append(oref.toPromptSection())
+                insightContext?.let { ctx ->
+                    sb.append("\n\n")
+                    sb.append(
+                        app.aaps.plugins.aps.openAPSAIMI.advisor.oref.OrefUserInsightFormatter.buildParagraph(
+                            ctx,
+                            oref,
+                        ),
+                    )
+                }
             }
             
             sb.append("\n" + rh.gs(R.string.aimi_adv_generated_footer, formatTime(report.generatedAt)))
