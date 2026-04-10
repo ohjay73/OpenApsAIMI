@@ -53,7 +53,7 @@ class PrepareTemporaryTargetDataWorker(
         loop.lastRun?.constraintsProcessed?.let { endTime = max(it.latestPredictionsTime, endTime) }
         var time = fromTime
         while (time < endTime) {
-            if (isStopped) return Result.failure(workDataOf("Error" to "stopped"))
+            if (isStopped) return Result.success(workDataOf("Warning" to "stopped"))
             val progress = (time - fromTime).toDouble() / (endTime - fromTime) * 100.0
             rxBus.send(EventIobCalculationProgress(CalculationWorkflow.ProgressData.PREPARE_TEMPORARY_TARGET_DATA, progress.toInt(), false))
             val tt = persistenceLayer.getTemporaryTargetActiveAt(time)

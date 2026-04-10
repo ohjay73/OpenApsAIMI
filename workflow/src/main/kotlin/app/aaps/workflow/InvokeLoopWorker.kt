@@ -5,6 +5,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.iob.IobCobCalculator
+import app.aaps.core.interfaces.logging.LTag
 
 import app.aaps.core.objects.workflow.LoggingWorker
 import app.aaps.core.utils.receivers.DataWorkerStorage
@@ -32,8 +33,12 @@ class InvokeLoopWorker(
     */
     override suspend fun doWorkAndLog(): Result {
 
-        val data = dataWorkerStorage.pickupObject(inputData.getLong(DataWorkerStorage.STORE_KEY, -1)) as? InvokeLoopData?
-            ?: return Result.failure(workDataOf("Error" to "missing input data"))
+        val key = inputData.getLong(DataWorkerStorage.STORE_KEY, -1)
+        val data = dataWorkerStorage.pickupObject(key) as? InvokeLoopData?
+        if (data == null) {
+            aapsLogger.debug(LTag.WORKER, "InvokeLoopWorker: missing payload storeKey=$key — skipping loop invoke")
+            return Result.success()
+        }
 
         if (!data.triggeredByNewBG) return Result.success(workDataOf("Result" to "no calculation needed"))
         val glucoseValue = iobCobCalculator.ads.actualBg() ?: return Result.success(workDataOf("Result" to "bg outdated"))

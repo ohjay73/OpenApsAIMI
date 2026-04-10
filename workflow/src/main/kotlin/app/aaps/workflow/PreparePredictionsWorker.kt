@@ -10,6 +10,7 @@ import app.aaps.core.graph.data.GlucoseValueDataPoint
 import app.aaps.core.graph.data.PointsWithLabelGraphSeries
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.configuration.Config
+import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.nsclient.ProcessedDeviceStatusData
 import app.aaps.core.interfaces.overview.OverviewData
 import app.aaps.core.interfaces.overview.OverviewMenus
@@ -56,8 +57,12 @@ class PreparePredictionsWorker(
     )
 
     override suspend fun doWorkAndLog(): Result {
-        val data = dataWorkerStorage.pickupObject(inputData.getLong(DataWorkerStorage.STORE_KEY, -1)) as PreparePredictionsData?
-            ?: return Result.failure(workDataOf("Error" to "missing input data"))
+        val pKey = inputData.getLong(DataWorkerStorage.STORE_KEY, -1)
+        val data = dataWorkerStorage.pickupObject(pKey) as PreparePredictionsData?
+        if (data == null) {
+            aapsLogger.debug(LTag.WORKER, "PreparePredictionsWorker: missing payload storeKey=$pKey — skipping")
+            return Result.success()
+        }
 
         val apsResult = if (config.APS) loop.lastRun?.constraintsProcessed else processedDeviceStatusData.getAPSResult()
         val predictionsAvailable = if (config.APS) loop.lastRun?.request?.hasPredictions == true else config.AAPSCLIENT
