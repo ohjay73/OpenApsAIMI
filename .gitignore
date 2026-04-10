@@ -36,3 +36,4 @@ wear/full/
 .claude/CLAUDE_COMMANDS.md
 .aider*
 tmpclaude-*
+.venv_onnx/
