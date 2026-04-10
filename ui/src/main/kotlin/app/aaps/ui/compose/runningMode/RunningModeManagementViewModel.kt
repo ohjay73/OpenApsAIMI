@@ -29,6 +29,8 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /**
@@ -62,10 +64,15 @@ class RunningModeManagementViewModel @Inject constructor(
     fun loadState() {
         viewModelScope.launch {
             try {
-                val runningModeRecord = loop.runningModeRecord
+                // LoopPlugin.runningModeRecord / allowedNextModes use runBlocking(DB); never call from Main.
+                val (runningModeRecord, allowedModes, pumpDescription) = withContext(Dispatchers.Default) {
+                    Triple(
+                        loop.runningModeRecord,
+                        loop.allowedNextModes(),
+                        activePlugin.activePump.pumpDescription
+                    )
+                }
                 val currentMode = runningModeRecord.mode
-                val allowedModes = loop.allowedNextModes()
-                val pumpDescription: PumpDescription = activePlugin.activePump.pumpDescription
 
                 uiState.update {
                     it.copy(
@@ -112,15 +119,17 @@ class RunningModeManagementViewModel @Inject constructor(
         durationMinutes: Int = 0
     ) {
         viewModelScope.launch {
-            val profile = profileFunction.getProfile() ?: return@launch
+            val profile = withContext(Dispatchers.Default) { profileFunction.getProfile() } ?: return@launch
 
-            val success = loop.handleRunningModeChange(
-                newRM = targetMode,
-                action = action,
-                source = Sources.LoopDialog,
-                profile = profile,
-                durationInMinutes = durationMinutes
-            )
+            val success = withContext(Dispatchers.Default) {
+                loop.handleRunningModeChange(
+                    newRM = targetMode,
+                    action = action,
+                    source = Sources.LoopDialog,
+                    profile = profile,
+                    durationInMinutes = durationMinutes
+                )
+            }
 
             // Track objectives usage for specific actions
             if (success) {

@@ -237,7 +237,10 @@ class XdripPlugin @Inject constructor(
                 .append(decimalFormatter.to2Decimal(basalIob.basaliob))
                 .append(")")
         if (preferences.get(BooleanKey.XdripSendBgi) && glucoseStatusProvider.glucoseStatusData != null) {
-            val bgi = -(bolusIob.activity + basalIob.activity) * 5 * profileUtil.fromMgdlToUnits(profile.getIsfMgdl("XdripPlugin"))
+            // Profile ISF only: getIsfMgdl() routes through active APS (dynamic ISF) and can crash if APS/profile
+            // are not ready when this runs on observeAnyChange (e.g. IllegalStateException / cast issues).
+            val isfMgdl = profile.getProfileIsfMgdl()
+            val bgi = -(bolusIob.activity + basalIob.activity) * 5 * profileUtil.fromMgdlToUnits(isfMgdl)
             status.append(" ")
                 .append(if (bgi >= 0) "+" else "")
                 .append(decimalFormatter.to2Decimal(bgi))

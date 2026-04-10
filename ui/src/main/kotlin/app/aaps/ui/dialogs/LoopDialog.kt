@@ -40,9 +40,13 @@ import app.aaps.core.ui.extensions.toVisibility
 import app.aaps.core.ui.toast.ToastUtils
 import app.aaps.ui.R
 import app.aaps.ui.databinding.DialogLoopBinding
+import androidx.lifecycle.lifecycleScope
 import dagger.android.support.DaggerDialogFragment
 import io.reactivex.rxjava3.disposables.CompositeDisposable
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 class LoopDialog : DaggerDialogFragment() {
@@ -69,6 +73,7 @@ class LoopDialog : DaggerDialogFragment() {
 
     private var queryingProtection = false
     private var showOkCancel: Boolean = true
+    private var updateGuiJob: Job? = null
     private var _binding: DialogLoopBinding? = null
     private var handler = Handler(HandlerThread(this::class.simpleName + "Handler").also { it.start() }.looper)
     private lateinit var refreshDialog: Runnable
@@ -146,6 +151,8 @@ class LoopDialog : DaggerDialogFragment() {
     @Synchronized
     override fun onDestroyView() {
         super.onDestroyView()
+        updateGuiJob?.cancel()
+        updateGuiJob = null
         _binding = null
         handler.removeCallbacksAndMessages(null)
         handler.looper.quitSafely()
@@ -156,51 +163,57 @@ class LoopDialog : DaggerDialogFragment() {
     fun updateGUI(from: String) {
         if (_binding == null) return
         aapsLogger.debug("UpdateGUI from $from")
-        val pumpDescription: PumpDescription = activePlugin.activePump.pumpDescription
+        updateGuiJob?.cancel()
+        updateGuiJob = lifecycleScope.launch {
+            val (runningModeRecord, allowedModes, pumpDescription) = withContext(Dispatchers.Default) {
+                Triple(
+                    loop.runningModeRecord,
+                    loop.allowedNextModes(),
+                    activePlugin.activePump.pumpDescription
+                )
+            }
+            val b = _binding ?: return@launch
+            val runningMode = runningModeRecord.mode
 
-        val runningModeRecord = loop.runningModeRecord
-        val runningMode = loop.runningModeRecord.mode
-        val allowedModes = loop.allowedNextModes()
+            b.runningMode.text = translator.translate(runningMode)
+            if (runningModeRecord.reasons?.isNotEmpty() == true) {
+                b.overviewReasonsLayout.visibility = View.VISIBLE
+                b.overviewReasons.text = runningModeRecord.reasons
+            } else b.overviewReasonsLayout.visibility = View.GONE
 
-        binding.runningMode.text = translator.translate(runningMode)
-        if (runningModeRecord.reasons?.isNotEmpty() == true) {
-            binding.overviewReasonsLayout.visibility = View.VISIBLE
-            binding.overviewReasons.text = runningModeRecord.reasons
-        } else binding.overviewReasonsLayout.visibility = View.GONE
+            b.overviewLoop.visibility = (
+                allowedModes.contains(RM.Mode.DISABLED_LOOP) ||
+                    allowedModes.contains(RM.Mode.OPEN_LOOP) ||
+                    allowedModes.contains(RM.Mode.CLOSED_LOOP) ||
+                    allowedModes.contains(RM.Mode.CLOSED_LOOP_LGS)
+                ).toVisibility()
+            b.overviewSuspend.visibility = (
+                allowedModes.contains(RM.Mode.SUSPENDED_BY_USER) ||
+                    allowedModes.contains(RM.Mode.RESUME) && runningMode == RM.Mode.SUSPENDED_BY_USER
+                ).toVisibility()
+            b.overviewPump.visibility = (
+                allowedModes.contains(RM.Mode.DISCONNECTED_PUMP) ||
+                    allowedModes.contains(RM.Mode.RESUME) && runningMode == RM.Mode.DISCONNECTED_PUMP
+                ).toVisibility()
+            b.overviewDisconnectButtons.visibility = (allowedModes.contains(RM.Mode.DISCONNECTED_PUMP) && config.APS).toVisibility()
+            b.overviewPumpHeader.visibility = config.APS.toVisibility()
+            b.overviewReconnect.visibility = (allowedModes.contains(RM.Mode.RESUME) && runningMode == RM.Mode.DISCONNECTED_PUMP).toVisibility()
+            b.overviewSuspendButtons.visibility = allowedModes.contains(RM.Mode.SUSPENDED_BY_USER).toVisibility()
+            b.overviewResume.visibility = (allowedModes.contains(RM.Mode.RESUME) && runningMode == RM.Mode.SUSPENDED_BY_USER).toVisibility()
+            b.overviewDisable.visibility = allowedModes.contains(RM.Mode.DISABLED_LOOP).toVisibility()
+            b.overviewCloseloop.visibility = allowedModes.contains(RM.Mode.CLOSED_LOOP).toVisibility()
+            b.overviewLgsloop.visibility = allowedModes.contains(RM.Mode.CLOSED_LOOP_LGS).toVisibility()
+            b.overviewOpenloop.visibility = allowedModes.contains(RM.Mode.OPEN_LOOP).toVisibility()
 
-        binding.overviewLoop.visibility = (
-            allowedModes.contains(RM.Mode.DISABLED_LOOP) ||
-                allowedModes.contains(RM.Mode.OPEN_LOOP) ||
-                allowedModes.contains(RM.Mode.CLOSED_LOOP) ||
-                allowedModes.contains(RM.Mode.CLOSED_LOOP_LGS)
-            ).toVisibility()
-        binding.overviewSuspend.visibility = (
-            allowedModes.contains(RM.Mode.SUSPENDED_BY_USER) ||
-                allowedModes.contains(RM.Mode.RESUME) && runningMode == RM.Mode.SUSPENDED_BY_USER
-            ).toVisibility()
-        binding.overviewPump.visibility = (
-            allowedModes.contains(RM.Mode.DISCONNECTED_PUMP) ||
-                allowedModes.contains(RM.Mode.RESUME) && runningMode == RM.Mode.DISCONNECTED_PUMP
-            ).toVisibility()
-        binding.overviewDisconnectButtons.visibility = (allowedModes.contains(RM.Mode.DISCONNECTED_PUMP) && config.APS).toVisibility()
-        binding.overviewPumpHeader.visibility = config.APS.toVisibility()
-        binding.overviewReconnect.visibility = (allowedModes.contains(RM.Mode.RESUME) && runningMode == RM.Mode.DISCONNECTED_PUMP).toVisibility()
-        binding.overviewSuspendButtons.visibility = allowedModes.contains(RM.Mode.SUSPENDED_BY_USER).toVisibility()
-        binding.overviewResume.visibility = (allowedModes.contains(RM.Mode.RESUME) && runningMode == RM.Mode.SUSPENDED_BY_USER).toVisibility()
-        binding.overviewDisable.visibility = allowedModes.contains(RM.Mode.DISABLED_LOOP).toVisibility()
-        binding.overviewCloseloop.visibility = allowedModes.contains(RM.Mode.CLOSED_LOOP).toVisibility()
-        binding.overviewLgsloop.visibility = allowedModes.contains(RM.Mode.CLOSED_LOOP_LGS).toVisibility()
-        binding.overviewOpenloop.visibility = allowedModes.contains(RM.Mode.OPEN_LOOP).toVisibility()
+            b.overviewDisconnect15m.visibility = pumpDescription.tempDurationStep15mAllowed.toVisibility()
+            b.overviewDisconnect30m.visibility = pumpDescription.tempDurationStep30mAllowed.toVisibility()
 
-        binding.overviewDisconnect15m.visibility = pumpDescription.tempDurationStep15mAllowed.toVisibility()
-        binding.overviewDisconnect30m.visibility = pumpDescription.tempDurationStep30mAllowed.toVisibility()
+            if (runningMode == RM.Mode.SUSPENDED_BY_USER) b.overviewSuspendHeader.text = rh.gs(app.aaps.core.ui.R.string.resumeloop)
+            else b.overviewSuspendHeader.text = rh.gs(app.aaps.core.ui.R.string.suspendloop)
 
-        if (runningMode == RM.Mode.SUSPENDED_BY_USER) binding.overviewSuspendHeader.text = rh.gs(app.aaps.core.ui.R.string.resumeloop)
-        else binding.overviewSuspendHeader.text = rh.gs(app.aaps.core.ui.R.string.suspendloop)
-
-        if (runningMode == RM.Mode.DISCONNECTED_PUMP) binding.overviewPumpHeader.text = rh.gs(R.string.reconnect)
-        else binding.overviewPumpHeader.text = rh.gs(R.string.disconnectpump)
-
+            if (runningMode == RM.Mode.DISCONNECTED_PUMP) b.overviewPumpHeader.text = rh.gs(R.string.reconnect)
+            else b.overviewPumpHeader.text = rh.gs(R.string.disconnectpump)
+        }
     }
 
     private fun onClickOkCancelEnabled(v: View): Boolean {
@@ -231,81 +244,61 @@ class LoopDialog : DaggerDialogFragment() {
     }
 
     private fun onClick(v: View): Boolean {
-        val profile = runBlocking { profileFunction.getProfile() } ?: return false
-        when (v.id) {
-            R.id.overview_closeloop                       -> {
-                loop.handleRunningModeChange(newRM = RM.Mode.CLOSED_LOOP, action = Action.CLOSED_LOOP_MODE, source = Sources.LoopDialog, profile = profile)
-                return true
-            }
+        lifecycleScope.launch {
+            val profile = withContext(Dispatchers.Default) { profileFunction.getProfile() } ?: return@launch
+            withContext(Dispatchers.Default) {
+                when (v.id) {
+                    R.id.overview_closeloop                       ->
+                        loop.handleRunningModeChange(newRM = RM.Mode.CLOSED_LOOP, action = Action.CLOSED_LOOP_MODE, source = Sources.LoopDialog, profile = profile)
 
-            R.id.overview_lgsloop                         -> {
-                loop.handleRunningModeChange(newRM = RM.Mode.CLOSED_LOOP_LGS, action = Action.LGS_LOOP_MODE, source = Sources.LoopDialog, profile = profile)
-                return true
-            }
+                    R.id.overview_lgsloop                         ->
+                        loop.handleRunningModeChange(newRM = RM.Mode.CLOSED_LOOP_LGS, action = Action.LGS_LOOP_MODE, source = Sources.LoopDialog, profile = profile)
 
-            R.id.overview_openloop                        -> {
-                loop.handleRunningModeChange(newRM = RM.Mode.OPEN_LOOP, action = Action.OPEN_LOOP_MODE, source = Sources.LoopDialog, profile = profile)
-                return true
-            }
+                    R.id.overview_openloop                        ->
+                        loop.handleRunningModeChange(newRM = RM.Mode.OPEN_LOOP, action = Action.OPEN_LOOP_MODE, source = Sources.LoopDialog, profile = profile)
 
-            R.id.overview_disable                         -> {
-                loop.handleRunningModeChange(newRM = RM.Mode.DISABLED_LOOP, durationInMinutes = Int.MAX_VALUE, action = Action.LOOP_DISABLED, source = Sources.LoopDialog, profile = profile)
-                return true
-            }
+                    R.id.overview_disable                         ->
+                        loop.handleRunningModeChange(newRM = RM.Mode.DISABLED_LOOP, durationInMinutes = Int.MAX_VALUE, action = Action.LOOP_DISABLED, source = Sources.LoopDialog, profile = profile)
 
-            R.id.overview_resume, R.id.overview_reconnect -> {
-                loop.handleRunningModeChange(newRM = RM.Mode.RESUME, action = if (v.id == R.id.overview_resume) Action.RESUME else Action.RECONNECT, source = Sources.LoopDialog, profile = profile)
-                preferences.put(BooleanNonKey.ObjectivesReconnectUsed, true)
-                return true
-            }
+                    R.id.overview_resume, R.id.overview_reconnect -> {
+                        loop.handleRunningModeChange(newRM = RM.Mode.RESUME, action = if (v.id == R.id.overview_resume) Action.RESUME else Action.RECONNECT, source = Sources.LoopDialog, profile = profile)
+                        preferences.put(BooleanNonKey.ObjectivesReconnectUsed, true)
+                    }
 
-            R.id.overview_suspend_1h                      -> {
-                loop.handleRunningModeChange(newRM = RM.Mode.SUSPENDED_BY_USER, durationInMinutes = T.hours(1).mins().toInt(), action = Action.SUSPEND, source = Sources.LoopDialog, profile = profile)
-                return true
-            }
+                    R.id.overview_suspend_1h                      ->
+                        loop.handleRunningModeChange(newRM = RM.Mode.SUSPENDED_BY_USER, durationInMinutes = T.hours(1).mins().toInt(), action = Action.SUSPEND, source = Sources.LoopDialog, profile = profile)
 
-            R.id.overview_suspend_2h                      -> {
-                loop.handleRunningModeChange(newRM = RM.Mode.SUSPENDED_BY_USER, durationInMinutes = T.hours(2).mins().toInt(), action = Action.SUSPEND, source = Sources.LoopDialog, profile = profile)
-                return true
-            }
+                    R.id.overview_suspend_2h                      ->
+                        loop.handleRunningModeChange(newRM = RM.Mode.SUSPENDED_BY_USER, durationInMinutes = T.hours(2).mins().toInt(), action = Action.SUSPEND, source = Sources.LoopDialog, profile = profile)
 
-            R.id.overview_suspend_3h                      -> {
-                loop.handleRunningModeChange(newRM = RM.Mode.SUSPENDED_BY_USER, durationInMinutes = T.hours(3).mins().toInt(), action = Action.SUSPEND, source = Sources.LoopDialog, profile = profile)
-                return true
-            }
+                    R.id.overview_suspend_3h                      ->
+                        loop.handleRunningModeChange(newRM = RM.Mode.SUSPENDED_BY_USER, durationInMinutes = T.hours(3).mins().toInt(), action = Action.SUSPEND, source = Sources.LoopDialog, profile = profile)
 
-            R.id.overview_suspend_10h                     -> {
-                loop.handleRunningModeChange(newRM = RM.Mode.SUSPENDED_BY_USER, durationInMinutes = T.hours(10).mins().toInt(), action = Action.SUSPEND, source = Sources.LoopDialog, profile = profile)
-                return true
-            }
+                    R.id.overview_suspend_10h                     ->
+                        loop.handleRunningModeChange(newRM = RM.Mode.SUSPENDED_BY_USER, durationInMinutes = T.hours(10).mins().toInt(), action = Action.SUSPEND, source = Sources.LoopDialog, profile = profile)
 
-            R.id.overview_disconnect_15m                  -> {
-                loop.handleRunningModeChange(newRM = RM.Mode.DISCONNECTED_PUMP, durationInMinutes = 15, action = Action.DISCONNECT, source = Sources.LoopDialog, profile = profile)
-                return true
-            }
+                    R.id.overview_disconnect_15m                  ->
+                        loop.handleRunningModeChange(newRM = RM.Mode.DISCONNECTED_PUMP, durationInMinutes = 15, action = Action.DISCONNECT, source = Sources.LoopDialog, profile = profile)
 
-            R.id.overview_disconnect_30m                  -> {
-                loop.handleRunningModeChange(newRM = RM.Mode.DISCONNECTED_PUMP, durationInMinutes = 30, action = Action.DISCONNECT, source = Sources.LoopDialog, profile = profile)
-                return true
-            }
+                    R.id.overview_disconnect_30m                  ->
+                        loop.handleRunningModeChange(newRM = RM.Mode.DISCONNECTED_PUMP, durationInMinutes = 30, action = Action.DISCONNECT, source = Sources.LoopDialog, profile = profile)
 
-            R.id.overview_disconnect_1h                   -> {
-                loop.handleRunningModeChange(newRM = RM.Mode.DISCONNECTED_PUMP, durationInMinutes = 60, action = Action.DISCONNECT, source = Sources.LoopDialog, profile = profile)
-                preferences.put(BooleanNonKey.ObjectivesDisconnectUsed, true)
-                return true
-            }
+                    R.id.overview_disconnect_1h                   -> {
+                        loop.handleRunningModeChange(newRM = RM.Mode.DISCONNECTED_PUMP, durationInMinutes = 60, action = Action.DISCONNECT, source = Sources.LoopDialog, profile = profile)
+                        preferences.put(BooleanNonKey.ObjectivesDisconnectUsed, true)
+                    }
 
-            R.id.overview_disconnect_2h                   -> {
-                loop.handleRunningModeChange(newRM = RM.Mode.DISCONNECTED_PUMP, durationInMinutes = 120, action = Action.DISCONNECT, source = Sources.LoopDialog, profile = profile)
-                return true
-            }
+                    R.id.overview_disconnect_2h                   ->
+                        loop.handleRunningModeChange(newRM = RM.Mode.DISCONNECTED_PUMP, durationInMinutes = 120, action = Action.DISCONNECT, source = Sources.LoopDialog, profile = profile)
 
-            R.id.overview_disconnect_3h                   -> {
-                loop.handleRunningModeChange(newRM = RM.Mode.DISCONNECTED_PUMP, durationInMinutes = 180, action = Action.DISCONNECT, source = Sources.LoopDialog, profile = profile)
-                return true
+                    R.id.overview_disconnect_3h                   ->
+                        loop.handleRunningModeChange(newRM = RM.Mode.DISCONNECTED_PUMP, durationInMinutes = 180, action = Action.DISCONNECT, source = Sources.LoopDialog, profile = profile)
+
+                    else                                          -> Unit
+                }
             }
         }
-        return false
+        return true
     }
 
     override fun show(manager: FragmentManager, tag: String?) {

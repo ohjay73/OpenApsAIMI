@@ -6,7 +6,10 @@ import app.aaps.core.data.pump.defs.PumpDescription
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.bgQualityCheck.BgQualityCheck
 import app.aaps.core.interfaces.constraints.ConstraintsChecker
+import app.aaps.core.data.iob.InMemoryGlucoseValue
+import app.aaps.core.data.model.SourceSensor
 import app.aaps.core.interfaces.db.PersistenceLayer
+import app.aaps.core.interfaces.iob.AutosensDataStore
 import app.aaps.core.interfaces.iob.GlucoseStatusProvider
 import app.aaps.core.interfaces.profiling.Profiler
 import app.aaps.core.interfaces.pump.PumpWithConcentration
@@ -45,6 +48,7 @@ class SafetyPluginTest : TestBaseWithProfile() {
     @Mock lateinit var determineBasalAMA: DetermineBasalAMA
     @Mock lateinit var determineBasalSMB: DetermineBasalSMB
     @Mock lateinit var loop: Loop
+    @Mock lateinit var autosensDataStore: AutosensDataStore
 
     private lateinit var safetyPlugin: SafetyPlugin
     private lateinit var openAPSAMAPlugin: OpenAPSAMAPlugin
@@ -81,7 +85,9 @@ class SafetyPluginTest : TestBaseWithProfile() {
         whenever(activePlugin.activePump).thenReturn(pumpWithConcentration)
         whenever(pumpWithConcentration.pumpDescription).thenReturn(pumpDescription)
         whenever(config.APS).thenReturn(true)
-        safetyPlugin = SafetyPlugin(aapsLogger, rh, preferences, constraintChecker, activePlugin, hardLimits, config, persistenceLayer, dateUtil, notificationManager, decimalFormatter)
+        whenever(iobCobCalculator.ads).thenReturn(autosensDataStore)
+        whenever(autosensDataStore.lastBg()).thenReturn(null)
+        safetyPlugin = SafetyPlugin(aapsLogger, rh, preferences, constraintChecker, activePlugin, hardLimits, config, persistenceLayer, iobCobCalculator, dateUtil, notificationManager, decimalFormatter)
         openAPSSMBPlugin =
             OpenAPSSMBPlugin(
                 aapsLogger, rxBus, constraintChecker, rh, profileFunction, profileUtil, config, activePlugin, insulin, iobCobCalculator,
@@ -132,8 +138,10 @@ class SafetyPluginTest : TestBaseWithProfile() {
     }
 
     @Test
-    fun bgSourceShouldPreventSMBAlways() = runTest {
-        whenever(persistenceLayer.isAdvancedFilteringSupported()).thenReturn(false)
+    fun bgSourceShouldPreventSMBAlways() {
+        whenever(autosensDataStore.lastBg()).thenReturn(
+            InMemoryGlucoseValue(timestamp = 0L, value = 100.0, sourceSensor = SourceSensor.LIBRE_1_OTHER)
+        )
         val c = safetyPlugin.isAdvancedFilteringEnabled(ConstraintObject(true, aapsLogger))
         assertThat(c.getReasons()).isEqualTo("Safety: SMB always and after carbs disabled because active BG source doesn\\'t support advanced filtering")
         assertThat(c.value()).isFalse()

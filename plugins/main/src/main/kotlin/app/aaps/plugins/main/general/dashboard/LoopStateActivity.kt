@@ -1,8 +1,6 @@
 package app.aaps.plugins.main.general.dashboard
 
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import androidx.appcompat.content.res.AppCompatResources
@@ -22,7 +20,9 @@ import app.aaps.core.ui.dialogs.OKDialog
 import app.aaps.plugins.main.R
 import app.aaps.plugins.main.databinding.ActivityLoopStateBinding
 import com.google.android.material.button.MaterialButton
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import app.aaps.core.data.time.T
 
@@ -36,7 +36,6 @@ class LoopStateActivity : TranslatedDaggerAppCompatActivity() {
     @Inject lateinit var preferences: Preferences
 
     private lateinit var binding: ActivityLoopStateBinding
-    private val handler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -53,9 +52,14 @@ class LoopStateActivity : TranslatedDaggerAppCompatActivity() {
 
     private fun renderActions() {
         lifecycleScope.launch {
-            val allowedModes = loop.allowedNextModes()
-            val runningMode = loop.runningModeRecord.mode
-            val pumpDescription = activePlugin.activePump.pumpDescription
+            val (allowedModes, runningModeRecord, pumpDescription) = withContext(Dispatchers.Default) {
+                Triple(
+                    loop.allowedNextModes(),
+                    loop.runningModeRecord,
+                    activePlugin.activePump.pumpDescription
+                )
+            }
+            val runningMode = runningModeRecord.mode
 
             binding.loopActionsContainer.removeAllViews()
             val spacing = resources.getDimensionPixelSize(R.dimen.dashboard_chip_spacing)
@@ -71,8 +75,10 @@ class LoopStateActivity : TranslatedDaggerAppCompatActivity() {
                             this@LoopStateActivity,
                             "${resourceHelper.gs(app.aaps.core.ui.R.string.confirm)}: $title",
                             Runnable {
-                                handler.post { onClick() }
-                                finish()
+                                lifecycleScope.launch {
+                                    withContext(Dispatchers.Default) { onClick() }
+                                    finish()
+                                }
                             }
                         )
                     }
@@ -86,7 +92,7 @@ class LoopStateActivity : TranslatedDaggerAppCompatActivity() {
                 binding.loopActionsContainer.addView(button, params)
             }
 
-            val profile = profileFunction.getProfile() ?: return@launch
+            val profile = withContext(Dispatchers.Default) { profileFunction.getProfile() } ?: return@launch
 
             if (allowedModes.contains(RM.Mode.CLOSED_LOOP)) {
             addButton(resourceHelper.gs(app.aaps.core.ui.R.string.closedloop), app.aaps.core.objects.R.drawable.ic_loop_closed) {

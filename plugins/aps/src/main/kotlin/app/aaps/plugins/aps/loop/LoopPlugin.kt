@@ -9,7 +9,6 @@ import android.content.Intent
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
-import android.os.SystemClock
 import androidx.annotation.VisibleForTesting
 import androidx.core.app.NotificationCompat
 import androidx.preference.PreferenceCategory
@@ -92,6 +91,7 @@ import app.aaps.plugins.aps.loop.events.EventLoopSetLastRunGui
 import app.aaps.plugins.aps.loop.extensions.json
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.launchIn
@@ -513,13 +513,12 @@ class LoopPlugin @Inject constructor(
         return bool
     }
 
-    @Synchronized
-    fun isEmptyQueue(): Boolean {
+    private suspend fun isEmptyQueue(): Boolean {
         val maxMinutes = 2L
         val start = dateUtil.now()
         while (start + T.mins(maxMinutes).msecs() > dateUtil.now()) {
             if (commandQueue.size() == 0 && commandQueue.performing() == null) return true
-            SystemClock.sleep(1000)
+            delay(1000)
         }
         return false
     }
