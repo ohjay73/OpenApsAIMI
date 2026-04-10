@@ -1331,6 +1331,10 @@
 
     <string name="aimi_adv_rec_oref_isf_hypo_title">Hypo pattern: discuss ISF with your care team</string>
     <string name="aimi_adv_rec_oref_isf_hypo_desc">On-device OREF/ML marks hypo priority. About %1$s%% of CGM time was below 70 mg/dL. Ask your clinician whether a modestly higher ISF (more mg/dL per unit = gentler corrections) fits your profile—avoid abrupt one-step jumps.</string>
+    <string name="aimi_adv_rec_oref_isf_hyper_title">High pattern: ISF direction with your team</string>
+    <string name="aimi_adv_rec_oref_isf_hyper_desc">Time above 180 is about %1$s%% with few lows. Discuss whether profile ISF should allow slightly stronger corrections (often a modestly lower ISF in mg/dL per U)—only with clinician oversight.</string>
+    <string name="aimi_adv_rec_oref_isf_mixed_title">Mixed highs and lows: ISF trade-offs</string>
+    <string name="aimi_adv_rec_oref_isf_mixed_desc">OREF flags both hypo and hyper pressure (about %1$s%% below 70 and %2$s%% above 180). ISF moves are ambiguous: follow whichever problem dominates week-over-week (softer if lows lead, stronger if highs lead) with your care team.</string>
     <string name="aimi_adv_rec_oref_basal_hypo_title">Basal share and lows</string>
     <string name="aimi_adv_rec_oref_basal_hypo_desc">Basal is about %1$s%% of TDD while hypo risk is elevated. Review overnight and daytime basal segments with your team before changing meal ratios or PKPD.</string>
     <string name="aimi_adv_rec_oref_ic_hyper_title">Post-meal highs: verify carb ratios</string>
@@ -1338,7 +1342,18 @@
     <string name="aimi_adv_rec_oref_pkpd_review_title">PKPD: DIA, peak, damping</string>
     <string name="aimi_adv_rec_oref_pkpd_review_desc">PKPD is enabled and OREF flags an imbalance. With your clinician, review DIA, peak time, and SMB damping together—not in isolation—using the advisor cards above as a checklist.</string>
     <string name="aimi_adv_rec_oref_autodrive_mpc_title">AutoDrive: MPC aggressiveness</string>
-    <string name="aimi_adv_rec_oref_autodrive_mpc_desc">AutoDrive is on. Current MPC insulin-per-kg step is %1$s (preference). If highs persist without lows, discuss a cautious tweak with your team; if hypos appear, prefer reducing aggressiveness first.</string>
+    <string name="aimi_adv_rec_oref_autodrive_mpc_desc">AutoDrive is on. Current MPC insulin-per-kg step is %1$s (preference). If highs persist without lows, discuss a cautious increase with your team; do not escalate repeatedly without review.</string>
+    <string name="aimi_adv_rec_oref_autodrive_mpc_hypo_title">AutoDrive: lean toward less aggressive MPC</string>
+    <string name="aimi_adv_rec_oref_autodrive_mpc_hypo_desc">Frequent lows while AutoDrive is on (MPC step %1$s). Discuss reducing MPC aggressiveness with your clinician before any further increases.</string>
+
+    <string name="aimi_adv_rec_pkpd_relief_reduce_title">Lower PKPD relief floor (hypo context)</string>
+    <string name="aimi_adv_rec_pkpd_relief_reduce_desc">Relief minimum factor is %1$s with elevated time below 70. Consider stepping toward ~%2$s with supervision, then reassess—tuning goes both ways.</string>
+    <string name="aimi_adv_rec_redcarpet_reduce_title">Lower Red Carpet restore threshold (hypo context)</string>
+    <string name="aimi_adv_rec_redcarpet_reduce_desc">Restore threshold is %1$s while lows are frequent. A modest decrease toward ~%2$s may reduce late SMB snap-back—confirm with your team.</string>
+    <string name="aimi_adv_rec_priority_maxiob_reduce_title">Reduce priority MaxIOB factor (hypo context)</string>
+    <string name="aimi_adv_rec_priority_maxiob_reduce_desc">Priority MaxIOB factor is %1$s with significant hypo exposure. Consider ~%2$s under supervision rather than further increases.</string>
+    <string name="aimi_adv_rec_priority_maxiob_extra_reduce_title">Trim priority MaxIOB extra (hypo context)</string>
+    <string name="aimi_adv_rec_priority_maxiob_extra_reduce_desc">Priority MaxIOB extra is %1$sU while lows are elevated. A step toward ~%2$sU may be safer than pushing headroom higher.</string>
 
     <string name="aimi_pkpd_title_enable">Activation PK/PD</string>
     <string name="aimi_pkpd_title_dia">Durée d\'action (DIA)</string>
@@ -1353,6 +1368,8 @@
     <string name="aimi_pkpd_hypo_dia">Hypoglycémies détectées : Allonger la DIA (%1$s -> %2$sh) pour réduire l\'empilement (stacking).</string>
     <string name="aimi_pkpd_hypo_peak">Hypoglycémies précoces : Retarder le pic (%1$s min) pour adoucir la courbe.</string>
     <string name="aimi_pkpd_hypo_damping">Risque hypo : Augmenter l\'amortissement (Damping) pour réduire les SMB en fin de DIA.</string>
+    <string name="aimi_pkpd_hypo_isf_reduce">Frequent lows with high ISF-fusion headroom: consider lowering max fusion from %1$sx to ~%2$sx with your clinician to cap aggressive corrections.</string>
+    <string name="aimi_pkpd_hyper_damping_reduce">Persistent highs with strong SMB tail damping (%1$s): if hypos are rare, discuss a modest damping decrease to ~%2$s instead of only ever increasing it.</string>
     <string name="aimi_meal_advisor_title">AIMI Meal Advisor</string>
 
 

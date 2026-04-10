@@ -63,10 +63,12 @@ class PkpdAdvisor {
 
         val hypoTrigger = hypoPkpdTrigger(metrics, oref)
         val hyperTrigger = hyperPkpdTrigger(metrics, oref)
+        val mode = resolvePkpdMode(hypoTrigger, hyperTrigger, metrics, oref)
 
         // 2. HYPERS Analysis
         // Default threshold 40% >180 (conservative). When OREF marks hyper priority with exposure, allow earlier PKPD hints.
-        if (hyperTrigger) {
+        // Never run hypo + hyper blocks together: same knob would get contradictory +0.5 / -0.5 DIA recommendations.
+        if (mode == PkpdMode.HYPER_DOMINANT) {
 
             // A) DIA too long? Only suggest if well above the lower bound.
             if (pkpd.initialDiaH > pkpd.boundsDiaMinH + 1.0) { // was +0.5
@@ -130,11 +132,34 @@ class PkpdAdvisor {
                     descriptionArgs = listOf(newFactor.toString())
                 )
             }
+
+            // D) SMB damping very high while hypers dominate and hypos are rare — allow slightly more tail delivery
+            if (pkpd.smbTailDamping > 0.72 && metrics.timeBelow70 < 0.035) {
+                val newDamping = max(0.35, pkpd.smbTailDamping - 0.08)
+                if (newDamping < pkpd.smbTailDamping - 0.01) {
+                    val explanation = rh.gs(R.string.aimi_pkpd_hyper_damping_reduce, pkpd.smbTailDamping.toString(), newDamping.toString())
+                    val action = AimiAction.PreferenceUpdate(
+                        key = app.aaps.core.keys.DoubleKey.OApsAIMISmbTailDamping,
+                        newValue = newDamping,
+                        reason = explanation,
+                        domain = AimiDomain.Pkpd,
+                        priority = AimiPriority.Medium
+                    )
+                    suggestions += AimiRecommendation(
+                        titleResId = R.string.aimi_pkpd_title_damping,
+                        descriptionResId = R.string.aimi_pkpd_hyper_damping_reduce,
+                        priority = AimiPriority.Medium,
+                        domain = AimiDomain.Pkpd,
+                        action = action,
+                        descriptionArgs = listOf(pkpd.smbTailDamping.toString(), newDamping.toString())
+                    )
+                }
+            }
         }
 
         // 3. HYPOS Analysis
         // Default threshold 7% <70. When OREF marks hypo priority and data are usable, allow ~5.5% + corroboration.
-        if (hypoTrigger) {
+        if (mode == PkpdMode.HYPO_DOMINANT) {
 
             // A) DIA too short? Only suggest if well below the upper bound.
             if (pkpd.initialDiaH < pkpd.boundsDiaMaxH - 1.0) { // was -0.5
@@ -198,9 +223,70 @@ class PkpdAdvisor {
                     descriptionArgs = listOf(newDamping.toString())
                 )
             }
+
+            // D) ISF fusion headroom already high — reduce max fusion to cap aggressive corrections during lows
+            if (pkpd.isfFusionMaxFactor > 1.35) {
+                val newFactor = max(1.0, pkpd.isfFusionMaxFactor - 0.1)
+                if (newFactor < pkpd.isfFusionMaxFactor - 0.01) {
+                    val explanation = rh.gs(R.string.aimi_pkpd_hypo_isf_reduce, pkpd.isfFusionMaxFactor.toString(), newFactor.toString())
+                    val action = AimiAction.PreferenceUpdate(
+                        key = app.aaps.core.keys.DoubleKey.OApsAIMIIsfFusionMaxFactor,
+                        newValue = newFactor,
+                        reason = explanation,
+                        domain = AimiDomain.Pkpd,
+                        priority = AimiPriority.High
+                    )
+                    suggestions += AimiRecommendation(
+                        titleResId = R.string.aimi_pkpd_title_isf,
+                        descriptionResId = R.string.aimi_pkpd_hypo_isf_reduce,
+                        priority = AimiPriority.High,
+                        domain = AimiDomain.Pkpd,
+                        action = action,
+                        descriptionArgs = listOf(pkpd.isfFusionMaxFactor.toString(), newFactor.toString())
+                    )
+                }
+            }
         }
 
         return suggestions
+    }
+
+    private enum class PkpdMode { HYPO_DOMINANT, HYPER_DOMINANT, NEITHER }
+
+    /**
+     * When hypo and hyper triggers both fire, pick one dominant context so we never recommend opposite steps for the same parameter.
+     */
+    private fun resolvePkpdMode(
+        hypoTrigger: Boolean,
+        hyperTrigger: Boolean,
+        metrics: AdvisorMetrics,
+        oref: OrefAnalysisReport?,
+    ): PkpdMode {
+        if (!hypoTrigger && !hyperTrigger) return PkpdMode.NEITHER
+        if (hypoTrigger && !hyperTrigger) return PkpdMode.HYPO_DOMINANT
+        if (hyperTrigger && !hypoTrigger) return PkpdMode.HYPER_DOMINANT
+        when (oref?.priority) {
+            OrefGlycemicPriority.HYPO -> return PkpdMode.HYPO_DOMINANT
+            OrefGlycemicPriority.HYPER -> return PkpdMode.HYPER_DOMINANT
+            OrefGlycemicPriority.BOTH -> {
+                if (metrics.timeBelow70 >= 0.06) return PkpdMode.HYPO_DOMINANT
+                if (metrics.timeAbove180 >= 0.30 && metrics.timeBelow70 < 0.045) return PkpdMode.HYPER_DOMINANT
+                return if (metrics.timeBelow70 * 1.3 >= metrics.timeAbove180) {
+                    PkpdMode.HYPO_DOMINANT
+                } else {
+                    PkpdMode.HYPER_DOMINANT
+                }
+            }
+            else -> {
+                if (metrics.timeBelow70 >= 0.06) return PkpdMode.HYPO_DOMINANT
+                if (metrics.timeAbove180 >= 0.35 && metrics.timeBelow70 < 0.035) return PkpdMode.HYPER_DOMINANT
+                return if (metrics.timeBelow70 * 1.2 >= metrics.timeAbove180) {
+                    PkpdMode.HYPO_DOMINANT
+                } else {
+                    PkpdMode.HYPER_DOMINANT
+                }
+            }
+        }
     }
 
     private fun orefContradictsQuietPeriod(oref: OrefAnalysisReport?): Boolean {

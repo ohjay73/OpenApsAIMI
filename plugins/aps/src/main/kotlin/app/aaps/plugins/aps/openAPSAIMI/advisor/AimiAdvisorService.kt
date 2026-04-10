@@ -482,7 +482,7 @@ class AimiAdvisorService {
                 )
             }
 
-            if (reliefEnabled && reliefMinFactor < 0.70 && ctx.metrics.timeAbove180 > 0.25) {
+            if (reliefEnabled && reliefMinFactor < 0.70 && ctx.metrics.timeAbove180 > 0.25 && ctx.metrics.timeBelow70 <= 0.045) {
                 recs.add(
                     AimiRecommendation(
                         titleResId = R.string.aimi_adv_rec_pkpd_relief_factor_title,
@@ -499,7 +499,7 @@ class AimiAdvisorService {
                 )
             }
 
-            if (reliefEnabled && redCarpetRestore < 0.65 && ctx.metrics.timeAbove180 > 0.25) {
+            if (reliefEnabled && redCarpetRestore < 0.65 && ctx.metrics.timeAbove180 > 0.25 && ctx.metrics.timeBelow70 <= 0.045) {
                 recs.add(
                     AimiRecommendation(
                         titleResId = R.string.aimi_adv_rec_redcarpet_restore_title,
@@ -535,6 +535,99 @@ class AimiAdvisorService {
                     )
                 )
             }
+
+            // Bidirectional: when hypos dominate, prefer lowering aggressive SMB headroom (not only ever-increasing factors).
+            if (reliefEnabled && reliefMinFactor > 0.76 && ctx.metrics.timeBelow70 > 0.055) {
+                val proposed = (reliefMinFactor - 0.06).coerceIn(0.50, 1.0)
+                if (proposed <= reliefMinFactor - 0.02) {
+                    recs.add(
+                        AimiRecommendation(
+                            titleResId = R.string.aimi_adv_rec_pkpd_relief_reduce_title,
+                            descriptionResId = R.string.aimi_adv_rec_pkpd_relief_reduce_desc,
+                            priority = app.aaps.plugins.aps.openAPSAIMI.model.AimiPriority.High,
+                            domain = app.aaps.plugins.aps.openAPSAIMI.model.AimiDomain.Pkpd,
+                            action = app.aaps.plugins.aps.openAPSAIMI.model.AimiAction.PreferenceUpdate(
+                                key = DoubleKey.OApsAIMIPkpdPragmaticReliefMinFactor,
+                                newValue = proposed,
+                                reason = "Lower pragmatic relief floor slightly while hypo burden is elevated (reversible when control stabilizes).",
+                            ),
+                            descriptionArgs = listOf(
+                                String.format(Locale.US, "%.2f", reliefMinFactor),
+                                String.format(Locale.US, "%.2f", proposed),
+                            ),
+                        ),
+                    )
+                }
+            }
+
+            if (reliefEnabled && redCarpetRestore > 0.72 && ctx.metrics.timeBelow70 > 0.055) {
+                val proposed = (redCarpetRestore - 0.05).coerceIn(0.50, 0.95)
+                if (proposed <= redCarpetRestore - 0.02) {
+                    recs.add(
+                        AimiRecommendation(
+                            titleResId = R.string.aimi_adv_rec_redcarpet_reduce_title,
+                            descriptionResId = R.string.aimi_adv_rec_redcarpet_reduce_desc,
+                            priority = app.aaps.plugins.aps.openAPSAIMI.model.AimiPriority.Medium,
+                            domain = app.aaps.plugins.aps.openAPSAIMI.model.AimiDomain.Profile,
+                            action = app.aaps.plugins.aps.openAPSAIMI.model.AimiAction.PreferenceUpdate(
+                                key = DoubleKey.OApsAIMIRedCarpetRestoreThreshold,
+                                newValue = proposed,
+                                reason = "Slightly lower restore threshold while lows are frequent to reduce late SMB snap-back.",
+                            ),
+                            descriptionArgs = listOf(
+                                String.format(Locale.US, "%.2f", redCarpetRestore),
+                                String.format(Locale.US, "%.2f", proposed),
+                            ),
+                        ),
+                    )
+                }
+            }
+
+            if (reliefEnabled && maxIobFactor > 1.10 && ctx.metrics.timeBelow70 > 0.05) {
+                val proposed = (maxIobFactor - 0.08).coerceIn(1.0, 1.6)
+                if (proposed <= maxIobFactor - 0.03) {
+                    recs.add(
+                        AimiRecommendation(
+                            titleResId = R.string.aimi_adv_rec_priority_maxiob_reduce_title,
+                            descriptionResId = R.string.aimi_adv_rec_priority_maxiob_reduce_desc,
+                            priority = app.aaps.plugins.aps.openAPSAIMI.model.AimiPriority.High,
+                            domain = app.aaps.plugins.aps.openAPSAIMI.model.AimiDomain.Profile,
+                            action = app.aaps.plugins.aps.openAPSAIMI.model.AimiAction.PreferenceUpdate(
+                                key = DoubleKey.OApsAIMIPriorityMaxIobFactor,
+                                newValue = proposed,
+                                reason = "Reduce priority MaxIOB factor while hypo exposure is significant.",
+                            ),
+                            descriptionArgs = listOf(
+                                String.format(Locale.US, "%.2f", maxIobFactor),
+                                String.format(Locale.US, "%.2f", proposed),
+                            ),
+                        ),
+                    )
+                }
+            }
+
+            if (reliefEnabled && maxIobExtra > 1.6 && ctx.metrics.timeBelow70 > 0.055) {
+                val proposed = (maxIobExtra - 0.5).coerceIn(0.0, 5.0)
+                if (proposed <= maxIobExtra - 0.25) {
+                    recs.add(
+                        AimiRecommendation(
+                            titleResId = R.string.aimi_adv_rec_priority_maxiob_extra_reduce_title,
+                            descriptionResId = R.string.aimi_adv_rec_priority_maxiob_extra_reduce_desc,
+                            priority = app.aaps.plugins.aps.openAPSAIMI.model.AimiPriority.Medium,
+                            domain = app.aaps.plugins.aps.openAPSAIMI.model.AimiDomain.Profile,
+                            action = app.aaps.plugins.aps.openAPSAIMI.model.AimiAction.PreferenceUpdate(
+                                key = DoubleKey.OApsAIMIPriorityMaxIobExtraU,
+                                newValue = proposed,
+                                reason = "Trim priority MaxIOB extra U during elevated hypo burden.",
+                            ),
+                            descriptionArgs = listOf(
+                                String.format(Locale.US, "%.2f", maxIobExtra),
+                                String.format(Locale.US, "%.2f", proposed),
+                            ),
+                        ),
+                    )
+                }
+            }
         }
 
         appendOrefGuidanceRecommendations(ctx, oref, recs)
@@ -566,21 +659,56 @@ class AimiAdvisorService {
 
         val hypoFocus = oref.priority == OrefGlycemicPriority.HYPO || oref.priority == OrefGlycemicPriority.BOTH
         val hyperFocus = oref.priority == OrefGlycemicPriority.HYPER || oref.priority == OrefGlycemicPriority.BOTH
+        val hypoLoad = ctx.metrics.timeBelow70
+        val hyperLoad = ctx.metrics.timeAbove180
+        val mixedOref = hypoFocus && hyperFocus
 
-        if (hypoFocus && ctx.metrics.timeBelow70 >= 0.04) {
+        // ISF guidance: direction depends on whether lows, highs, or both dominate (avoid always “increase” framing).
+        if (mixedOref && hypoLoad >= 0.04 && hyperLoad >= 0.12) {
             recs.add(
                 AimiRecommendation(
-                    titleResId = R.string.aimi_adv_rec_oref_isf_hypo_title,
-                    descriptionResId = R.string.aimi_adv_rec_oref_isf_hypo_desc,
+                    titleResId = R.string.aimi_adv_rec_oref_isf_mixed_title,
+                    descriptionResId = R.string.aimi_adv_rec_oref_isf_mixed_desc,
                     priority = app.aaps.plugins.aps.openAPSAIMI.model.AimiPriority.High,
                     domain = app.aaps.plugins.aps.openAPSAIMI.model.AimiDomain.Profile,
                     action = null,
-                    descriptionArgs = listOf(percent(ctx.metrics.timeBelow70).toString()),
+                    descriptionArgs = listOf(
+                        percent(hypoLoad).toString(),
+                        percent(hyperLoad).toString(),
+                    ),
                 ),
             )
+        } else {
+            val hyperDominatesLoad = hyperFocus && hyperLoad > hypoLoad * 1.25 && hypoLoad < 0.06
+            if (hypoFocus && hypoLoad >= 0.04 && !hyperDominatesLoad) {
+                recs.add(
+                    AimiRecommendation(
+                        titleResId = R.string.aimi_adv_rec_oref_isf_hypo_title,
+                        descriptionResId = R.string.aimi_adv_rec_oref_isf_hypo_desc,
+                        priority = app.aaps.plugins.aps.openAPSAIMI.model.AimiPriority.High,
+                        domain = app.aaps.plugins.aps.openAPSAIMI.model.AimiDomain.Profile,
+                        action = null,
+                        descriptionArgs = listOf(percent(hypoLoad).toString()),
+                    ),
+                )
+            }
+            if (hyperFocus && hyperLoad >= 0.10 && hypoLoad < 0.05) {
+                recs.add(
+                    AimiRecommendation(
+                        titleResId = R.string.aimi_adv_rec_oref_isf_hyper_title,
+                        descriptionResId = R.string.aimi_adv_rec_oref_isf_hyper_desc,
+                        priority = app.aaps.plugins.aps.openAPSAIMI.model.AimiPriority.Medium,
+                        domain = app.aaps.plugins.aps.openAPSAIMI.model.AimiDomain.Profile,
+                        action = null,
+                        descriptionArgs = listOf(percent(hyperLoad).toString()),
+                    ),
+                )
+            }
         }
 
-        if (hypoFocus && ctx.metrics.timeBelow70 >= 0.04 && ctx.metrics.basalPercent >= 0.48) {
+        if (hypoFocus && hypoLoad >= 0.04 && ctx.metrics.basalPercent >= 0.48 &&
+            !(hyperFocus && hyperLoad > hypoLoad * 1.35)
+        ) {
             recs.add(
                 AimiRecommendation(
                     titleResId = R.string.aimi_adv_rec_oref_basal_hypo_title,
@@ -593,7 +721,7 @@ class AimiAdvisorService {
             )
         }
 
-        if (hyperFocus && ctx.metrics.timeAbove180 >= 0.10) {
+        if (hyperFocus && hyperLoad >= 0.10) {
             recs.add(
                 AimiRecommendation(
                     titleResId = R.string.aimi_adv_rec_oref_ic_hyper_title,
@@ -601,7 +729,7 @@ class AimiAdvisorService {
                     priority = app.aaps.plugins.aps.openAPSAIMI.model.AimiPriority.Medium,
                     domain = app.aaps.plugins.aps.openAPSAIMI.model.AimiDomain.Profile,
                     action = null,
-                    descriptionArgs = listOf(percent(ctx.metrics.timeAbove180).toString()),
+                    descriptionArgs = listOf(percent(hyperLoad).toString()),
                 ),
             )
         }
@@ -620,19 +748,34 @@ class AimiAdvisorService {
             )
         }
 
-        if (prefs.get(BooleanKey.OApsAIMIautoDrive) && hyperFocus && ctx.metrics.timeAbove180 >= 0.08) {
-            recs.add(
-                AimiRecommendation(
-                    titleResId = R.string.aimi_adv_rec_oref_autodrive_mpc_title,
-                    descriptionResId = R.string.aimi_adv_rec_oref_autodrive_mpc_desc,
-                    priority = app.aaps.plugins.aps.openAPSAIMI.model.AimiPriority.Low,
-                    domain = app.aaps.plugins.aps.openAPSAIMI.model.AimiDomain.Profile,
-                    action = null,
-                    descriptionArgs = listOf(
-                        String.format(Locale.US, "%.3f", ctx.prefs.mpcInsulinUPerKgPerStep),
+        if (prefs.get(BooleanKey.OApsAIMIautoDrive)) {
+            if (hypoFocus && ctx.metrics.timeBelow70 >= 0.055) {
+                recs.add(
+                    AimiRecommendation(
+                        titleResId = R.string.aimi_adv_rec_oref_autodrive_mpc_hypo_title,
+                        descriptionResId = R.string.aimi_adv_rec_oref_autodrive_mpc_hypo_desc,
+                        priority = app.aaps.plugins.aps.openAPSAIMI.model.AimiPriority.Medium,
+                        domain = app.aaps.plugins.aps.openAPSAIMI.model.AimiDomain.Profile,
+                        action = null,
+                        descriptionArgs = listOf(
+                            String.format(Locale.US, "%.3f", ctx.prefs.mpcInsulinUPerKgPerStep),
+                        ),
                     ),
-                ),
-            )
+                )
+            } else if (hyperFocus && ctx.metrics.timeAbove180 >= 0.08 && ctx.metrics.timeBelow70 < 0.052) {
+                recs.add(
+                    AimiRecommendation(
+                        titleResId = R.string.aimi_adv_rec_oref_autodrive_mpc_title,
+                        descriptionResId = R.string.aimi_adv_rec_oref_autodrive_mpc_desc,
+                        priority = app.aaps.plugins.aps.openAPSAIMI.model.AimiPriority.Low,
+                        domain = app.aaps.plugins.aps.openAPSAIMI.model.AimiDomain.Profile,
+                        action = null,
+                        descriptionArgs = listOf(
+                            String.format(Locale.US, "%.3f", ctx.prefs.mpcInsulinUPerKgPerStep),
+                        ),
+                    ),
+                )
+            }
         }
     }
 
