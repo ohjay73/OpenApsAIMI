@@ -79,67 +79,12 @@ interface UiInteraction {
     fun updateWidget(context: Context, from: String)
 
     /**
-     * Shows a dialog related to the loop status.
-     * @param fragmentManager The fragment manager to use.
-     * @param showOkCancel A flag to determine dialog buttons.
-     */
-    fun runLoopDialog(fragmentManager: FragmentManager, showOkCancel: Int)
-
-    /**
      * Shows the profile switch dialog.
      * @param fragmentManager The fragment manager to use.
      * @param profileName Optional pre-selected profile name.
      * @param iCfg Optional iCfg to be used within EPS
      */
     fun runProfileSwitchDialog(fragmentManager: FragmentManager, profileName: String? = null, iCfg: ICfg? = null)
-
-    /**
-     * Shows the temporary basal dialog.
-     * @param fragmentManager The fragment manager to use.
-     */
-    fun runTempBasalDialog(fragmentManager: FragmentManager)
-
-    /**
-     * Shows the treatment dialog.
-     * @param fragmentManager The fragment manager to use.
-     */
-    fun runTreatmentDialog(fragmentManager: FragmentManager)
-
-    /**
-     * Shows the insulin dialog.
-     * @param fragmentManager The fragment manager to use.
-     */
-    fun runInsulinDialog(fragmentManager: FragmentManager)
-
-    /**
-     * Shows the calibration dialog.
-     * @param fragmentManager The fragment manager to use.
-     */
-    fun runCalibrationDialog(fragmentManager: FragmentManager)
-
-    /**
-     * Shows the carbs dialog.
-     * @param fragmentManager The fragment manager to use.
-     */
-    fun runCarbsDialog(fragmentManager: FragmentManager)
-
-    /**
-     * Shows the temporary target dialog.
-     * @param fragmentManager The fragment manager to use.
-     */
-    fun runTempTargetDialog(fragmentManager: FragmentManager)
-
-    /**
-     * Shows the extended bolus dialog.
-     * @param fragmentManager The fragment manager to use.
-     */
-    fun runExtendedBolusDialog(fragmentManager: FragmentManager)
-
-    /**
-     * Shows the pump fill/prime dialog.
-     * @param fragmentManager The fragment manager to use.
-     */
-    fun runFillDialog(fragmentManager: FragmentManager)
 
     /**
      * Defines modes for the site rotation dialog.
@@ -179,14 +124,6 @@ interface UiInteraction {
         /** An announcement. */
         ANNOUNCEMENT
     }
-
-    /**
-     * Shows the care portal dialog for a specific event type.
-     * @param fragmentManager The fragment manager to use.
-     * @param options The type of event.
-     * @param event A string resource for the event title.
-     */
-    fun runCareDialog(fragmentManager: FragmentManager, options: EventType, @StringRes event: Int)
 
     /**
      * Opens the preferences screen for a specific plugin.

@@ -2,8 +2,6 @@
 <resources>
 
     <string name="disabled_loop">Loop Disabled</string>
-    <string name="smscommunicator_pump_disconnected">Pump disconnected</string>
-
     <string name="calculator_label">Calculator</string>
 
     <!-- Profile -->
@@ -139,7 +137,7 @@
     <string name="a11y_blood_glucose">blood glucose</string>
     <string name="a11y_bg_outdated">outdated</string>
     <string name="set_basal_question">Accept new temp basal:</string>
-    <string name="overview_cgm">CGM</string>
+
     <!-- overview moved to core:ui module -->
     <string name="overview_shortname">HOME</string>
     <string name="description_overview">Displays the current state of your loop and buttons for most common actions</string>
@@ -160,7 +158,6 @@
     <string name="show_cgm_button_summary">Opens xDrip+ or Dexcom App (you can use back button to return to AAPS).</string>
     <string name="not_available_full">Not available</string>
     <string name="data_status">BG data status</string>
-    <string name="default_temptargets">Default Temp-Targets</string>
     <string name="fill_bolus_title">Fill/Prime standard insulin amounts</string>
     <string name="run_question">Run %s?</string>
 
