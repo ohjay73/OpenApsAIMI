@@ -211,4 +211,16 @@ interface UiInteraction {
      * @param cancel The action to perform when the Dismiss button is clicked or the dialog is dismissed. Run in UI thread.
      */
     fun showError(context: Context, title: String, message: String, @StringRes positiveButton: Int? = null, ok: (() -> Unit)? = null, cancel: (() -> Unit)? = null)
+
+    /** Opens running mode management in the Compose-based main activity. */
+    fun openRunningModeScreen(activity: FragmentActivity)
+
+    /** Opens the insulin bolus screen in the Compose main activity. */
+    fun openInsulinScreen(activity: FragmentActivity)
+
+    /** Opens temp target management in the Compose main activity. */
+    fun openTempTargetManagementScreen(activity: FragmentActivity)
+
+    /** Opens profile management in the Compose main activity. */
+    fun openProfileManagementScreen(activity: FragmentActivity)
 }

@@ -3,6 +3,7 @@
 package app.aaps.plugins.automation.services
 
 import android.Manifest
+import android.app.Notification
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
@@ -83,8 +84,6 @@ class LocationService : DaggerService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-        aapsLogger.debug("Starting LocationService with ID ${notificationHolder.notificationID} notification ${notificationHolder.notification}")
-        startForeground(notificationHolder.notificationID, notificationHolder.notification)
         try {
             aapsLogger.debug("Starting LocationService with ID ${notificationHolder.notificationID} notification ${notificationHolder.notification}")
 

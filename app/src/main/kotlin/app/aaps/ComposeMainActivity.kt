@@ -44,6 +44,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -161,6 +162,10 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class ComposeMainActivity : AppCompatActivity() {
 
+    companion object {
+        const val EXTRA_NAVIGATE_ROUTE = "extra_navigate_route"
+    }
+
     @Inject lateinit var rxBus: RxBus
     @Inject lateinit var rh: ResourceHelper
     @Inject lateinit var importExportPrefs: ImportExportPrefs
@@ -273,9 +278,28 @@ class ComposeMainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val route = intent.getStringExtra(EXTRA_NAVIGATE_ROUTE) ?: return
+        intent.removeExtra(EXTRA_NAVIGATE_ROUTE)
+        navController?.navigate(route) {
+            launchSingleTop = true
+        }
+    }
+
     @Composable
     private fun MainContent() {
         val navController = rememberNavController().also { this.navController = it }
+
+        val composeActivity = LocalContext.current as ComposeMainActivity
+        LaunchedEffect(navController) {
+            val route = composeActivity.intent.getStringExtra(EXTRA_NAVIGATE_ROUTE) ?: return@LaunchedEffect
+            composeActivity.intent.removeExtra(EXTRA_NAVIGATE_ROUTE)
+            navController.navigate(route) {
+                launchSingleTop = true
+            }
+        }
 
         CompositionLocalProvider(
             LocalPreferences provides preferences,

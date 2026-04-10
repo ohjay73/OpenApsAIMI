@@ -3,6 +3,7 @@ package app.aaps.plugins.main.general.overview
 import android.annotation.SuppressLint
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PorterDuff
@@ -46,6 +47,7 @@ import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.iob.GlucoseStatusProvider
 import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.logging.AAPSLogger
+import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.logging.UserEntryLogger
 import app.aaps.core.interfaces.notifications.AapsNotification
 import app.aaps.core.interfaces.notifications.NotificationLevel
@@ -135,7 +137,7 @@ import kotlin.math.abs
 import kotlin.math.min
 import app.aaps.core.interfaces.notifications.NotificationManager as AapsNotificationManager
 
-class OverviewFragment : DaggerFragment(), View.OnClickListener {
+class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClickListener {
 
     @Inject lateinit var aapsLogger: AAPSLogger
     @Inject lateinit var aapsSchedulers: AapsSchedulers
@@ -293,7 +295,10 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener {
 
         binding.graphsLayout.chartMenuButton.visibility = preferences.simpleMode.not().toVisibility()
 
+        binding.activeProfile.setOnClickListener(this)
+        binding.activeProfile.setOnLongClickListener(this)
         binding.tempTarget.setOnClickListener(this)
+        binding.tempTarget.setOnLongClickListener(this)
         binding.pumpStatusLayout.setOnClickListener(this)
         binding.buttonsLayout.acceptTempButton.setOnClickListener(this)
         binding.infoLayout.apsMode.setOnClickListener(this)
@@ -613,12 +618,11 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener {
     }
 
     override fun onClick(v: View) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            // try to fix  https://fabric.io/nightscout3/android/apps/info.nightscout.androidaps/issues/5aca7a1536c7b23527eb4be7?time=last-seven-days
-            // https://stackoverflow.com/questions/14860239/checking-if-state-is-saved-before-committing-a-fragmenttransaction
-            if (childFragmentManager.isStateSaved) return@launch
-            when (v.id) {
-                R.id.accept_temp_button -> {
+        if (childFragmentManager.isStateSaved) return
+        when (v.id) {
+            R.id.accept_temp_button -> {
+                viewLifecycleOwner.lifecycleScope.launch {
+                    if (childFragmentManager.isStateSaved) return@launch
                     profileFunction.getProfile() ?: return@launch
                     if ((loop as PluginBase).isEnabled()) {
                         val lastRun = loop.lastRun
@@ -642,7 +646,66 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener {
                     }
                 }
             }
+
+            R.id.temp_target          -> {
+                val act = activity ?: return
+                protectionCheck.queryProtection(act, ProtectionCheck.Protection.BOLUS, UIRunnable {
+                    if (isAdded) uiInteraction.openTempTargetManagementScreen(act)
+                })
+            }
+
+            R.id.pump_status_layout   -> {
+                val act = activity ?: return
+                uiInteraction.showOkDialog(
+                    context = act,
+                    title = rh.gs(app.aaps.core.ui.R.string.pump),
+                    message = processedDeviceStatusData.extendedPumpStatusHtml
+                )
+            }
+
+            R.id.aps_mode, R.id.loop_indicator, R.id.loop_status -> {
+                val act = activity ?: return
+                protectionCheck.queryProtection(act, ProtectionCheck.Protection.BOLUS, UIRunnable {
+                    if (isAdded) uiInteraction.openRunningModeScreen(act)
+                })
+            }
+
+            R.id.active_profile       -> {
+                val act = activity ?: return
+                uiInteraction.openProfileManagementScreen(act)
+            }
         }
+    }
+
+    override fun onLongClick(v: View): Boolean {
+        when (v.id) {
+            R.id.aps_mode, R.id.loop_indicator, R.id.loop_status -> {
+                activity?.let { act ->
+                    protectionCheck.queryProtection(act, ProtectionCheck.Protection.BOLUS, UIRunnable {
+                        if (isAdded) uiInteraction.openRunningModeScreen(act)
+                    })
+                }
+                return true
+            }
+
+            R.id.temp_target          -> {
+                v.performClick()
+                return true
+            }
+
+            R.id.active_profile       -> {
+                activity?.let { act ->
+                    if (loop.runningMode == RM.Mode.DISCONNECTED_PUMP)
+                        OKDialog.show(act, rh.gs(R.string.not_available_full), rh.gs(R.string.smscommunicator_pump_disconnected))
+                    else
+                        protectionCheck.queryProtection(act, ProtectionCheck.Protection.BOLUS, UIRunnable {
+                            uiInteraction.runProfileSwitchDialog(childFragmentManager)
+                        })
+                }
+                return true
+            }
+        }
+        return false
     }
 
     @SuppressLint("SetTextI18n")
@@ -1276,7 +1339,6 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener {
         val menuChartSettings = overviewMenus.setting
         if (menuChartSettings.isEmpty()) return
         graphData.addInRangeArea(
-            overviewData.fromTime, overviewData.endTime,
             preferences.get(UnitDoubleKey.OverviewLowMark),
             preferences.get(UnitDoubleKey.OverviewHighMark)
         )

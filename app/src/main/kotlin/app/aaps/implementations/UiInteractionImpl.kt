@@ -7,6 +7,8 @@ import androidx.annotation.RawRes
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.FragmentManager
 import app.aaps.ComposeMainActivity
+import app.aaps.compose.navigation.AppRoute
+import app.aaps.core.ui.compose.ScreenMode
 import app.aaps.activities.HistoryBrowseActivity
 import app.aaps.activities.MyPreferenceFragment
 import app.aaps.activities.PreferencesActivity
@@ -124,5 +126,33 @@ class UiInteractionImpl @Inject constructor(
 
     override fun showError(context: Context, title: String, message: String, positiveButton: Int?, ok: (() -> Unit)?, cancel: (() -> Unit)?) {
         alertDialogs.showError(context, title, message, positiveButton, ok, cancel)
+    }
+
+    override fun openRunningModeScreen(activity: FragmentActivity) {
+        activity.startActivity(Intent(activity, ComposeMainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            putExtra(ComposeMainActivity.EXTRA_NAVIGATE_ROUTE, AppRoute.RunningMode.route)
+        })
+    }
+
+    override fun openInsulinScreen(activity: FragmentActivity) {
+        activity.startActivity(Intent(activity, ComposeMainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            putExtra(ComposeMainActivity.EXTRA_NAVIGATE_ROUTE, AppRoute.InsulinDialog.route)
+        })
+    }
+
+    override fun openTempTargetManagementScreen(activity: FragmentActivity) {
+        activity.startActivity(Intent(activity, ComposeMainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            putExtra(ComposeMainActivity.EXTRA_NAVIGATE_ROUTE, AppRoute.TempTargetManagement.createRoute(ScreenMode.EDIT))
+        })
+    }
+
+    override fun openProfileManagementScreen(activity: FragmentActivity) {
+        activity.startActivity(Intent(activity, ComposeMainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            putExtra(ComposeMainActivity.EXTRA_NAVIGATE_ROUTE, AppRoute.Profile.createRoute(ScreenMode.EDIT))
+        })
     }
 }

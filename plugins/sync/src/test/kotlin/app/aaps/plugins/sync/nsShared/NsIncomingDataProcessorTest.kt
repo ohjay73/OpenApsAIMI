@@ -46,6 +46,7 @@ class NsIncomingDataProcessorTest : TestBaseWithProfile() {
     @Mock lateinit var nsClientSource: NSClientSource
     @Mock lateinit var storeDataForDb: StoreDataForDb
     @Mock lateinit var nsClientRepository: NSClientRepository
+    @Mock lateinit var contextManager: app.aaps.plugins.aps.openAPSAIMI.context.ContextManager
     private val nsiCfg = NSICfg(insulinLabel = "Fake", insulinEndTime = 9 * 3600 * 1000, insulinPeakTime = 60 * 60 * 1000, concentration = 1.0)
 
     @BeforeEach
@@ -69,7 +70,8 @@ class NsIncomingDataProcessorTest : TestBaseWithProfile() {
             config = config,
             profileStoreProvider = profileStoreProvider,
             notificationManager = notificationManager,
-            nsClientRepository = nsClientRepository
+            nsClientRepository = nsClientRepository,
+            contextManager = contextManager
         )
     }
 

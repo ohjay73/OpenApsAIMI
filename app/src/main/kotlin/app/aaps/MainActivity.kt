@@ -29,6 +29,7 @@ import androidx.core.view.MenuProvider
 import app.aaps.activities.DashboardPreviewActivity
 import app.aaps.activities.HistoryBrowseActivity
 import app.aaps.activities.PreferencesActivity
+import app.aaps.core.data.plugin.PluginType
 import app.aaps.core.data.ue.Action
 import app.aaps.core.data.ue.Sources
 import app.aaps.core.interfaces.aps.Loop
@@ -477,7 +478,10 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
         if (!config.AAPSCLIENT && !config.PUMPCONTROL)
             activePlugin.activeAPS?.let { fabricPrivacy.setUserProperty("Aps", it::class.java.simpleName) }
         activePlugin.activeBgSource.let { fabricPrivacy.setUserProperty("BgSource", it::class.java.simpleName) }
-        fabricPrivacy.setUserProperty("Profile", activePlugin.activeProfileSource.javaClass.simpleName)
+        fabricPrivacy.setUserProperty(
+            "Profile",
+            activePlugin.getSpecificPluginsList(PluginType.PROFILE).firstOrNull { it.isEnabled() }?.javaClass?.simpleName ?: "none"
+        )
         activePlugin.activeSensitivity.let { fabricPrivacy.setUserProperty("Sensitivity", it::class.java.simpleName) }
         fabricPrivacy.setUserProperty("Insulin", insulin::class.java.simpleName)
         // Add to crash log too
