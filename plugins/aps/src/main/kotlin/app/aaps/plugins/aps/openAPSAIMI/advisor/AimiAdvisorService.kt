@@ -114,14 +114,14 @@ class AimiAdvisorService {
             }
         }
 
-        // ONNX in Oref loads native sessions + large matrices on top of heavy APS JSON — skip in Advisor to avoid OOM process kill.
+        // Pass application Context so assets/oref/*.onnx can be loaded when present. Window stays capped (OrefLocalPipeline) to limit heap.
         val orefInsight = if (persistenceLayer != null) {
             runBlocking {
                 try {
                     OrefLocalPipeline(persistenceLayer).run(
                         profileSnapshot = context.profile,
                         windowDays = OrefLocalPipeline.DEFAULT_HISTORY_DAYS,
-                        assetContext = null,
+                        assetContext = assetContext,
                     )
                 } catch (t: Throwable) {
                     aapsLogger?.error(app.aaps.core.interfaces.logging.LTag.APS, "OrefLocalPipeline failed", t)
