@@ -5,7 +5,10 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Space
@@ -155,14 +158,18 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                     // Footer
                     rootLayout.addView(createFooter(report))
                 }
-            } catch (e: Exception) {
+            } catch (t: Throwable) {
                 withContext(Dispatchers.Main) {
                     if (!isFinishing) {
-                        loadingText.text = "${rh.gs(R.string.aimi_adv_error_prefix)}${e.localizedMessage}"
+                        val msg = when (t) {
+                            is OutOfMemoryError -> rh.gs(R.string.aimi_adv_error_oom)
+                            else -> "${rh.gs(R.string.aimi_adv_error_prefix)}${t.localizedMessage ?: t.javaClass.simpleName}"
+                        }
+                        loadingText.text = msg
                         loadingText.setTextColor(Color.parseColor("#F87171")) // Red
                     }
                 }
-                e.printStackTrace()
+                t.printStackTrace()
             }
         }
     }
@@ -867,8 +874,97 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             setLineSpacing(5f, 1.15f)
             setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
         })
+
+        val canShowCgmChart =
+            oref.timeBelow70Pct != null || oref.timeInRange70180Pct != null || oref.timeAbove180Pct != null
+        if (canShowCgmChart) {
+            val chartBlock = createOrefCgmRangeChart(oref).apply {
+                visibility = View.GONE
+            }
+            layout.addView(Button(this).apply {
+                text = rh.gs(R.string.aimi_adv_oref_show_chart)
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.parseColor("#334155"))
+                setPadding(rh.dpToPx(12), rh.dpToPx(10), rh.dpToPx(12), rh.dpToPx(10))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = rh.dpToPx(16)
+                }
+                setOnClickListener { buttonView ->
+                    val show = chartBlock.visibility != View.VISIBLE
+                    chartBlock.visibility = if (show) View.VISIBLE else View.GONE
+                    (buttonView as Button).text = rh.gs(
+                        if (show) R.string.aimi_adv_oref_hide_chart else R.string.aimi_adv_oref_show_chart
+                    )
+                }
+            })
+            layout.addView(chartBlock)
+        }
+
         card.addView(layout)
         return card
+    }
+
+    /** Bar chart for OREF-window CGM distribution (same % as the monospace summary above). */
+    private fun createOrefCgmRangeChart(oref: OrefAnalysisReport): LinearLayout {
+        val maxBarPx = rh.dpToPx(120)
+        val barWidthPx = rh.dpToPx(28)
+
+        fun column(label: String, pct: Double?, barColor: Int): LinearLayout {
+            val value = pct ?: 0.0
+            val fillH = (value / 100.0 * maxBarPx).roundToInt().coerceIn(0, maxBarPx)
+            return LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+
+                addView(TextView(this@AimiProfileAdvisorActivity).apply {
+                    text = pct?.let { String.format(Locale.US, "%.1f%%", it) } ?: "—"
+                    textSize = 12f
+                    setTextColor(Color.WHITE)
+                    gravity = Gravity.CENTER_HORIZONTAL
+                })
+
+                val track = FrameLayout(this@AimiProfileAdvisorActivity).apply {
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxBarPx).apply {
+                        topMargin = rh.dpToPx(8)
+                        bottomMargin = rh.dpToPx(8)
+                    }
+                    setBackgroundColor(Color.parseColor("#334155"))
+                }
+                track.addView(View(this@AimiProfileAdvisorActivity).apply {
+                    layoutParams = FrameLayout.LayoutParams(barWidthPx, fillH, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+                    setBackgroundColor(barColor)
+                })
+                addView(track)
+
+                addView(TextView(this@AimiProfileAdvisorActivity).apply {
+                    text = label
+                    textSize = 11f
+                    setTextColor(Color.parseColor("#94A3B8"))
+                    gravity = Gravity.CENTER_HORIZONTAL
+                })
+            }
+        }
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = rh.dpToPx(8)
+            }
+            addView(TextView(this@AimiProfileAdvisorActivity).apply {
+                text = rh.gs(R.string.aimi_adv_oref_chart_title)
+                textSize = 13f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.parseColor("#E2E8F0"))
+                setPadding(0, 0, 0, rh.dpToPx(8))
+            })
+            addView(LinearLayout(this@AimiProfileAdvisorActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(column(rh.gs(R.string.aimi_adv_oref_bar_low), oref.timeBelow70Pct, Color.parseColor("#F87171")))
+                addView(column(rh.gs(R.string.aimi_adv_oref_bar_in_range), oref.timeInRange70180Pct, Color.parseColor("#4ADE80")))
+                addView(column(rh.gs(R.string.aimi_adv_oref_bar_high), oref.timeAbove180Pct, Color.parseColor("#FBBF24")))
+            })
+        }
     }
 
     private fun createCoachCard(context: AdvisorContext, report: AdvisorReport, cardBg: Int): CardView {
@@ -948,9 +1044,13 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                     if (!isFinishing) {
                         contentText.text = advice
                     }
-                } catch (e: Exception) {
+                } catch (t: Throwable) {
                     if (!isFinishing) {
-                        contentText.text = rh.gs(R.string.aimi_coach_error) + "\n" + e.localizedMessage
+                        val detail = when (t) {
+                            is OutOfMemoryError -> rh.gs(R.string.aimi_adv_error_oom)
+                            else -> t.localizedMessage ?: t.javaClass.simpleName
+                        }
+                        contentText.text = rh.gs(R.string.aimi_coach_error) + "\n" + detail
                     }
                 }
             }

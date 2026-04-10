@@ -49,9 +49,9 @@ class PrepareBucketedDataWorker(
     )
 
     override suspend fun doWorkAndLog(): Result {
-        val storeKey = inputData.getLong(DataWorkerStorage.STORE_KEY, -1)
-        // MIGRATION: KEEP - Data retrieval logic (peek: allow WorkManager retry if run fails mid-flight)
-        val data = dataWorkerStorage.peekObject(storeKey) as? PrepareBucketedData?
+
+        // MIGRATION: KEEP - Data retrieval logic
+        val data = dataWorkerStorage.pickupObject(inputData.getLong(DataWorkerStorage.STORE_KEY, -1)) as? PrepareBucketedData?
             ?: return Result.failure(workDataOf("Error" to "missing input data"))
 
         val toTime = data.overviewData.toTime
@@ -61,14 +61,9 @@ class PrepareBucketedDataWorker(
         // val fromTime = overviewDataCache.timeRange?.fromTime ?: return Result.failure()
 
         // MIGRATION: KEEP - Get bucketed data from IobCobCalculator
-        val bucketedData = data.iobCobCalculator.ads.getBucketedDataTableCopy()
-        if (bucketedData == null) {
-            dataWorkerStorage.removeObject(storeKey)
-            return Result.success()
-        }
+        val bucketedData = data.iobCobCalculator.ads.getBucketedDataTableCopy() ?: return Result.success()
         if (bucketedData.isEmpty()) {
             aapsLogger.debug("No bucketed data.")
-            dataWorkerStorage.removeObject(storeKey)
             return Result.success()
         }
 
@@ -126,7 +121,6 @@ class PrepareBucketedDataWorker(
         overviewDataCache.updateBucketedData(bucketedDataPoints)
         // ========== MIGRATION: KEEP - End Compose/Vico code ==========
 
-        dataWorkerStorage.removeObject(storeKey)
         return Result.success()
     }
 }

@@ -329,12 +329,12 @@ class OrefLocalPipeline(
 
     companion object {
         /** Default window when caller does not override (keeps Advisor heap use predictable). */
-        const val DEFAULT_HISTORY_DAYS: Long = 14L
+        const val DEFAULT_HISTORY_DAYS: Long = 7L
 
         /**
-         * Hard cap: each APSResult holds full loop JSON; 30d can exhaust a 256MB heap during Room cursor read.
+         * Hard cap: each APSResult holds full loop JSON; Room cursor + merge buffers can OOM on ~256MB heaps.
          */
-        const val MAX_HISTORY_DAYS_FOR_MEMORY: Long = 14L
+        const val MAX_HISTORY_DAYS_FOR_MEMORY: Long = 7L
 
         private const val MERGE_TOLERANCE_MS = 600_000L
         private const val ONNX_BATCH = 256

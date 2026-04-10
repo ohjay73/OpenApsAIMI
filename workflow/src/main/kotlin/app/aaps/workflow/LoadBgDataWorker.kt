@@ -56,15 +56,14 @@ class LoadBgDataWorker(
     }
 
     override suspend fun doWorkAndLog(): Result {
-        val storeKey = inputData.getLong(DataWorkerStorage.STORE_KEY, -1)
-        val data = dataWorkerStorage.peekObject(storeKey) as LoadBgData?
+
+        val data = dataWorkerStorage.pickupObject(inputData.getLong(DataWorkerStorage.STORE_KEY, -1)) as LoadBgData?
             ?: return Result.failure(workDataOf("Error" to "missing input data"))
 
         data.iobCobCalculator.ads.loadBgData(data.end, persistenceLayer, aapsLogger, dateUtil)
         data.iobCobCalculator.ads.smoothData(activePlugin)
         rxBus.send(EventBucketedDataCreated())
         data.iobCobCalculator.clearCache()
-        dataWorkerStorage.removeObject(storeKey)
         return Result.success()
     }
 }
