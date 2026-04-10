@@ -217,6 +217,15 @@
             </intent-filter>
         </activity-alias>
 
+        <!-- WorkManager (Android 14+): SystemForegroundService must declare a type when targetSdk >= 34.
+             Without this merge, startForeground() can run as FGS type "none" and throw InvalidForegroundServiceTypeException. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:directBootAware="false"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
     </application>
 
 </manifest>
