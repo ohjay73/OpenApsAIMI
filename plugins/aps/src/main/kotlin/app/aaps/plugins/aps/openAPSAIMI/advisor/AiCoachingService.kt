@@ -13,6 +13,8 @@ import javax.inject.Singleton
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import app.aaps.plugins.aps.openAPSAIMI.model.AimiAction
+import java.util.Locale
 
 /**
  * =============================================================================
@@ -257,7 +259,7 @@ class AiCoachingService @Inject constructor() {
 
         // 1. Context: Metrics
         sb.append("--- PATIENT METRICS (Advisor period) ---\n")
-        sb.append("Score: ${report.overallScore}/10 | GMI: ${ctx.metrics.gmi}%\n")
+        sb.append("Score: ${report.overallScore}/10 | GMI-style index: ${String.format(Locale.US, "%.1f", ctx.metrics.gmi)}\n")
         sb.append("TIR (70-180): ${(ctx.metrics.tir70_180 * 100).roundToInt()}%\n")
         sb.append("Hypo (<70): ${(ctx.metrics.timeBelow70 * 100).roundToInt()}% | Severe (<54): ${(ctx.metrics.timeBelow54 * 100).roundToInt()}%\n")
         sb.append("Hyper (>180): ${(ctx.metrics.timeAbove180 * 100).roundToInt()}%\n")
@@ -282,29 +284,32 @@ class AiCoachingService @Inject constructor() {
         sb.append("Basal (Night): ${ctx.profile.nightBasal} U/h\n")
         sb.append("Total Basal (Profile): ${ctx.profile.totalBasal} U/day\n")
         sb.append("DIA (Profile): ${ctx.profile.dia} h\n")
-        sb.append("Target BG: ${ctx.profile.targetBg} mg/dL\n\n")
+        sb.append("Target BG: ${ctx.profile.targetBg} mg/dL\n")
+        sb.append("Unified reactivity factor: ${String.format(Locale.US, "%.3f", ctx.prefs.unifiedReactivityFactor)}\n")
+        if (ctx.prefs.autodriveEnabled) {
+            sb.append(
+                "AutoDrive: enabled | autodrive max basal pref: ${ctx.prefs.autodriveMaxBasal} U/h | MPC insulin/kg/5min step: ${String.format(Locale.US, "%.3f", ctx.prefs.mpcInsulinUPerKgPerStep)}\n",
+            )
+        } else {
+            sb.append("AutoDrive: off (per preference)\n")
+        }
+        sb.append("\n")
 
         // 2. PKPD Context
         if (ctx.pkpdPrefs.pkpdEnabled) {
-             sb.append("--- PARAMETRES PKPD (Adaptatif) ---\n")
-             sb.append("DIA: ${ctx.pkpdPrefs.initialDiaH}h\n")
-             sb.append("Peak Time: ${ctx.pkpdPrefs.initialPeakMin}min\n")
-             sb.append("IsfFusionMax: x${ctx.pkpdPrefs.isfFusionMaxFactor}\n\n")
+             sb.append("--- PKPD (adaptive) ---\n")
+             sb.append("DIA: ${ctx.pkpdPrefs.initialDiaH} h (bounds ${ctx.pkpdPrefs.boundsDiaMinH}–${ctx.pkpdPrefs.boundsDiaMaxH} h)\n")
+             sb.append("Peak time: ${ctx.pkpdPrefs.initialPeakMin} min (bounds ${ctx.pkpdPrefs.boundsPeakMinMin}–${ctx.pkpdPrefs.boundsPeakMinMax} min)\n")
+             sb.append("ISF fusion max: x${ctx.pkpdPrefs.isfFusionMaxFactor} | SMB tail damping: ${ctx.pkpdPrefs.smbTailDamping}\n\n")
         }
 
         // 3. System Observations (Recommendations + PKPD)
         sb.append("--- SYSTEM OBSERVATIONS ---\n")
         if (report.recommendations.isNotEmpty()) {
-            report.recommendations.forEach { 
-                val title = try { androidContext.getString(it.titleResId) } catch(e:Exception) { "Issue" }
-                val desc = try { 
-                    if (it.descriptionArgs.isNotEmpty()) {
-                        androidContext.getString(it.descriptionResId, *it.descriptionArgs.toTypedArray())
-                    } else {
-                        androidContext.getString(it.descriptionResId)
-                    }
-                } catch (e: Exception) { "" }
-                sb.append("- [Priority ${it.priority}] $title: $desc\n") 
+            report.recommendations.forEach {
+                val title = try { androidContext.getString(it.titleResId) } catch (e: Exception) { "Issue" }
+                val desc = formatRecommendationDescription(androidContext, it)
+                sb.append("- [Priority ${it.priority}] $title: $desc\n")
             }
         } else {
             sb.append("- No specific algorithmic issues detected.\n")
@@ -314,12 +319,32 @@ class AiCoachingService @Inject constructor() {
         // 4. Instructions
         sb.append("--- COACHING TASK ---\n")
         sb.append("Respond in '$deviceLang'. Structure your answer exactly as follows:\n")
-        sb.append("1. 🔍 **Diagnostics**: Summarize the main glycemic patterns (e.g., 'Post-prandial spikes', 'Nighttime hypos', 'Basal heavy').\n")
-        sb.append("2. 📉 **Root Cause**: Hypothesize the 'Why' (e.g., 'DIA too short', 'ISF too aggressive', 'Carb ratio needs checking'). Consider the History context.\n")
-        sb.append("3. 🛠️ **Action Plan**: Propose 2-3 concrete, actionable steps. If Hypo > 4%, prioritize safety (reduce aggressiveness). If suggestions above exist, evaluate them.\n")
-        sb.append("\nConstraint: Keep it under 150 words. Use emojis.")
+        sb.append("1. 🔍 **Diagnostics**: Main glycemic patterns (night vs day, post-meal, basal-heavy split).\n")
+        sb.append("2. 📉 **Root Cause**: Link to levers — ISF/IC/basal segments, profile DIA, PKPD DIA/peak/damping, unified reactivity, AutoDrive MPC — using ONLY facts from metrics, OREF block, PKPD snapshot, and SYSTEM OBSERVATIONS. Do not invent model percentages.\n")
+        sb.append("3. 🛠️ **Action Plan**: 2–4 prudent, clinician-supervised steps. When OREF priority is HYPO, prioritize reducing aggressiveness (ISF/basal/MPC) before chasing hyper fixes. When HYPER dominates and hypos are rare, mention IC verification and PKPD DIA/peak before large basal moves.\n")
+        sb.append("4. **Tuning direction (no doses)**: For each relevant domain (ISF, IC, basal, PKPD DIA, peak, damping, MPC), state at most ONE cautious direction (e.g. \"discuss slightly higher ISF with your team\") — never prescribe insulin amounts or same-day stacked changes across multiple levers.\n")
+        sb.append("\nConstraints: Under ~220 words; safety-first; emojis optional; end with a short reminder to confirm with a clinician.\n")
 
         return sb.toString()
+    }
+
+    private fun formatRecommendationDescription(ctx: Context, rec: AimiRecommendation): String {
+        if (rec.descriptionResId == 0) {
+            val act = rec.action
+            return when (act) {
+                is AimiAction.PreferenceUpdate -> act.reason
+                else -> rec.descriptionArgs.joinToString(" ").ifBlank { "(plugin suggestion — see apply action if shown)" }
+            }
+        }
+        return try {
+            if (rec.descriptionArgs.isNotEmpty()) {
+                ctx.getString(rec.descriptionResId, *rec.descriptionArgs.toTypedArray())
+            } else {
+                ctx.getString(rec.descriptionResId)
+            }
+        } catch (e: Exception) {
+            ""
+        }
     }
 
     private fun buildOpenAiJson(prompt: String): JSONObject {

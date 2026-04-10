@@ -2,6 +2,9 @@ package app.aaps.plugins.aps.openAPSAIMI.advisor
 
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.plugins.aps.R
+import app.aaps.plugins.aps.openAPSAIMI.advisor.oref.OrefAnalysisReport
+import app.aaps.plugins.aps.openAPSAIMI.advisor.oref.OrefDataSufficiency
+import app.aaps.plugins.aps.openAPSAIMI.advisor.oref.OrefGlycemicPriority
 import app.aaps.plugins.aps.openAPSAIMI.model.*
 import kotlin.math.min
 import kotlin.math.max
@@ -24,7 +27,8 @@ class PkpdAdvisor {
     fun analysePkpd(
         metrics: AdvisorMetrics,
         pkpd: PkpdPrefsSnapshot,
-        rh: ResourceHelper
+        rh: ResourceHelper,
+        oref: OrefAnalysisReport? = null,
     ): List<AimiRecommendation> {
         val suggestions = mutableListOf<AimiRecommendation>()
 
@@ -50,17 +54,19 @@ class PkpdAdvisor {
             return suggestions
         }
 
-        // ── Fix #1c: Trend Guard ─────────────────────────────────────────────────
-        // If today's TIR >= 7-day average, the situation is actively improving.
-        // Do not bombard the user with PKPD change suggestions when trending upward.
+        // ── Fix #1c: Trend Guard (OREF-aware) ─────────────────────────────────────
+        // If today's TIR >= 7-day average, skip PKPD tuning unless on-device OREF/ML still flags risk.
         val isImproving = metrics.todayTir != null && metrics.todayTir >= metrics.tir70_180
-        if (isImproving) return suggestions
+        val orefStillRisky = orefContradictsQuietPeriod(oref)
+        if (isImproving && !orefStillRisky) return suggestions
         // ─────────────────────────────────────────────────────────────────────────
 
+        val hypoTrigger = hypoPkpdTrigger(metrics, oref)
+        val hyperTrigger = hyperPkpdTrigger(metrics, oref)
+
         // 2. HYPERS Analysis
-        // Fix #1a: Raised threshold from 25% → 40%.
-        // A patient at 30-35% above 180 may need basal/ISF work, not DIA tuning.
-        if (metrics.timeAbove180 > 0.40 && metrics.timeBelow70 < 0.02) {
+        // Default threshold 40% >180 (conservative). When OREF marks hyper priority with exposure, allow earlier PKPD hints.
+        if (hyperTrigger) {
 
             // A) DIA too long? Only suggest if well above the lower bound.
             if (pkpd.initialDiaH > pkpd.boundsDiaMinH + 1.0) { // was +0.5
@@ -127,9 +133,8 @@ class PkpdAdvisor {
         }
 
         // 3. HYPOS Analysis
-        // Fix #1a: Raised threshold from 4% → 7%.
-        // <4% hypos is within ADA acceptable range; only intervene when clinically significant.
-        if (metrics.timeBelow70 > 0.07) {
+        // Default threshold 7% <70. When OREF marks hypo priority and data are usable, allow ~5.5% + corroboration.
+        if (hypoTrigger) {
 
             // A) DIA too short? Only suggest if well below the upper bound.
             if (pkpd.initialDiaH < pkpd.boundsDiaMaxH - 1.0) { // was -0.5
@@ -196,5 +201,46 @@ class PkpdAdvisor {
         }
 
         return suggestions
+    }
+
+    private fun orefContradictsQuietPeriod(oref: OrefAnalysisReport?): Boolean {
+        val o = oref ?: return false
+        if (o.dataSufficiency == OrefDataSufficiency.INSUFFICIENT) return false
+        val hypoFocus = o.priority == OrefGlycemicPriority.HYPO || o.priority == OrefGlycemicPriority.BOTH
+        val hyperFocus = o.priority == OrefGlycemicPriority.HYPER || o.priority == OrefGlycemicPriority.BOTH
+        val hypoSignal = hypoFocus &&
+            ((o.actualHypo4hPct ?: 0.0) >= 12.0 ||
+                (o.meanCalHypoRiskPct ?: 0.0) >= 20.0 ||
+                (o.personalMeanHypoSignalPct ?: 0.0) >= 52.0)
+        val hyperSignal = hyperFocus &&
+            ((o.actualHyper4hPct ?: 0.0) >= 18.0 ||
+                (o.meanCalHyperRiskPct ?: 0.0) >= 25.0 ||
+                (o.personalMeanHyperSignalPct ?: 0.0) >= 52.0)
+        return hypoSignal || hyperSignal
+    }
+
+    private fun hypoPkpdTrigger(metrics: AdvisorMetrics, oref: OrefAnalysisReport?): Boolean {
+        if (metrics.timeBelow70 > 0.07) return true
+        if (metrics.timeBelow70 <= 0.055) return false
+        val o = oref ?: return false
+        if (o.dataSufficiency == OrefDataSufficiency.INSUFFICIENT) return false
+        val hypoFocus = o.priority == OrefGlycemicPriority.HYPO || o.priority == OrefGlycemicPriority.BOTH
+        if (!hypoFocus) return false
+        return (o.actualHypo4hPct ?: 0.0) >= 10.0 ||
+            (o.meanCalHypoRiskPct ?: 0.0) >= 18.0 ||
+            (o.personalMeanHypoSignalPct ?: 0.0) >= 48.0
+    }
+
+    private fun hyperPkpdTrigger(metrics: AdvisorMetrics, oref: OrefAnalysisReport?): Boolean {
+        val calmHypos = metrics.timeBelow70 < 0.06
+        if (metrics.timeAbove180 > 0.40 && metrics.timeBelow70 < 0.02) return true
+        if (!calmHypos || metrics.timeAbove180 <= 0.20) return false
+        val o = oref ?: return false
+        if (o.dataSufficiency == OrefDataSufficiency.INSUFFICIENT) return false
+        val hyperFocus = o.priority == OrefGlycemicPriority.HYPER || o.priority == OrefGlycemicPriority.BOTH
+        if (!hyperFocus) return false
+        return (o.actualHyper4hPct ?: 0.0) >= 18.0 ||
+            (o.meanCalHyperRiskPct ?: 0.0) >= 25.0 ||
+            (o.personalMeanHyperSignalPct ?: 0.0) >= 52.0
     }
 }

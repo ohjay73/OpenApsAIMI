@@ -5,9 +5,13 @@ import app.aaps.core.interfaces.profile.EffectiveProfile
 import kotlinx.coroutines.runBlocking
 import kotlin.math.roundToInt
 import app.aaps.plugins.aps.R
+import app.aaps.plugins.aps.openAPSAIMI.advisor.oref.OrefAnalysisReport
+import app.aaps.plugins.aps.openAPSAIMI.advisor.oref.OrefDataSufficiency
+import app.aaps.plugins.aps.openAPSAIMI.advisor.oref.OrefGlycemicPriority
 import app.aaps.plugins.aps.openAPSAIMI.advisor.oref.OrefLocalPipeline
 import kotlin.math.max
 import kotlin.math.min
+import java.util.Locale
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.interfaces.aps.GlucoseStatusAIMI
@@ -102,19 +106,8 @@ class AimiAdvisorService {
         val context = collectContext(periodDays)
         val score = computeGlobalScore(context.metrics)
         val severity = classifySeverity(score)
-        val recommendations = generateRecommendations(context, history).toMutableList()
-        
-        // PKPD Analysis - now returns AimiRecommendation
-        val pkpdSuggestions = PkpdAdvisor().analysePkpd(context.metrics, context.pkpdPrefs, rh!!)
-        
-        // Filter PKPD suggestions based on history (48h cooldown)
-        pkpdSuggestions.forEach { rec ->
-            if (shouldShowRecommendation(rec, history)) {
-                recommendations.add(rec)
-            }
-        }
 
-        // Pass application Context so assets/oref/*.onnx can be loaded when present. Window capped by OrefLocalPipeline.
+        // OREF first so PKPD + advisor cards + LLM payload can use the same on-device ML/heuristic block.
         val orefWindowDays = periodDays.toLong().coerceIn(1, OrefLocalPipeline.MAX_HISTORY_DAYS_FOR_MEMORY)
         val personalOrefMl = preferences?.get(BooleanKey.OApsAIMIAdvisorPersonalOrefMl) == true
         val orefInsight = if (persistenceLayer != null) {
@@ -132,6 +125,18 @@ class AimiAdvisorService {
                 }
             }
         } else null
+
+        val recommendations = generateRecommendations(context, history, orefInsight).toMutableList()
+
+        // PKPD Analysis - now returns AimiRecommendation
+        val pkpdSuggestions = PkpdAdvisor().analysePkpd(context.metrics, context.pkpdPrefs, rh!!, orefInsight)
+
+        // Filter PKPD suggestions based on history (48h cooldown)
+        pkpdSuggestions.forEach { rec ->
+            if (shouldShowRecommendation(rec, history)) {
+                recommendations.add(rec)
+            }
+        }
 
         return AdvisorReport(
             generatedAt = System.currentTimeMillis(),
@@ -180,8 +185,10 @@ class AimiAdvisorService {
         val prefsSnapshot = AimiPrefsSnapshot(
             maxSmb = preferences.get(DoubleKey.OApsAIMIMaxSMB),
             lunchFactor = preferences.get(DoubleKey.OApsAIMILunchFactor),
-            unifiedReactivityFactor = 1.0, // Default for now
-            autodriveMaxBasal = preferences.get(DoubleKey.autodriveMaxBasal)
+            unifiedReactivityFactor = unifiedReactivityLearner?.globalFactor ?: 1.0,
+            autodriveMaxBasal = preferences.get(DoubleKey.autodriveMaxBasal),
+            autodriveEnabled = preferences.get(BooleanKey.OApsAIMIautoDrive),
+            mpcInsulinUPerKgPerStep = preferences.get(DoubleKey.OApsAIMIMpcInsulinUPerKgPerStep),
         )
         
         // 4. Snapshot PKPD Preferences
@@ -410,7 +417,7 @@ class AimiAdvisorService {
         return AdvisorContext(
             metrics = AdvisorMetrics("N/A",0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0,0, null, null),
             profile = AimiProfileSnapshot(0.0,0.0,0.0,0.0, 5.0, 12.0),
-            prefs = AimiPrefsSnapshot(0.0,0.0,0.0,0.0),
+            prefs = AimiPrefsSnapshot(0.0, 0.0, 0.0, 0.0, false, 0.065),
             pkpdPrefs = PkpdPrefsSnapshot(false,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0)
         )
     }
@@ -422,7 +429,11 @@ class AimiAdvisorService {
     /**
      * Generate recommendations based on Context using the Plugin System.
      */
-    fun generateRecommendations(ctx: AdvisorContext, history: List<app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository.AdvisorActionLog>): List<AimiRecommendation> {
+    fun generateRecommendations(
+        ctx: AdvisorContext,
+        history: List<app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository.AdvisorActionLog>,
+        oref: OrefAnalysisReport? = null,
+    ): List<AimiRecommendation> {
         if (preferences == null) return emptyList()
 
         val loopCtx = app.aaps.plugins.aps.openAPSAIMI.model.AimiPluginContext(
@@ -526,6 +537,8 @@ class AimiAdvisorService {
             }
         }
 
+        appendOrefGuidanceRecommendations(ctx, oref, recs)
+
         // 5) If nothing alarming -> positive message
         if (recs.isEmpty()) {
             recs.add(AimiRecommendation(
@@ -538,6 +551,89 @@ class AimiAdvisorService {
         }
 
         return recs
+    }
+
+    /**
+     * High-level, cautious tuning directions grounded in OREF priority + CGM metrics (no one-tap apply).
+     */
+    private fun appendOrefGuidanceRecommendations(
+        ctx: AdvisorContext,
+        oref: OrefAnalysisReport?,
+        recs: MutableList<AimiRecommendation>,
+    ) {
+        val prefs = preferences ?: return
+        if (oref == null || oref.dataSufficiency == OrefDataSufficiency.INSUFFICIENT) return
+
+        val hypoFocus = oref.priority == OrefGlycemicPriority.HYPO || oref.priority == OrefGlycemicPriority.BOTH
+        val hyperFocus = oref.priority == OrefGlycemicPriority.HYPER || oref.priority == OrefGlycemicPriority.BOTH
+
+        if (hypoFocus && ctx.metrics.timeBelow70 >= 0.04) {
+            recs.add(
+                AimiRecommendation(
+                    titleResId = R.string.aimi_adv_rec_oref_isf_hypo_title,
+                    descriptionResId = R.string.aimi_adv_rec_oref_isf_hypo_desc,
+                    priority = app.aaps.plugins.aps.openAPSAIMI.model.AimiPriority.High,
+                    domain = app.aaps.plugins.aps.openAPSAIMI.model.AimiDomain.Profile,
+                    action = null,
+                    descriptionArgs = listOf(percent(ctx.metrics.timeBelow70).toString()),
+                ),
+            )
+        }
+
+        if (hypoFocus && ctx.metrics.timeBelow70 >= 0.04 && ctx.metrics.basalPercent >= 0.48) {
+            recs.add(
+                AimiRecommendation(
+                    titleResId = R.string.aimi_adv_rec_oref_basal_hypo_title,
+                    descriptionResId = R.string.aimi_adv_rec_oref_basal_hypo_desc,
+                    priority = app.aaps.plugins.aps.openAPSAIMI.model.AimiPriority.Medium,
+                    domain = app.aaps.plugins.aps.openAPSAIMI.model.AimiDomain.Profile,
+                    action = null,
+                    descriptionArgs = listOf(percent(ctx.metrics.basalPercent).toString()),
+                ),
+            )
+        }
+
+        if (hyperFocus && ctx.metrics.timeAbove180 >= 0.10) {
+            recs.add(
+                AimiRecommendation(
+                    titleResId = R.string.aimi_adv_rec_oref_ic_hyper_title,
+                    descriptionResId = R.string.aimi_adv_rec_oref_ic_hyper_desc,
+                    priority = app.aaps.plugins.aps.openAPSAIMI.model.AimiPriority.Medium,
+                    domain = app.aaps.plugins.aps.openAPSAIMI.model.AimiDomain.Profile,
+                    action = null,
+                    descriptionArgs = listOf(percent(ctx.metrics.timeAbove180).toString()),
+                ),
+            )
+        }
+
+        if (ctx.pkpdPrefs.pkpdEnabled && (hypoFocus || hyperFocus) &&
+            (ctx.metrics.timeBelow70 >= 0.04 || ctx.metrics.timeAbove180 >= 0.10)
+        ) {
+            recs.add(
+                AimiRecommendation(
+                    titleResId = R.string.aimi_adv_rec_oref_pkpd_review_title,
+                    descriptionResId = R.string.aimi_adv_rec_oref_pkpd_review_desc,
+                    priority = app.aaps.plugins.aps.openAPSAIMI.model.AimiPriority.Medium,
+                    domain = app.aaps.plugins.aps.openAPSAIMI.model.AimiDomain.Pkpd,
+                    action = null,
+                ),
+            )
+        }
+
+        if (prefs.get(BooleanKey.OApsAIMIautoDrive) && hyperFocus && ctx.metrics.timeAbove180 >= 0.08) {
+            recs.add(
+                AimiRecommendation(
+                    titleResId = R.string.aimi_adv_rec_oref_autodrive_mpc_title,
+                    descriptionResId = R.string.aimi_adv_rec_oref_autodrive_mpc_desc,
+                    priority = app.aaps.plugins.aps.openAPSAIMI.model.AimiPriority.Low,
+                    domain = app.aaps.plugins.aps.openAPSAIMI.model.AimiDomain.Profile,
+                    action = null,
+                    descriptionArgs = listOf(
+                        String.format(Locale.US, "%.3f", ctx.prefs.mpcInsulinUPerKgPerStep),
+                    ),
+                ),
+            )
+        }
     }
 
     private fun createDummyProfile(): app.aaps.core.interfaces.aps.OapsProfileAimi {

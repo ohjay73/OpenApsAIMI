@@ -660,22 +660,30 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             setTextColor(Color.WHITE)
         })
         
-        var desc = when(rec.descriptionResId) {
-             R.string.aimi_adv_rec_hypos_desc -> rh.gs(rec.descriptionResId, (metrics.timeBelow54 * 100).roundToInt(), metrics.severeHypoEvents)
-             R.string.aimi_adv_rec_control_desc -> rh.gs(rec.descriptionResId, (metrics.tir70_180 * 100).roundToInt())
-             R.string.aimi_adv_rec_hypers_desc -> rh.gs(rec.descriptionResId, (metrics.timeAbove180 * 100).roundToInt())
-             R.string.aimi_adv_rec_basal_desc -> rh.gs(rec.descriptionResId, (metrics.basalPercent * 100).roundToInt())
-             else -> {
-                  if (rec.descriptionArgs.isNotEmpty()) {
-                      try {
-                          rh.gs(rec.descriptionResId, *rec.descriptionArgs.toTypedArray())
-                      } catch(e: Exception) {
-                          rh.gs(rec.descriptionResId) + " " + rec.descriptionArgs.joinToString(" ")
-                      }
-                  } else {
-                      rh.gs(rec.descriptionResId)
-                  }
-              }
+        var desc = when {
+            rec.descriptionResId == 0 -> {
+                val act = rec.action
+                when (act) {
+                    is AimiAction.PreferenceUpdate -> act.reason
+                    else -> rec.descriptionArgs.joinToString(" ").ifEmpty { "" }
+                }
+            }
+            rec.descriptionResId == R.string.aimi_adv_rec_hypos_desc ->
+                rh.gs(rec.descriptionResId, (metrics.timeBelow54 * 100).roundToInt(), metrics.severeHypoEvents)
+            rec.descriptionResId == R.string.aimi_adv_rec_control_desc ->
+                rh.gs(rec.descriptionResId, (metrics.tir70_180 * 100).roundToInt())
+            rec.descriptionResId == R.string.aimi_adv_rec_hypers_desc ->
+                rh.gs(rec.descriptionResId, (metrics.timeAbove180 * 100).roundToInt())
+            rec.descriptionResId == R.string.aimi_adv_rec_basal_desc ->
+                rh.gs(rec.descriptionResId, (metrics.basalPercent * 100).roundToInt())
+            rec.descriptionArgs.isNotEmpty() -> {
+                try {
+                    rh.gs(rec.descriptionResId, *rec.descriptionArgs.toTypedArray())
+                } catch (e: Exception) {
+                    rh.gs(rec.descriptionResId) + " " + rec.descriptionArgs.joinToString(" ")
+                }
+            }
+            else -> rh.gs(rec.descriptionResId)
         }
         
         textLayout.addView(TextView(this).apply {

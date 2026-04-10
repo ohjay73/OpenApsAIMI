@@ -1329,6 +1329,17 @@
     <string name="aimi_adv_rec_profile_ok_title">Profil Excellent</string>
     <string name="aimi_adv_rec_profile_ok_desc">Aucun ajustement majeur nécessaire.</string>
 
+    <string name="aimi_adv_rec_oref_isf_hypo_title">Hypo pattern: discuss ISF with your care team</string>
+    <string name="aimi_adv_rec_oref_isf_hypo_desc">On-device OREF/ML marks hypo priority. About %1$s%% of CGM time was below 70 mg/dL. Ask your clinician whether a modestly higher ISF (more mg/dL per unit = gentler corrections) fits your profile—avoid abrupt one-step jumps.</string>
+    <string name="aimi_adv_rec_oref_basal_hypo_title">Basal share and lows</string>
+    <string name="aimi_adv_rec_oref_basal_hypo_desc">Basal is about %1$s%% of TDD while hypo risk is elevated. Review overnight and daytime basal segments with your team before changing meal ratios or PKPD.</string>
+    <string name="aimi_adv_rec_oref_ic_hyper_title">Post-meal highs: verify carb ratios</string>
+    <string name="aimi_adv_rec_oref_ic_hyper_desc">OREF focus is hyper with about %1$s%% of time above 180 mg/dL. Check IC (carb ratio) accuracy and timing; adjust only in small supervised steps.</string>
+    <string name="aimi_adv_rec_oref_pkpd_review_title">PKPD: DIA, peak, damping</string>
+    <string name="aimi_adv_rec_oref_pkpd_review_desc">PKPD is enabled and OREF flags an imbalance. With your clinician, review DIA, peak time, and SMB damping together—not in isolation—using the advisor cards above as a checklist.</string>
+    <string name="aimi_adv_rec_oref_autodrive_mpc_title">AutoDrive: MPC aggressiveness</string>
+    <string name="aimi_adv_rec_oref_autodrive_mpc_desc">AutoDrive is on. Current MPC insulin-per-kg step is %1$s (preference). If highs persist without lows, discuss a cautious tweak with your team; if hypos appear, prefer reducing aggressiveness first.</string>
+
     <string name="aimi_pkpd_title_enable">Activation PK/PD</string>
     <string name="aimi_pkpd_title_dia">Durée d\'action (DIA)</string>
     <string name="aimi_pkpd_title_peak">Pic d\'action</string>

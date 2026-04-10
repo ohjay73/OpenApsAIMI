@@ -127,7 +127,10 @@ data class AimiPrefsSnapshot(
     val maxSmb: Double,                     // U
     val lunchFactor: Double,                // multiplier
     val unifiedReactivityFactor: Double,    // multiplier
-    val autodriveMaxBasal: Double           // U/h
+    val autodriveMaxBasal: Double,          // U/h
+    val autodriveEnabled: Boolean = false,
+    /** Autodrive MPC-style aggressiveness (insulin per kg per 5 min step). */
+    val mpcInsulinUPerKgPerStep: Double = 0.065,
 )
 
 data class AdvisorFlag(
