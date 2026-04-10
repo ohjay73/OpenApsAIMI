@@ -94,6 +94,8 @@ data class AdvisorReport(
     val recommendations: List<AimiRecommendation>,
     // PkpdSuggestions merged into recommendations with Domain.PKPD
     val summary: String,
+    /** Same snapshot as used to build this report (avoid duplicate collectContext / heavy DB work). */
+    val advisorContext: AdvisorContext,
     /** On-device OREF-aligned feature/outcome analysis (local DB); LGBM scores optional via ONNX. */
     val orefAnalysis: OrefAnalysisReport? = null,
 )

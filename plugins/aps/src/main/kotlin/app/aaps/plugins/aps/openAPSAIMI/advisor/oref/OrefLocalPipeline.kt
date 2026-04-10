@@ -19,11 +19,13 @@ class OrefLocalPipeline(
 
     suspend fun run(
         profileSnapshot: AimiProfileSnapshot,
-        windowDays: Long = 30L,
+        windowDays: Long = DEFAULT_HISTORY_DAYS,
         assetContext: Context? = null,
     ): OrefAnalysisReport = withContext(Dispatchers.Default) {
+        // APS rows carry large JSON per loop; loading 30d on a 256MB heap can OOM (see APSResultDao cursor).
+        val effectiveWindowDays = min(windowDays, MAX_HISTORY_DAYS_FOR_MEMORY)
         val end = System.currentTimeMillis()
-        val start = end - T.days(windowDays).msecs()
+        val start = end - T.days(effectiveWindowDays).msecs()
 
         val gvList = persistenceLayer.getBgReadingsDataFromTimeToTime(start, end, ascending = true)
             .filter { it.value > 20 && it.isValid }
@@ -32,7 +34,7 @@ class OrefLocalPipeline(
 
         if (gvList.size < 50 || apsList.size < 5) {
             return@withContext OrefAnalysisReport(
-                windowDays = windowDays.toInt(),
+                windowDays = effectiveWindowDays.toInt(),
                 mergedRowCount = 0,
                 validOutcomeRows = 0,
                 timeBelow70Pct = null,
@@ -69,7 +71,7 @@ class OrefLocalPipeline(
 
         if (slices.size < 50) {
             return@withContext OrefAnalysisReport(
-                windowDays = windowDays.toInt(),
+                windowDays = effectiveWindowDays.toInt(),
                 mergedRowCount = slices.size,
                 validOutcomeRows = 0,
                 timeBelow70Pct = pctBelow(sortedGv, 70.0),
@@ -126,7 +128,7 @@ class OrefLocalPipeline(
         val onnx = computeOnnxSummaries(assetContext, slices, outcomePerSlice)
 
         OrefAnalysisReport(
-            windowDays = windowDays.toInt(),
+            windowDays = effectiveWindowDays.toInt(),
             mergedRowCount = slices.size,
             validOutcomeRows = labelled,
             timeBelow70Pct = tbr,
@@ -326,6 +328,14 @@ class OrefLocalPipeline(
     }
 
     companion object {
+        /** Default window when caller does not override (keeps Advisor heap use predictable). */
+        const val DEFAULT_HISTORY_DAYS: Long = 14L
+
+        /**
+         * Hard cap: each APSResult holds full loop JSON; 30d can exhaust a 256MB heap during Room cursor read.
+         */
+        const val MAX_HISTORY_DAYS_FOR_MEMORY: Long = 14L
+
         private const val MERGE_TOLERANCE_MS = 600_000L
         private const val ONNX_BATCH = 256
     }

@@ -21,7 +21,6 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.CoroutineScope
 import androidx.lifecycle.lifecycleScope
 import app.aaps.core.keys.interfaces.DoublePreferenceKey
 import app.aaps.core.keys.interfaces.IntPreferenceKey
@@ -103,14 +102,15 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         }
         rootLayout.addView(loadingText)
         
-        // CRITICAL FIX: Load data on IO thread to prevent crash
-        CoroutineScope(Dispatchers.IO).launch {
+        // Bound to activity lifecycle: avoids UI updates after destroy (crash) and cancels when user leaves
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val history = historyRepo.getRecentActions(7)
                 val report = advisorService.generateReport(periodDays = 7, history = history, assetContext = applicationContext)
-                val context = advisorService.collectContext(7)
+                val advisorCtx = report.advisorContext
 
                 withContext(Dispatchers.Main) {
+                    if (isFinishing) return@withContext
                     rootLayout.removeView(loadingText)
 
 
@@ -141,7 +141,7 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
 
                     // 4. Section: COGNITIVE BRIDGE (BRAIN)
                     rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_adv_section_brain)))
-                    rootLayout.addView(createCognitiveCard(context.prefs.unifiedReactivityFactor, cardColor))
+                    rootLayout.addView(createCognitiveCard(advisorCtx.prefs.unifiedReactivityFactor, cardColor))
 
                     report.orefAnalysis?.let { oref ->
                         rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_adv_section_oref)))
@@ -150,15 +150,17 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
 
                     // 5. Section: AI Coach (ChatGPT/Gemini)
                     rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_adv_section_coach)))
-                    rootLayout.addView(createCoachCard(context, report, cardColor))
+                    rootLayout.addView(createCoachCard(advisorCtx, report, cardColor))
             
                     // Footer
                     rootLayout.addView(createFooter(report))
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    loadingText.text = "${rh.gs(R.string.aimi_adv_error_prefix)}${e.localizedMessage}"
-                    loadingText.setTextColor(Color.parseColor("#F87171")) // Red
+                    if (!isFinishing) {
+                        loadingText.text = "${rh.gs(R.string.aimi_adv_error_prefix)}${e.localizedMessage}"
+                        loadingText.setTextColor(Color.parseColor("#F87171")) // Red
+                    }
                 }
                 e.printStackTrace()
             }
@@ -930,15 +932,26 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             val placeholder = rh.gs(R.string.aimi_coach_placeholder) + " (${provider.name})"
             contentText.text = "$basicAnalysis\n\n⚙️ $placeholder"
         } else {
-            lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+            lifecycleScope.launch {
                 try {
-                    val history = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val history = withContext(Dispatchers.IO) {
                         historyRepo.getRecentActions(7)
                     }
-                    val advice = AiCoachingService().fetchAdvice(this@AimiProfileAdvisorActivity, context, report, activeKey, provider, history)
-                    contentText.text = advice
+                    val advice = AiCoachingService().fetchAdvice(
+                        this@AimiProfileAdvisorActivity,
+                        context,
+                        report,
+                        activeKey,
+                        provider,
+                        history
+                    )
+                    if (!isFinishing) {
+                        contentText.text = advice
+                    }
                 } catch (e: Exception) {
-                    contentText.text = rh.gs(R.string.aimi_coach_error) + "\n" + e.localizedMessage
+                    if (!isFinishing) {
+                        contentText.text = rh.gs(R.string.aimi_coach_error) + "\n" + e.localizedMessage
+                    }
                 }
             }
         }
