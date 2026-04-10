@@ -37,6 +37,14 @@ class DataWorkerStorage @Inject constructor(
         return value
     }
 
+    /** Read without removing — use when the worker must retry after failure (WorkManager re-run). */
+    @Synchronized fun peekObject(key: Long): Any? = store[key]
+
+    /** Drop a stored payload after the worker finished successfully. */
+    @Synchronized fun removeObject(key: Long) {
+        store.remove(key)
+    }
+
     @Suppress("unused")
     @Synchronized fun pickupString(key: Long): String? {
         val value = store[key]

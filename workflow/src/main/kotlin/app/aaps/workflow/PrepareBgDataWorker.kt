@@ -52,9 +52,9 @@ class PrepareBgDataWorker(
     )
 
     override suspend fun doWorkAndLog(): Result {
-
-        // MIGRATION: KEEP - Data retrieval logic
-        val data = dataWorkerStorage.pickupObject(inputData.getLong(DataWorkerStorage.STORE_KEY, -1)) as PrepareBgData?
+        val storeKey = inputData.getLong(DataWorkerStorage.STORE_KEY, -1)
+        // MIGRATION: KEEP - Data retrieval logic (peek: allow WorkManager retry if run fails mid-flight)
+        val data = dataWorkerStorage.peekObject(storeKey) as PrepareBgData?
             ?: return Result.failure(workDataOf("Error" to "missing input data"))
 
         // MIGRATION: Get time range from OLD cache for OLD GraphView system (6h from user preference)
@@ -134,6 +134,7 @@ class PrepareBgDataWorker(
         // NOTE: BgInfo is now updated reactively by OverviewDataCacheImpl
         // which observes GlucoseValue database changes directly via Flow
 
+        dataWorkerStorage.removeObject(storeKey)
         return Result.success()
     }
 
