@@ -57,4 +57,7 @@ dependencies {
 
     // 📺 Jitsi Screen Share: no SDK needed — handled via Android Intent deep-link
     // The app opens meet.jit.si room via browser or the Jitsi Meet app if installed.
+
+    // OREF Advisor: optional on-device LightGBM via ONNX (place models under assets/oref/).
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
 }

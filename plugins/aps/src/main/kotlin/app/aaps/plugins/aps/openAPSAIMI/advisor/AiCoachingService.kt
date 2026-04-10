@@ -263,6 +263,11 @@ class AiCoachingService @Inject constructor() {
         sb.append("Total Daily Dose (TDD): ${ctx.metrics.tdd.roundToInt()} U\n")
         sb.append("Basal/Bolus Split: ${(ctx.metrics.basalPercent * 100).roundToInt()}% Basal | ${(100 - (ctx.metrics.basalPercent * 100).roundToInt())}% Bolus\n\n")
 
+        report.orefAnalysis?.let { oref ->
+            sb.append(oref.toPromptSection())
+            sb.append("CRITICAL: Treat this block as factual telemetry + heuristics only; do not invent LGBM percentages.\n\n")
+        }
+
         // 1.5 Context: Active Profile & Preferences
         sb.append("--- ACTIVE PROFILE & SETTINGS ---\n")
         sb.append("Max SMB: ${ctx.prefs.maxSmb} U\n")

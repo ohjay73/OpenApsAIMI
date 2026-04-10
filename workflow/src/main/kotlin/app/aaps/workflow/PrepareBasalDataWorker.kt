@@ -8,6 +8,7 @@ import androidx.work.workDataOf
 import app.aaps.core.graph.data.LineGraphSeries
 import app.aaps.core.graph.data.ScaledDataPoint
 import app.aaps.core.interfaces.iob.IobCobCalculator
+import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.overview.OverviewData
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.resources.ResourceHelper
@@ -37,8 +38,14 @@ class PrepareBasalDataWorker(
 
     override suspend fun doWorkAndLog(): Result {
 
-        val data = dataWorkerStorage.pickupObject(inputData.getLong(DataWorkerStorage.STORE_KEY, -1)) as PrepareBasalData?
-            ?: return Result.failure(workDataOf("Error" to "missing input data"))
+        val storeKey = inputData.getLong(DataWorkerStorage.STORE_KEY, -1)
+        val data = dataWorkerStorage.pickupObject(storeKey) as PrepareBasalData?
+        if (data == null) {
+            // Another calculation may have consumed this payload (REPLACE + parallel jobs) or the
+            // worker was duplicated; do not fail the chain or the overview stays stuck without IOB/loop.
+            aapsLogger.debug(LTag.WORKER, "PrepareBasalDataWorker: no payload for storeKey=$storeKey — skipping basal graph refresh")
+            return Result.success()
+        }
 
         rxBus.send(EventIobCalculationProgress(CalculationWorkflow.ProgressData.PREPARE_BASAL_DATA, 0, false))
         val baseBasalArray: MutableList<ScaledDataPoint> = ArrayList()
@@ -53,7 +60,10 @@ class PrepareBasalDataWorker(
         val fromTime = overviewGraphDataFromTime(data.overviewData)
         var time = fromTime
         while (time < endTime) {
-            if (isStopped) return Result.failure(workDataOf("Error" to "stopped"))
+            if (isStopped) {
+                aapsLogger.debug(LTag.WORKER, "PrepareBasalDataWorker: stopped — leaving prior basal series, continuing chain")
+                return Result.success()
+            }
             val progress = (time - fromTime).toDouble() / (endTime - fromTime) * 100.0
             rxBus.send(EventIobCalculationProgress(CalculationWorkflow.ProgressData.PREPARE_BASAL_DATA, progress.toInt(), false))
             val profile = profileFunction.getProfile(time)

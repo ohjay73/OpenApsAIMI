@@ -1266,6 +1266,7 @@
     <string name="aimi_advisor_title">AIMI Advisor</string>
     <string name="aimi_adv_loading">Analyse en cours...</string>
     <string name="aimi_adv_error_prefix">Erreur: </string>
+    <string name="aimi_adv_error_oom">Not enough memory to finish. Close other apps and try again.</string>
     <string name="aimi_adv_report_weekly">Rapport Hebdo</string>
     <string name="aimi_adv_score_label">Score: %1$.1f/10</string>
     <string name="aimi_adv_apply_btn">APPLIQUER</string>
@@ -1277,6 +1278,13 @@
     <string name="aimi_adv_section_obs">OBSERVATIONS</string>
     <string name="aimi_adv_section_pkpd">AJUSTEMENTS PKPD</string>
     <string name="aimi_adv_section_brain">ÉTAT COGNITIF</string>
+    <string name="aimi_adv_section_oref">ANALYSE OREF (LOCAL)</string>
+    <string name="aimi_adv_oref_show_chart">Show CGM range chart</string>
+    <string name="aimi_adv_oref_hide_chart">Hide chart</string>
+    <string name="aimi_adv_oref_chart_title">CGM time in ranges (%)</string>
+    <string name="aimi_adv_oref_bar_low">&lt;70</string>
+    <string name="aimi_adv_oref_bar_in_range">70–180</string>
+    <string name="aimi_adv_oref_bar_high">&gt;180</string>
     <string name="aimi_adv_section_coach">COACH IA</string>
 
     <string name="aimi_adv_brain_protect">PROTECTEUR (x%1$.2f)</string>

@@ -90,8 +90,8 @@ class IobCobOrefWorker @Inject internal constructor(
             for (i in bucketedData.size - 4 downTo 0) {
                 rxBus.send(EventIobCalculationProgress(CalculationWorkflow.ProgressData.IOB_COB_OREF, 100 - (100.0 * i / bucketedData.size).toInt(), data.triggeredByNewBG))
                 if (isStopped) {
-                    aapsLogger.debug(LTag.AUTOSENS) { "Aborting calculation thread (trigger): ${data.reason}" }
-                    return Result.failure(workDataOf("Error" to "Aborting calculation thread (trigger): ${data.reason}"))
+                    aapsLogger.debug(LTag.AUTOSENS) { "Aborting calculation thread (trigger): ${data.reason} — continuing chain" }
+                    return Result.success(workDataOf("Warning" to "stopped"))
                 }
                 // check if data already exists
                 var bgTime = bucketedData[i].timestamp

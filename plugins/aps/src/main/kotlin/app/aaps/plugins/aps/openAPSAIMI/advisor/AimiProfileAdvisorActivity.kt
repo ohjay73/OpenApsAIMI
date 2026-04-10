@@ -5,7 +5,10 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Space
@@ -15,12 +18,12 @@ import androidx.core.content.ContextCompat
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.ui.activities.TranslatedDaggerAppCompatActivity
 import app.aaps.plugins.aps.R
+import app.aaps.plugins.aps.openAPSAIMI.advisor.oref.OrefAnalysisReport
 import javax.inject.Inject
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.CoroutineScope
 import androidx.lifecycle.lifecycleScope
 import app.aaps.core.keys.interfaces.DoublePreferenceKey
 import app.aaps.core.keys.interfaces.IntPreferenceKey
@@ -102,14 +105,15 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         }
         rootLayout.addView(loadingText)
         
-        // CRITICAL FIX: Load data on IO thread to prevent crash
-        CoroutineScope(Dispatchers.IO).launch {
+        // Bound to activity lifecycle: avoids UI updates after destroy (crash) and cancels when user leaves
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val history = historyRepo.getRecentActions(7)
-                val report = advisorService.generateReport(periodDays = 7, history = history)
-                val context = advisorService.collectContext(7)
+                val report = advisorService.generateReport(periodDays = 7, history = history, assetContext = applicationContext)
+                val advisorCtx = report.advisorContext
 
                 withContext(Dispatchers.Main) {
+                    if (isFinishing) return@withContext
                     rootLayout.removeView(loadingText)
 
 
@@ -140,21 +144,32 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
 
                     // 4. Section: COGNITIVE BRIDGE (BRAIN)
                     rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_adv_section_brain)))
-                    rootLayout.addView(createCognitiveCard(context.prefs.unifiedReactivityFactor, cardColor))
+                    rootLayout.addView(createCognitiveCard(advisorCtx.prefs.unifiedReactivityFactor, cardColor))
+
+                    report.orefAnalysis?.let { oref ->
+                        rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_adv_section_oref)))
+                        rootLayout.addView(createOrefAnalysisCard(oref, cardColor))
+                    }
 
                     // 5. Section: AI Coach (ChatGPT/Gemini)
                     rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_adv_section_coach)))
-                    rootLayout.addView(createCoachCard(context, report, cardColor))
+                    rootLayout.addView(createCoachCard(advisorCtx, report, cardColor))
             
                     // Footer
                     rootLayout.addView(createFooter(report))
                 }
-            } catch (e: Exception) {
+            } catch (t: Throwable) {
                 withContext(Dispatchers.Main) {
-                    loadingText.text = "${rh.gs(R.string.aimi_adv_error_prefix)}${e.localizedMessage}"
-                    loadingText.setTextColor(Color.parseColor("#F87171")) // Red
+                    if (!isFinishing) {
+                        val msg = when (t) {
+                            is OutOfMemoryError -> rh.gs(R.string.aimi_adv_error_oom)
+                            else -> "${rh.gs(R.string.aimi_adv_error_prefix)}${t.localizedMessage ?: t.javaClass.simpleName}"
+                        }
+                        loadingText.text = msg
+                        loadingText.setTextColor(Color.parseColor("#F87171")) // Red
+                    }
                 }
-                e.printStackTrace()
+                t.printStackTrace()
             }
         }
     }
@@ -839,6 +854,119 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         return card
     }
 
+    private fun createOrefAnalysisCard(oref: OrefAnalysisReport, cardBg: Int): CardView {
+        val card = CardView(this).apply {
+            radius = 16f
+            setCardBackgroundColor(cardBg)
+            cardElevation = 0f
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(0, 0, 0, 32)
+            }
+        }
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24, 24, 24, 24)
+        }
+        layout.addView(TextView(this).apply {
+            text = oref.toPromptSection().trim()
+            textSize = 13f
+            setTextColor(Color.parseColor("#CBD5E1"))
+            setLineSpacing(5f, 1.15f)
+            setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
+        })
+
+        val canShowCgmChart =
+            oref.timeBelow70Pct != null || oref.timeInRange70180Pct != null || oref.timeAbove180Pct != null
+        if (canShowCgmChart) {
+            val chartBlock = createOrefCgmRangeChart(oref).apply {
+                visibility = View.GONE
+            }
+            layout.addView(Button(this).apply {
+                text = rh.gs(R.string.aimi_adv_oref_show_chart)
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.parseColor("#334155"))
+                setPadding(rh.dpToPx(12), rh.dpToPx(10), rh.dpToPx(12), rh.dpToPx(10))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = rh.dpToPx(16)
+                }
+                setOnClickListener { buttonView ->
+                    val show = chartBlock.visibility != View.VISIBLE
+                    chartBlock.visibility = if (show) View.VISIBLE else View.GONE
+                    (buttonView as Button).text = rh.gs(
+                        if (show) R.string.aimi_adv_oref_hide_chart else R.string.aimi_adv_oref_show_chart
+                    )
+                }
+            })
+            layout.addView(chartBlock)
+        }
+
+        card.addView(layout)
+        return card
+    }
+
+    /** Bar chart for OREF-window CGM distribution (same % as the monospace summary above). */
+    private fun createOrefCgmRangeChart(oref: OrefAnalysisReport): LinearLayout {
+        val maxBarPx = rh.dpToPx(120)
+        val barWidthPx = rh.dpToPx(28)
+
+        fun column(label: String, pct: Double?, barColor: Int): LinearLayout {
+            val value = pct ?: 0.0
+            val fillH = (value / 100.0 * maxBarPx).roundToInt().coerceIn(0, maxBarPx)
+            return LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+
+                addView(TextView(this@AimiProfileAdvisorActivity).apply {
+                    text = pct?.let { String.format(Locale.US, "%.1f%%", it) } ?: "—"
+                    textSize = 12f
+                    setTextColor(Color.WHITE)
+                    gravity = Gravity.CENTER_HORIZONTAL
+                })
+
+                val track = FrameLayout(this@AimiProfileAdvisorActivity).apply {
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxBarPx).apply {
+                        topMargin = rh.dpToPx(8)
+                        bottomMargin = rh.dpToPx(8)
+                    }
+                    setBackgroundColor(Color.parseColor("#334155"))
+                }
+                track.addView(View(this@AimiProfileAdvisorActivity).apply {
+                    layoutParams = FrameLayout.LayoutParams(barWidthPx, fillH, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+                    setBackgroundColor(barColor)
+                })
+                addView(track)
+
+                addView(TextView(this@AimiProfileAdvisorActivity).apply {
+                    text = label
+                    textSize = 11f
+                    setTextColor(Color.parseColor("#94A3B8"))
+                    gravity = Gravity.CENTER_HORIZONTAL
+                })
+            }
+        }
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = rh.dpToPx(8)
+            }
+            addView(TextView(this@AimiProfileAdvisorActivity).apply {
+                text = rh.gs(R.string.aimi_adv_oref_chart_title)
+                textSize = 13f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.parseColor("#E2E8F0"))
+                setPadding(0, 0, 0, rh.dpToPx(8))
+            })
+            addView(LinearLayout(this@AimiProfileAdvisorActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(column(rh.gs(R.string.aimi_adv_oref_bar_low), oref.timeBelow70Pct, Color.parseColor("#F87171")))
+                addView(column(rh.gs(R.string.aimi_adv_oref_bar_in_range), oref.timeInRange70180Pct, Color.parseColor("#4ADE80")))
+                addView(column(rh.gs(R.string.aimi_adv_oref_bar_high), oref.timeAbove180Pct, Color.parseColor("#FBBF24")))
+            })
+        }
+    }
+
     private fun createCoachCard(context: AdvisorContext, report: AdvisorReport, cardBg: Int): CardView {
         val card = CardView(this).apply {
             radius = 16f
@@ -900,15 +1028,30 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             val placeholder = rh.gs(R.string.aimi_coach_placeholder) + " (${provider.name})"
             contentText.text = "$basicAnalysis\n\n⚙️ $placeholder"
         } else {
-            lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+            lifecycleScope.launch {
                 try {
-                    val history = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val history = withContext(Dispatchers.IO) {
                         historyRepo.getRecentActions(7)
                     }
-                    val advice = AiCoachingService().fetchAdvice(this@AimiProfileAdvisorActivity, context, report, activeKey, provider, history)
-                    contentText.text = advice
-                } catch (e: Exception) {
-                    contentText.text = rh.gs(R.string.aimi_coach_error) + "\n" + e.localizedMessage
+                    val advice = AiCoachingService().fetchAdvice(
+                        this@AimiProfileAdvisorActivity,
+                        context,
+                        report,
+                        activeKey,
+                        provider,
+                        history
+                    )
+                    if (!isFinishing) {
+                        contentText.text = advice
+                    }
+                } catch (t: Throwable) {
+                    if (!isFinishing) {
+                        val detail = when (t) {
+                            is OutOfMemoryError -> rh.gs(R.string.aimi_adv_error_oom)
+                            else -> t.localizedMessage ?: t.javaClass.simpleName
+                        }
+                        contentText.text = rh.gs(R.string.aimi_coach_error) + "\n" + detail
+                    }
                 }
             }
         }

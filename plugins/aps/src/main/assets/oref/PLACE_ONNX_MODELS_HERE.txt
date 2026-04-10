@@ -1,0 +1,13 @@
+On-device OREF risk models (optional)
+=====================================
+
+Place these files here to enable local ML scores in AIMI Advisor (no cloud, no Nightscout):
+
+ hypo_lgbm.onnx
+  hyper_lgbm.onnx
+  bg_change_lgbm.onnx
+
+Export from your Python LightGBM .pkl using skl2onnx / onnxmltools with input shape
+[N, 37] float32, feature order identical to models/model_meta.json "features".
+
+Rebuild the app after adding files. If files are absent, Advisor still shows metrics + heuristics.
