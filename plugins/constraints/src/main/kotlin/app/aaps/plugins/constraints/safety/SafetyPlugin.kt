@@ -6,6 +6,7 @@ import androidx.compose.material.icons.filled.Shield
 import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceManager
 import androidx.preference.PreferenceScreen
+import app.aaps.core.data.model.advancedFilteringSupported
 import app.aaps.core.data.plugin.PluginType
 import app.aaps.core.data.pump.defs.PumpDescription
 import app.aaps.core.interfaces.configuration.Config
@@ -14,6 +15,7 @@ import app.aaps.core.interfaces.constraints.ConstraintsChecker
 import app.aaps.core.interfaces.constraints.PluginConstraints
 import app.aaps.core.interfaces.constraints.Safety
 import app.aaps.core.interfaces.db.PersistenceLayer
+import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.notifications.NotificationId
 import app.aaps.core.interfaces.notifications.NotificationLevel
@@ -57,6 +59,7 @@ class SafetyPlugin @Inject constructor(
     private val hardLimits: HardLimits,
     private val config: Config,
     private val persistenceLayer: PersistenceLayer,
+    private val iobCobCalculator: IobCobCalculator,
     private val dateUtil: DateUtil,
     private val notificationManager: NotificationManager,
     private val decimalFormatter: DecimalFormatter
@@ -102,9 +105,8 @@ class SafetyPlugin @Inject constructor(
     }
 
     override fun isAdvancedFilteringEnabled(value: Constraint<Boolean>): Constraint<Boolean> {
-        val advancedFiltering = runBlocking { persistenceLayer.isAdvancedFilteringSupported() }
-        //if (!advancedFiltering) value.set(false, rh.gs(R.string.smbalwaysdisabled), this)
-        if (!advancedFiltering) value.set(true, rh.gs(R.string.disable_Libre_smb_restrictions), this)
+        val advancedFiltering = iobCobCalculator.ads.lastBg()?.sourceSensor?.advancedFilteringSupported() ?: false
+        if (!advancedFiltering) value.set(false, rh.gs(R.string.smbalwaysdisabled), this)
         return value
     }
 

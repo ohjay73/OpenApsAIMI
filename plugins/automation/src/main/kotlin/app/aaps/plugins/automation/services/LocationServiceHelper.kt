@@ -1,10 +1,15 @@
 package app.aaps.plugins.automation.services
 
+import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.IBinder
+import androidx.core.app.ActivityCompat
 import app.aaps.core.interfaces.notifications.NotificationHolder
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -58,5 +63,21 @@ class LocationServiceHelper @Inject constructor(
 
     fun stopService(context: Context) =
         context.stopService(Intent(context, LocationService::class.java))
+
+    private fun startForegroundImmediate(locationService: LocationService, context: Context) {
+        val id = notificationHolder.notificationID
+        val notification = notificationHolder.notification
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val fine = ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            val coarse = ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            if (fine || coarse) {
+                locationService.startForeground(id, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+            } else {
+                locationService.startForeground(id, notification)
+            }
+        } else {
+            locationService.startForeground(id, notification)
+        }
+    }
 
 }

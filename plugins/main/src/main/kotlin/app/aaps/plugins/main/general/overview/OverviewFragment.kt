@@ -2,7 +2,6 @@ package app.aaps.plugins.main.general.overview
 
 import android.annotation.SuppressLint
 import android.app.NotificationManager
-import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -81,8 +80,6 @@ import app.aaps.core.interfaces.rx.events.EventUpdateOverviewIobCob
 import app.aaps.core.interfaces.rx.events.EventUpdateOverviewSensitivity
 import app.aaps.core.interfaces.rx.events.EventWearUpdateTiles
 import app.aaps.core.interfaces.rx.weardata.EventData
-import app.aaps.core.interfaces.source.DexcomBoyda
-import app.aaps.core.interfaces.source.XDripSource
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
@@ -140,7 +137,7 @@ import kotlin.math.abs
 import kotlin.math.min
 import app.aaps.core.interfaces.notifications.NotificationManager as AapsNotificationManager
 
-class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickListener {
+class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClickListener {
 
     @Inject lateinit var aapsLogger: AAPSLogger
     @Inject lateinit var aapsSchedulers: AapsSchedulers
@@ -156,8 +153,6 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
     @Inject lateinit var loop: Loop
     @Inject lateinit var activePlugin: ActivePlugin
     @Inject lateinit var iobCobCalculator: IobCobCalculator
-    @Inject lateinit var dexcomBoyda: DexcomBoyda
-    @Inject lateinit var xDripSource: XDripSource
     @Inject lateinit var notificationManager: AapsNotificationManager
     @Inject lateinit var config: Config
     @Inject lateinit var protectionCheck: ProtectionCheck
@@ -300,15 +295,12 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
 
         binding.graphsLayout.chartMenuButton.visibility = preferences.simpleMode.not().toVisibility()
 
+        binding.activeProfile.setOnClickListener(this)
+        binding.activeProfile.setOnLongClickListener(this)
         binding.tempTarget.setOnClickListener(this)
         binding.tempTarget.setOnLongClickListener(this)
         binding.pumpStatusLayout.setOnClickListener(this)
         binding.buttonsLayout.acceptTempButton.setOnClickListener(this)
-        binding.buttonsLayout.treatmentButton.setOnClickListener(this)
-        binding.buttonsLayout.calibrationButton.setOnClickListener(this)
-        binding.buttonsLayout.cgmButton.setOnClickListener(this)
-        binding.buttonsLayout.insulinButton.setOnClickListener(this)
-        binding.buttonsLayout.carbsButton.setOnClickListener(this)
         binding.infoLayout.apsMode.setOnClickListener(this)
         binding.infoLayout.apsMode.setOnLongClickListener(this)
 
@@ -401,12 +393,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             .observeOn(aapsSchedulers.io)
             .subscribe({ scheduleUpdateGUI() }, fabricPrivacy::logException)
         merge(
-            preferences.observe(BooleanKey.OverviewShowCarbsButton).drop(1).map {},
-            preferences.observe(BooleanKey.OverviewShowTreatmentButton).drop(1).map {},
             preferences.observe(BooleanKey.OverviewShowWizardButton).drop(1).map {},
-            preferences.observe(BooleanKey.OverviewShowInsulinButton).drop(1).map {},
-            preferences.observe(BooleanKey.OverviewShowCalibrationButton).drop(1).map {},
-            preferences.observe(BooleanKey.OverviewShowCgmButton).drop(1).map {},
             preferences.observe(UnitDoubleKey.OverviewLowMark).drop(1).map {},
             preferences.observe(UnitDoubleKey.OverviewHighMark).drop(1).map {},
             preferences.observe(BooleanNonKey.AutosensUsedOnMainPhone).drop(1).map {},
@@ -631,28 +618,11 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
     }
 
     override fun onClick(v: View) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            // try to fix  https://fabric.io/nightscout3/android/apps/info.nightscout.androidaps/issues/5aca7a1536c7b23527eb4be7?time=last-seven-days
-            // https://stackoverflow.com/questions/14860239/checking-if-state-is-saved-before-committing-a-fragmenttransaction
-            if (childFragmentManager.isStateSaved) return@launch
-            when (v.id) {
-                R.id.treatment_button   -> protectionCheck.queryProtection(requireActivity(), ProtectionCheck.Protection.BOLUS, UIRunnable { if (isAdded) uiInteraction.runTreatmentDialog(childFragmentManager) })
-                R.id.insulin_button     -> protectionCheck.queryProtection(requireActivity(), ProtectionCheck.Protection.BOLUS, UIRunnable { if (isAdded) uiInteraction.runInsulinDialog(childFragmentManager) })
-                R.id.carbs_button       -> protectionCheck.queryProtection(requireActivity(), ProtectionCheck.Protection.BOLUS, UIRunnable { if (isAdded) uiInteraction.runCarbsDialog(childFragmentManager) })
-                R.id.temp_target        -> protectionCheck.queryProtection(requireActivity(), ProtectionCheck.Protection.BOLUS, UIRunnable { if (isAdded) uiInteraction.runTempTargetDialog(childFragmentManager) })
-
-                R.id.cgm_button         -> {
-                    if (xDripSource.isEnabled()) openCgmApp("com.eveningoutpost.dexdrip")
-                    else if (dexcomBoyda.isEnabled()) dexcomBoyda.dexcomPackages().forEach { openCgmApp(it) }
-                }
-
-                R.id.calibration_button -> {
-                    if (xDripSource.isEnabled()) {
-                        uiInteraction.runCalibrationDialog(childFragmentManager)
-                    }
-                }
-
-                R.id.accept_temp_button -> {
+        if (childFragmentManager.isStateSaved) return
+        when (v.id) {
+            R.id.accept_temp_button -> {
+                viewLifecycleOwner.lifecycleScope.launch {
+                    if (childFragmentManager.isStateSaved) return@launch
                     profileFunction.getProfile() ?: return@launch
                     if ((loop as PluginBase).isEnabled()) {
                         val lastRun = loop.lastRun
@@ -675,44 +645,65 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
                         }
                     }
                 }
-
-                R.id.aps_mode           -> {
-                    protectionCheck.queryProtection(requireActivity(), ProtectionCheck.Protection.BOLUS, UIRunnable {
-                        if (isAdded) uiInteraction.runLoopDialog(childFragmentManager, 1)
-                    })
-                }
-
-                R.id.pump_status_layout -> {
-                    // Pump activity dialog is now handled by Compose UI
-                }
             }
-        }
-    }
 
-    private fun openCgmApp(packageName: String) {
-        context?.let {
-            val packageManager = it.packageManager
-            try {
-                val intent = packageManager.getLaunchIntentForPackage(packageName) ?: throw ActivityNotFoundException()
-                intent.addCategory(Intent.CATEGORY_LAUNCHER)
-                it.startActivity(intent)
-            } catch (_: ActivityNotFoundException) {
-                aapsLogger.debug(LTag.CORE, "Error opening CGM app")
+            R.id.temp_target          -> {
+                val act = activity ?: return
+                protectionCheck.queryProtection(act, ProtectionCheck.Protection.BOLUS, UIRunnable {
+                    if (isAdded) uiInteraction.openTempTargetManagementScreen(act)
+                })
+            }
+
+            R.id.pump_status_layout   -> {
+                val act = activity ?: return
+                uiInteraction.showOkDialog(
+                    context = act,
+                    title = rh.gs(app.aaps.core.ui.R.string.pump),
+                    message = processedDeviceStatusData.extendedPumpStatusHtml
+                )
+            }
+
+            R.id.aps_mode, R.id.loop_indicator, R.id.loop_status -> {
+                val act = activity ?: return
+                protectionCheck.queryProtection(act, ProtectionCheck.Protection.BOLUS, UIRunnable {
+                    if (isAdded) uiInteraction.openRunningModeScreen(act)
+                })
+            }
+
+            R.id.active_profile       -> {
+                val act = activity ?: return
+                uiInteraction.openProfileManagementScreen(act)
             }
         }
     }
 
     override fun onLongClick(v: View): Boolean {
         when (v.id) {
-            R.id.aps_mode       -> {
-                activity?.let { activity ->
-                    protectionCheck.queryProtection(activity, ProtectionCheck.Protection.BOLUS, UIRunnable {
-                        uiInteraction.runLoopDialog(childFragmentManager, 0)
+            R.id.aps_mode, R.id.loop_indicator, R.id.loop_status -> {
+                activity?.let { act ->
+                    protectionCheck.queryProtection(act, ProtectionCheck.Protection.BOLUS, UIRunnable {
+                        if (isAdded) uiInteraction.openRunningModeScreen(act)
                     })
                 }
+                return true
             }
 
-            R.id.temp_target    -> v.performClick()
+            R.id.temp_target          -> {
+                v.performClick()
+                return true
+            }
+
+            R.id.active_profile       -> {
+                activity?.let { act ->
+                    if (loop.runningMode == RM.Mode.DISCONNECTED_PUMP)
+                        OKDialog.show(act, rh.gs(R.string.not_available_full), rh.gs(R.string.smscommunicator_pump_disconnected))
+                    else
+                        protectionCheck.queryProtection(act, ProtectionCheck.Protection.BOLUS, UIRunnable {
+                            uiInteraction.runProfileSwitchDialog(childFragmentManager)
+                        })
+                }
+                return true
+            }
         }
         return false
     }
@@ -724,7 +715,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             val pump = activePlugin.activePump
             val profile = profileFunction.getProfile()
             profileFunction.getProfileName()
-            val actualBG = iobCobCalculator.ads.actualBg()
+            iobCobCalculator.ads.actualBg()
             var list = ""
 
             // **** Temp button ****
@@ -742,49 +733,6 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
                 } else {
                     binding.buttonsLayout.acceptTempButton.visibility = View.GONE
                 }
-
-                // **** Various treatment buttons ****
-                binding.buttonsLayout.carbsButton.visibility =
-                    (profile != null && preferences.get(BooleanKey.OverviewShowCarbsButton)).toVisibility()
-                binding.buttonsLayout.treatmentButton.visibility = (loop.runningMode != RM.Mode.DISCONNECTED_PUMP && !pump.isSuspended() && pump.isInitialized() && profile != null
-                    && preferences.get(BooleanKey.OverviewShowTreatmentButton)).toVisibility()
-                binding.buttonsLayout.insulinButton.visibility = (profile != null && preferences.get(BooleanKey.OverviewShowInsulinButton)).toVisibility()
-                if (loop.runningMode == RM.Mode.DISCONNECTED_PUMP || pump.isSuspended() || !pump.isInitialized()) {
-                    setRibbon(
-                        binding.buttonsLayout.insulinButton,
-                        app.aaps.core.ui.R.attr.ribbonTextWarningColor,
-                        app.aaps.core.ui.R.attr.ribbonWarningColor,
-                        rh.gs(app.aaps.core.ui.R.string.overview_insulin_label)
-                    )
-                } else {
-                    setRibbon(
-                        binding.buttonsLayout.insulinButton,
-                        app.aaps.core.ui.R.attr.icBolusColor,
-                        app.aaps.core.ui.R.attr.ribbonDefaultColor,
-                        rh.gs(app.aaps.core.ui.R.string.overview_insulin_label)
-                    )
-                }
-
-                // **** Calibration & CGM buttons ****
-                val xDripIsBgSource = xDripSource.isEnabled()
-                val dexcomIsSource = dexcomBoyda.isEnabled()
-                binding.buttonsLayout.calibrationButton.visibility = (xDripIsBgSource && actualBG != null && preferences.get(BooleanKey.OverviewShowCalibrationButton)).toVisibility()
-                if (dexcomIsSource) {
-                    binding.buttonsLayout.cgmButton.setCompoundDrawablesWithIntrinsicBounds(null, rh.gd(R.drawable.ic_byoda), null, null)
-                    for (drawable in binding.buttonsLayout.cgmButton.compoundDrawables) {
-                        drawable?.mutate()
-                        drawable?.colorFilter = PorterDuffColorFilter(rh.gac(context, app.aaps.core.ui.R.attr.cgmDexColor), PorterDuff.Mode.SRC_IN)
-                    }
-                    binding.buttonsLayout.cgmButton.setTextColor(rh.gac(context, app.aaps.core.ui.R.attr.cgmDexColor))
-                } else if (xDripIsBgSource) {
-                    binding.buttonsLayout.cgmButton.setCompoundDrawablesWithIntrinsicBounds(null, rh.gd(app.aaps.core.objects.R.drawable.ic_xdrip), null, null)
-                    for (drawable in binding.buttonsLayout.cgmButton.compoundDrawables) {
-                        drawable?.mutate()
-                        drawable?.colorFilter = PorterDuffColorFilter(rh.gac(context, app.aaps.core.ui.R.attr.cgmXdripColor), PorterDuff.Mode.SRC_IN)
-                    }
-                    binding.buttonsLayout.cgmButton.setTextColor(rh.gac(context, app.aaps.core.ui.R.attr.cgmXdripColor))
-                }
-                binding.buttonsLayout.cgmButton.visibility = (preferences.get(BooleanKey.OverviewShowCgmButton) && (xDripIsBgSource || dexcomIsSource)).toVisibility()
 
                 // Automation buttons
                 binding.buttonsLayout.userButtonsLayout.removeAllViews()

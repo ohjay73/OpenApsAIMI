@@ -515,7 +515,7 @@ class DashboardFragment : DaggerFragment() {
     private fun openBolus(): Boolean {
         activity?.let { activity ->
             protectionCheck.queryProtection(activity, ProtectionCheck.Protection.BOLUS, UIRunnable {
-                uiInteraction.runInsulinDialog(childFragmentManager)
+                uiInteraction.openInsulinScreen(activity)
             })
         }
         return true
@@ -530,7 +530,7 @@ class DashboardFragment : DaggerFragment() {
     private fun openLoopDialog() {
         activity?.let { activity ->
             protectionCheck.queryProtection(activity, ProtectionCheck.Protection.BOLUS, UIRunnable {
-                if (isAdded) uiInteraction.runLoopDialog(childFragmentManager, 1)
+                if (isAdded) uiInteraction.openRunningModeScreen(activity)
             })
         }
     }

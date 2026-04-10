@@ -9,6 +9,7 @@ import app.aaps.core.interfaces.constraints.Constraint
 import app.aaps.core.interfaces.constraints.Objectives
 import app.aaps.core.interfaces.constraints.PluginConstraints
 import app.aaps.core.interfaces.db.PersistenceLayer
+import app.aaps.core.interfaces.iob.AutosensDataStore
 import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.interfaces.profiling.Profiler
 import app.aaps.core.interfaces.protection.PasswordCheck
@@ -84,6 +85,7 @@ class ConstraintsCheckerImplTest : TestBaseWithProfile() {
     @Mock lateinit var pumpWithConcentration: PumpWithConcentrationImpl
     @Mock lateinit var blePreCheck: BlePreCheck
     @Mock lateinit var bolusProgressData: BolusProgressData
+    @Mock lateinit var autosensDataStore: AutosensDataStore
 
     private lateinit var danaPump: DanaPump
     private lateinit var insightDbHelper: InsightDbHelper
@@ -185,7 +187,7 @@ class ConstraintsCheckerImplTest : TestBaseWithProfile() {
         safetyPlugin =
             SafetyPlugin(
                 aapsLogger, rh, preferences, constraintChecker, activePlugin, hardLimits,
-                config, persistenceLayer, dateUtil, notificationManager, decimalFormatter
+                config, persistenceLayer, iobCobCalculator, dateUtil, notificationManager, decimalFormatter
             )
         val constraintsPluginsList = ArrayList<PluginBase>()
         constraintsPluginsList.add(safetyPlugin)
@@ -234,8 +236,7 @@ class ConstraintsCheckerImplTest : TestBaseWithProfile() {
 
     // Safety
     @Test
-    fun isAdvancedFilteringEnabledTest() = runTest {
-        whenever(persistenceLayer.isAdvancedFilteringSupported()).thenReturn(false)
+    fun isAdvancedFilteringEnabledTest() {
         val c = constraintChecker.isAdvancedFilteringEnabled()
         assertThat(c.reasonList).hasSize(1) // Safety
         assertThat(c.mostLimitedReasonList).hasSize(1) // Safety
