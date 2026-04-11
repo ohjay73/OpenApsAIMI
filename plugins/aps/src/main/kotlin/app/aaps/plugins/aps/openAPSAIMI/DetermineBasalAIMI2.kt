@@ -56,6 +56,7 @@ import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdIntegration
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdLogRow
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdRuntime
 import app.aaps.plugins.aps.openAPSAIMI.ports.PkpdPort
+import app.aaps.plugins.aps.openAPSAIMI.prediction.minPredictedAcrossCurves
 import app.aaps.plugins.aps.openAPSAIMI.prediction.sanitizePredictionValues
 import app.aaps.plugins.aps.openAPSAIMI.safety.HypoGuard
 import app.aaps.plugins.aps.openAPSAIMI.safety.HypoThresholdMath
@@ -1697,16 +1698,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val maxSmbLimit: Double
     )
 
-    /** Lowest BG across available prediction traces (conservative for hypo risk). */
-    private fun minPredictedAcrossCurves(rT: RT): Double? {
-        val p = rT.predBGs ?: return null
-        val seriesMins = listOfNotNull(p.IOB, p.COB, p.UAM, p.ZT)
-            .filter { it.isNotEmpty() }
-            .map { row -> row.minOf { it } }
-        if (seriesMins.isEmpty()) return null
-        return seriesMins.minOf { it.toDouble() }.takeIf { it.isFinite() }
-    }
-
     private fun finalizeAndCapSMB(
         rT: RT,
         proposedUnits: Double,
@@ -1756,7 +1747,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             iob = this.iob.toDouble(),
             maxIob = this.maxIob,
             eventualBg = eventualForStacking?.takeIf { it.isFinite() },
-            minPredBg = minPredictedAcrossCurves(rT),
+            minPredBg = minPredictedAcrossCurves(rT.predBGs),
             trajectoryEnergy = rT.trajectoryEnergy,
             isExplicitUserAction = isExplicitUserAction,
             enabled = preferences.get(BooleanKey.OApsAIMIIobSurveillanceGuard),
@@ -2092,7 +2083,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val smbFinalSource =
             if (isRedCarpetSituation && proposedUnits > 0.0 && !iobSurveillanceSuppressRedCarpet) "red_carpet" else "standard_safe_cap"
 
-        val minPredForExport = minPredictedAcrossCurves(rT)
+        val minPredForExport = minPredictedAcrossCurves(rT.predBGs)
         val evExp = eventualForStacking?.takeIf { it.isFinite() }
         val mnExp = minPredForExport?.takeIf { it.isFinite() }
         val teExp = rT.trajectoryEnergy
