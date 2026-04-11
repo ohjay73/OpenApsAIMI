@@ -66,6 +66,7 @@ import app.aaps.plugins.aps.openAPSAIMI.safety.clampSmbToMaxSmbAndMaxIob
 import app.aaps.plugins.aps.openAPSAIMI.safety.signalTrajectoryStack
 import app.aaps.plugins.aps.openAPSAIMI.safety.HypoThresholdMath
 import app.aaps.plugins.aps.openAPSAIMI.safety.resolveSafetyStart
+import app.aaps.plugins.aps.openAPSAIMI.safety.CompressionReboundGuard
 import app.aaps.plugins.aps.openAPSAIMI.safety.HypoTools
 import app.aaps.plugins.aps.openAPSAIMI.safety.InsulinStackingStance
 import app.aaps.plugins.aps.openAPSAIMI.safety.SafetyDecision
@@ -2412,13 +2413,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         delta: Float,
         reason: StringBuilder
     ): Boolean {
-         // Impossible rise (e.g. +30 mg/dL in 5 mins) = Compression Low Recovery
-         // [User Request]: Relaxed to avoid blocking aggressive meal spikes (e.g. +22)
-         if (delta > 35.0f) {
-             reason.append("🛡️ Safety Net: Compression Rebound Block (Delta > 35) -> Autodrive OFF\n")
-             return true
-         }
-         return false
+        if (CompressionReboundGuard.isImpossibleRise(delta)) {
+            reason.append(CompressionReboundGuard.reasonLine())
+            return true
+        }
+        return false
     }
 
     // =========================================================================
