@@ -22,7 +22,7 @@ import kotlinx.coroutines.runBlocking
  *
  * **Not covered here** (still `runBlocking` in `DetermineBasalaimiSMB2`): basal history init;
  * boluses in finalize path; open-agent boluses; site changes; newest SMB bolus;
- * warmup carbs / future COB / recent notes; recent bolus count; bolusesHistory;
+ * warmup COB + notes (single grouped block); recent bolus count; bolusesHistory;
  * [TddCalculator.calculate]`(2, false)`; HealthConnect steps/HR; other [TirCalculator] ranges
  * (daily/hour/3d).
  */

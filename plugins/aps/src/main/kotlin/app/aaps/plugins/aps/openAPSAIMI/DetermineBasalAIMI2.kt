@@ -5227,19 +5227,19 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         this.weekend = if (dayOfWeek == Calendar.SUNDAY || dayOfWeek == Calendar.SATURDAY) 1 else 0
         var lastCarbTimestamp = mealData.lastCarbTime
-        if (lastCarbTimestamp.toInt() == 0) {
-            val oneDayAgoIfNotFound = now - 24 * 60 * 60 * 1000
-            lastCarbTimestamp = runBlocking { persistenceLayer.getMostRecentCarbByDate() } ?: oneDayAgoIfNotFound
-        }
-        this.lastCarbAgeMin = ((now - lastCarbTimestamp) / (60 * 1000)).toInt()
-
-        this.futureCarbs = runBlocking { persistenceLayer.getFutureCob() }.toFloat()
-        if (lastCarbAgeMin < 15 && cob == 0.0f) {
-            this.cob = runBlocking { persistenceLayer.getMostRecentCarbAmount()?.toFloat() } ?: 0.0f
-        }
-
         val fourHoursAgo = now - 4 * 60 * 60 * 1000
-        this.recentNotes = runBlocking { persistenceLayer.getUserEntryDataFromTime(fourHoursAgo) }
+        val oneDayAgoIfNotFound = now - 24 * 60 * 60 * 1000
+        runBlocking {
+            if (lastCarbTimestamp.toInt() == 0) {
+                lastCarbTimestamp = persistenceLayer.getMostRecentCarbByDate() ?: oneDayAgoIfNotFound
+            }
+            this@DetermineBasalaimiSMB2.lastCarbAgeMin = ((now - lastCarbTimestamp) / (60 * 1000)).toInt()
+            this@DetermineBasalaimiSMB2.futureCarbs = persistenceLayer.getFutureCob().toFloat()
+            if (this@DetermineBasalaimiSMB2.lastCarbAgeMin < 15 && cob == 0.0f) {
+                this@DetermineBasalaimiSMB2.cob = persistenceLayer.getMostRecentCarbAmount()?.toFloat() ?: 0.0f
+            }
+            this@DetermineBasalaimiSMB2.recentNotes = persistenceLayer.getUserEntryDataFromTime(fourHoursAgo)
+        }
 
         this.tags0to60minAgo = parseNotes(0, 60)
         this.tags60to120minAgo = parseNotes(60, 120)

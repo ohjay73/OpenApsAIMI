@@ -203,6 +203,10 @@ class DetermineBasalAimiPerInvocationCacheTest {
         assertThat(tddCalculate1dCalls.get()).isEqualTo(0)
         assertThat(tddCalculateDaily24hCalls.get()).isEqualTo(1)
         assertThat(tirCalculate65180Calls.get()).isEqualTo(1)
+        // Sortie notable : logDecisionFinal(STALE_DATA) → une passe learning (décision A, côté « exit »).
+        verify(exactly = 1) {
+            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any())
+        }
     }
 
     private fun glucoseStatusFresh(now: Long) = mockk<GlucoseStatusAIMI>(relaxed = true) {

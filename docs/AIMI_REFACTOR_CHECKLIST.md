@@ -1,6 +1,6 @@
 # AIMI refactor — check-list d’avancement
 
-Dernière mise à jour : extraction `DetermineBasalInvocationCaches.kt`, tests unit caches + décision A (`updateLearning` nominal).
+Dernière mise à jour : warmup persistance COB/notes en un `runBlocking` ; test STALE → `updateLearning` 1× ; périmètre « fin v1 » ci-dessous.
 
 ## Légende
 
@@ -47,7 +47,7 @@ Dernière mise à jour : extraction `DetermineBasalInvocationCaches.kt`, tests u
 |------|--------|
 | Inventaire `runBlocking` | Fait — KDoc sur `plugins/aps/.../DetermineBasalInvocationCaches.kt` + sites non couverts |
 | Cache `calculateDaily(-24,0)` par invocation `determine_basal` | Fait |
-| Autres `runBlocking` (DB, HC, …) : cache TTL ou async | Partiel — cache `calculate(1,false)` + `tirCalculator.calculate(1,65,180)` par invocation (réduit doublons sûrs) |
+| Autres `runBlocking` (DB, HC, …) : cache TTL ou async | Partiel — caches stats + **warmup** : COB futur / âge dernier carb / notes 4h regroupés en **un** `runBlocking` ; reste HC, boluses, site, etc. |
 | Découpe continue du gros fichier | Partiel — caches d’invocation extraits vers `DetermineBasalInvocationCaches.kt` ; suite possible par domaines (SMB, autodrive, …) |
 | `logDecisionFinal` → phases (résumé → ML/gov → TICK) | Fait |
 | `updateLearning` aussi sur chemin nominal ? | **Décision A (produit)** — learning **uniquement** quand `logDecisionFinal` s’exécute (~sorties notables) ; **pas** sur le chemin nominal (plus safe, moins de bruit d’apprentissage). |
@@ -58,7 +58,7 @@ Dernière mise à jour : extraction `DetermineBasalInvocationCaches.kt`, tests u
 | Item | Statut |
 |------|--------|
 | `:plugins:aps:testFullDebugUnitTest` (régressions tests corrigées) | Fait |
-| Tests scénario / golden moteur (branches clés) | Partiel — `DetermineBasalInvocationCachesTest` (unit) ; `DetermineBasalAimiPerInvocationCacheTest` : caches + **décision A** (`updateLearning` 0× sur chemin nominal non stale) ; golden / branches exhaustives encore ouverts |
+| Tests scénario / golden moteur (branches clés) | Partiel — `DetermineBasalInvocationCachesTest` ; `DetermineBasalAimiPerInvocationCacheTest` : caches + **décision A** (nominal **0×** `updateLearning`, STALE **1×** via `logDecisionFinal`) ; golden exhaustif = backlog post-v1 |
 
 ## Dual-brain / Sentinel
 
@@ -73,6 +73,14 @@ Dernière mise à jour : extraction `DetermineBasalInvocationCaches.kt`, tests u
 |------|--------|
 | TODO `// TODO eliminate` dans `DetermineBasalAIMI2` (doublons / commentaires morts) | Fait (reste : TODO `tbrMaxMode` / `tbrMaxAutoDrive` si tracking un jour) |
 | Fichiers `.bak` | **Fait** — `*.bak` dans `.gitignore` ; **3 sauvegardes `.bak` retirées du dépôt** (AIMI + Comboctl) |
+
+---
+
+## Fin livraison « refactor v1 » (périmètre produit)
+
+**Inclus dans cette phase** : sécurité extraite + tests, caches d’invocation stats + warmup DB groupé, `logDecisionFinal` découpé, décision A documentée et couverte par tests moteur légers, hygiène `.bak`/doc dual-brain, pas de changement ONNX.
+
+**Hors v1 (backlog technique / qualité)** : découpe massive `DetermineBasalAIMI2` par domaines, golden sur toutes les branches `logDecisionFinal`, refonte async générale des autres `runBlocking`, TODO pump `tbrMax*`.
 
 ---
 
