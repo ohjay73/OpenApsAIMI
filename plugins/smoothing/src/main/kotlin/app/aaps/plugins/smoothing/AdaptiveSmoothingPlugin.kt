@@ -15,6 +15,7 @@ import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.AapsSchedulers
 import app.aaps.core.interfaces.rx.bus.RxBus
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.collect
 import app.aaps.core.interfaces.rx.events.EventAdaptiveSmoothingQuality
@@ -197,7 +198,14 @@ class AdaptiveSmoothingPlugin @Inject constructor(
 
             // 3. Process Data Segment (Forward Filter + Backward Smoother)
             // Note: We process the whole segment here, but focusing on the robust estimation
-            processHybridSegment(data, previousTimestamp)
+            // IOB for compression heuristics: compute once per smooth pass. Per-point runBlocking here
+            // used to run while LoadBgDataWorker holds AutosensDataStore.dataLock → ANR / UI freeze.
+            val cachedIobTotalU = runBlocking {
+                val bolusIob = iobCobCalculator.calculateIobFromBolus().iob
+                val basalIob = iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended().iob
+                bolusIob + basalIob
+            }
+            processHybridSegment(data, previousTimestamp, cachedIobTotalU)
 
             // 4. Persistence & Logging
             val newDataProcessed = data.any { it.timestamp > previousTimestamp }
@@ -239,7 +247,8 @@ class AdaptiveSmoothingPlugin @Inject constructor(
 
     private fun processHybridSegment(
         data: MutableList<InMemoryGlucoseValue>,
-        previousTimestamp: Long
+        previousTimestamp: Long,
+        cachedIobTotalU: Double
     ) {
         // We will process the list from Oldest to Newest for the Filter (Time forward)
         // data list is usually Newest [0] -> Oldest [N]
@@ -279,7 +288,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
 
             // --- 🛡️ ADAPTIVE SAFETY GUARDRAILS ---
             // Calculate heuristic context for this point
-            val ctx = calculateGlycemicContext(data, i)
+            val ctx = calculateGlycemicContext(data, i, cachedIobTotalU)
             
             // Check for Blocking Artifacts (Compression Lows)
             val isCompression = isCompressionArtifactCandidate(ctx, data, i)
@@ -458,7 +467,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     // 🛡️ HEURISTIC SAFETY LOGIC (From Adaptive Plugin)
     // ============================================================
 
-    private fun calculateGlycemicContext(data: List<InMemoryGlucoseValue>, index: Int): GlycemicContext {
+    private fun calculateGlycemicContext(data: List<InMemoryGlucoseValue>, index: Int, cachedIobTotalU: Double): GlycemicContext {
         // Need next points (future/newest) relative to index? 
         // No, 'data' is Newest..Oldest.
         // If we are at 'i', older points are i+1, i+2.
@@ -469,10 +478,8 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         // Heuristic Delta (Raw) 
         val rawDelta = valCur - valOld1
         
-        // IOB Safety
-        val bolusIob = kotlinx.coroutines.runBlocking { iobCobCalculator.calculateIobFromBolus().iob }
-        val basalIob = kotlinx.coroutines.runBlocking { iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended().iob }
-        val iob = bolusIob + basalIob
+        // IOB Safety (current IOB; same for all points — was previously re-fetched per point via runBlocking)
+        val iob = cachedIobTotalU
 
         // Night
         val now = java.util.Calendar.getInstance()
