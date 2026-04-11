@@ -65,11 +65,12 @@ class HighBgOverrideTest {
 
     @Test
     fun `test apply blocked by hypo risk`() {
+        // HypoGuard strongFuture requires both predicted and eventual at/below floor (hypo − 5).
         val result = HighBgOverride.apply(
             bg = 250.0,
             delta = 0.0,
-            predictedBg = 60.0, // Predicted low
-            eventualBg = 250.0,
+            predictedBg = 60.0,
+            eventualBg = 60.0,
             hypoGuard = 70.0,
             iob = 0.0,
             maxSmb = 2.0,

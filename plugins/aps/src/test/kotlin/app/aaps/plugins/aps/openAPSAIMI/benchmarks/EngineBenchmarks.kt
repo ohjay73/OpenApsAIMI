@@ -12,6 +12,7 @@ import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.interfaces.db.PersistenceLayer
+import app.aaps.core.interfaces.notifications.NotificationManager
 import com.google.common.truth.Truth.assertThat
 import kotlin.system.measureTimeMillis
 import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCycleFacade
@@ -19,7 +20,7 @@ import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCyclePreferences
 import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCycleLearner
 import app.aaps.plugins.aps.openAPSAIMI.basal.DynamicBasalController
 import app.aaps.plugins.aps.openAPSAIMI.autodrive.AutodriveEngine
-import io.reactivex.rxjava3.core.Single
+import io.mockk.coEvery
 import java.io.File
 
 class EngineBenchmarks {
@@ -34,14 +35,14 @@ class EngineBenchmarks {
         every { Environment.getExternalStorageDirectory() } returns mockFile
         every { mockFile.absolutePath } returns "/tmp"
 
-        // Explicit Rx stubs for PersistenceLayer
-        every { persistenceLayer.getUserEntryDataFromTime(any()) } returns Single.just(emptyList())
-        every { persistenceLayer.getBolusesFromTime(any(), any()) } returns Single.just(emptyList())
-        every { persistenceLayer.getCarbsFromTime(any(), any()) } returns Single.just(emptyList())
-        every { persistenceLayer.getTherapyEventDataFromTime(any(), any()) } returns Single.just(emptyList())
-        every { persistenceLayer.getTherapyEventDataFromTime(any(), any(), any()) } returns emptyList()
-        every { persistenceLayer.getTherapyEventDataFromToTime(any(), any()) } returns Single.just(emptyList())
-        every { persistenceLayer.getBgReadingsDataFromTime(any(), any()) } returns Single.just(emptyList())
+        // Suspend PersistenceLayer stubs
+        coEvery { persistenceLayer.getUserEntryDataFromTime(any()) } returns emptyList()
+        coEvery { persistenceLayer.getBolusesFromTime(any(), any()) } returns emptyList()
+        coEvery { persistenceLayer.getCarbsFromTime(any(), any()) } returns emptyList()
+        coEvery { persistenceLayer.getTherapyEventDataFromTime(any(), any()) } returns emptyList()
+        coEvery { persistenceLayer.getTherapyEventDataFromTime(any(), any(), any()) } returns emptyList()
+        coEvery { persistenceLayer.getTherapyEventDataFromToTime(any(), any()) } returns emptyList()
+        coEvery { persistenceLayer.getBgReadingsDataFromTime(any(), any()) } returns emptyList()
 
         engine = DetermineBasalaimiSMB2(
             profileUtil = mockk(relaxed = true),
@@ -50,6 +51,7 @@ class EngineBenchmarks {
             gestationalAutopilot = mockk(relaxed = true),
             auditorOrchestrator = mockk(relaxed = true),
             uiInteraction = mockk(relaxed = true),
+            notificationManager = mockk<NotificationManager>(relaxed = true),
             wCycleFacade = mockk(relaxed = true),
             wCyclePreferences = mockk(relaxed = true),
             wCycleLearner = mockk(relaxed = true),
@@ -72,6 +74,7 @@ class EngineBenchmarks {
             comparator = mockk(relaxed = true)
             basalLearner = mockk(relaxed = true)
             unifiedReactivityLearner = mockk(relaxed = true)
+            basalNeuralLearner = mockk(relaxed = true)
             storageHelper = mockk(relaxed = true)
             aapsLogger = mockk(relaxed = true)
             trajectoryGuard = mockk(relaxed = true)
