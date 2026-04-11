@@ -1,6 +1,6 @@
 # AIMI refactor — check-list d’avancement
 
-Dernière mise à jour : suppression `.bak` versionnés, tests cache TDD 24h, benchmark `Environment` public dir, suite checklist.
+Dernière mise à jour : extraction `DetermineBasalInvocationCaches.kt`, tests unit caches + décision A (`updateLearning` nominal).
 
 ## Légende
 
@@ -45,10 +45,10 @@ Dernière mise à jour : suppression `.bak` versionnés, tests cache TDD 24h, be
 
 | Item | Statut |
 |------|--------|
-| Inventaire `runBlocking` (KDoc près cache TDD) | Fait |
+| Inventaire `runBlocking` | Fait — KDoc sur `plugins/aps/.../DetermineBasalInvocationCaches.kt` + sites non couverts |
 | Cache `calculateDaily(-24,0)` par invocation `determine_basal` | Fait |
 | Autres `runBlocking` (DB, HC, …) : cache TTL ou async | Partiel — cache `calculate(1,false)` + `tirCalculator.calculate(1,65,180)` par invocation (réduit doublons sûrs) |
-| Découpe continue du gros fichier | Partiel |
+| Découpe continue du gros fichier | Partiel — caches d’invocation extraits vers `DetermineBasalInvocationCaches.kt` ; suite possible par domaines (SMB, autodrive, …) |
 | `logDecisionFinal` → phases (résumé → ML/gov → TICK) | Fait |
 | `updateLearning` aussi sur chemin nominal ? | **Décision A (produit)** — learning **uniquement** quand `logDecisionFinal` s’exécute (~sorties notables) ; **pas** sur le chemin nominal (plus safe, moins de bruit d’apprentissage). |
 | Implémentation « learning sur nominal » | **N/A** (hors périmètre tant que décision A reste la règle). |
@@ -58,7 +58,7 @@ Dernière mise à jour : suppression `.bak` versionnés, tests cache TDD 24h, be
 | Item | Statut |
 |------|--------|
 | `:plugins:aps:testFullDebugUnitTest` (régressions tests corrigées) | Fait |
-| Tests scénario / golden moteur (branches clés) | Partiel — `DetermineBasalAimiPerInvocationCacheTest` : chemin non stale (1× `calculateDaily(-24,0)` / 1× TDD 1j / 1× TIR 65180), 2e invocation refetch, stale sans `calculate(1)` ; golden / branches exhaustives encore ouverts |
+| Tests scénario / golden moteur (branches clés) | Partiel — `DetermineBasalInvocationCachesTest` (unit) ; `DetermineBasalAimiPerInvocationCacheTest` : caches + **décision A** (`updateLearning` 0× sur chemin nominal non stale) ; golden / branches exhaustives encore ouverts |
 
 ## Dual-brain / Sentinel
 

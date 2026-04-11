@@ -10,18 +10,15 @@ import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.aps.MealData
 import app.aaps.core.interfaces.aps.OapsProfileAimi
 import app.aaps.core.interfaces.db.PersistenceLayer
-import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.notifications.NotificationManager
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
-import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.stats.TddCalculator
 import app.aaps.core.interfaces.stats.TirCalculator
 import app.aaps.core.interfaces.ui.UiInteraction
-import app.aaps.core.interfaces.utils.DateUtil
-import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.plugins.aps.openAPSAIMI.autodrive.AutodriveEngine
 import app.aaps.plugins.aps.openAPSAIMI.basal.DynamicBasalController
+import app.aaps.plugins.aps.openAPSAIMI.learning.BasalNeuralLearner
 import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCycleFacade
 import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCycleLearner
 import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCyclePreferences
@@ -30,6 +27,7 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
+import io.mockk.verify
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.io.File
@@ -46,6 +44,7 @@ class DetermineBasalAimiPerInvocationCacheTest {
     private val tddCalculate1dCalls = AtomicInteger(0)
     private val tddCalculateDaily24hCalls = AtomicInteger(0)
     private val tirCalculate65180Calls = AtomicInteger(0)
+    private lateinit var basalNeuralLearner: BasalNeuralLearner
 
     @BeforeEach
     fun setup() {
@@ -81,6 +80,8 @@ class DetermineBasalAimiPerInvocationCacheTest {
             LongSparseArray()
         }
 
+        basalNeuralLearner = mockk(relaxed = true)
+
         engine = DetermineBasalaimiSMB2(
             profileUtil = mockk(relaxed = true),
             fabricPrivacy = mockk(relaxed = true),
@@ -111,7 +112,7 @@ class DetermineBasalAimiPerInvocationCacheTest {
             comparator = mockk(relaxed = true)
             basalLearner = mockk(relaxed = true)
             unifiedReactivityLearner = mockk(relaxed = true)
-            basalNeuralLearner = mockk(relaxed = true)
+            basalNeuralLearner = this@DetermineBasalAimiPerInvocationCacheTest.basalNeuralLearner
             storageHelper = mockk(relaxed = true)
             aapsLogger = mockk(relaxed = true)
             trajectoryGuard = mockk(relaxed = true)
@@ -144,6 +145,10 @@ class DetermineBasalAimiPerInvocationCacheTest {
         assertThat(tddCalculate1dCalls.get()).isEqualTo(1)
         assertThat(tddCalculateDaily24hCalls.get()).isEqualTo(1)
         assertThat(tirCalculate65180Calls.get()).isEqualTo(1)
+        // Décision A : pas d'updateLearning basal neural sur le chemin nominal (hors logDecisionFinal).
+        verify(exactly = 0) {
+            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any())
+        }
     }
 
     @Test

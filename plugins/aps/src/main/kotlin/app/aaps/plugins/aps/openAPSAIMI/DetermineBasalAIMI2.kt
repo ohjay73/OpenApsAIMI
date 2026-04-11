@@ -3,9 +3,7 @@ package app.aaps.plugins.aps.openAPSAIMI
 import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Environment
-import androidx.collection.LongSparseArray
 import app.aaps.core.data.model.BS
-import app.aaps.core.data.model.TDD
 import app.aaps.core.data.model.TB
 import app.aaps.core.data.model.TE
 import app.aaps.core.data.model.UE
@@ -23,7 +21,6 @@ import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
-import app.aaps.core.interfaces.stats.TIR
 import app.aaps.core.interfaces.stats.TddCalculator
 import app.aaps.core.interfaces.stats.TirCalculator
 import app.aaps.core.interfaces.utils.DateUtil
@@ -435,81 +432,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private var highBgOverrideUsed = false
     private val INSULIN_STEP = Constants.DEFAULT_INSULIN_STEP_U.toFloat()
 
-    /**
-     * **TDD 24h** (`tddCalculator.calculateDaily(-24, 0)`) is read from several places in one
-     * [determine_basal] pass ([finalizeAndCapSMB], main path, [logDecisionFinal]). Caching per
-     * invocation avoids redundant [runBlocking] + DB work without changing fallbacks. ONNX paths
-     * are untouched.
-     *
-     * **Other [runBlocking] call sites in this class** (not covered by these caches): basal history
-     * fetch in [init]; boluses in [finalizeAndCapSMB]; open-agent boluses; site changes;
-     * newest SMB bolus; warmup carbs / future COB / recent notes; recent bolus count;
-     * bolusesHistory; [tddCalculator.calculate] (2d only — 1d shared cache); HealthConnect steps/HR;
-     * other [tirCalculator] calls (daily/hour/3d ranges).
-     */
-    private val tdd24hCacheLock = Any()
-    private var determineBasalInvocationSeq: Long = 0L
-    private var cachedTdd24hInvocationSeq: Long = -1L
-    private var cachedTdd24hTotalAmount: Double? = null
-
-    /** [tddCalculator.calculate](1, false) — used mid-pipeline and again for safety; one fetch per invocation. */
-    private var cachedTdd1DaySparseSeq: Long = -1L
-    private var cachedTdd1DaySparse: LongSparseArray<TDD>? = null
-
-    /** [tirCalculator.calculate](1, 65, 180) — warmup block then hypo safety; populated on first use. */
-    private var cachedTir65180Seq: Long = -1L
-    private var cachedTir65180: LongSparseArray<TIR>? = null
-
-    private fun beginDetermineBasalInvocation() {
-        synchronized(tdd24hCacheLock) {
-            determineBasalInvocationSeq++
-        }
-    }
-
-    /** Single [runBlocking] fetch of 24h TDD total per [determine_basal] invocation; thread-safe. */
-    private fun getTdd24hTotalAmountCached(): Double? {
-        synchronized(tdd24hCacheLock) {
-            if (cachedTdd24hInvocationSeq == determineBasalInvocationSeq) {
-                return cachedTdd24hTotalAmount
-            }
-            val result = runBlocking { tddCalculator.calculateDaily(-24, 0) }
-            val total = result?.totalAmount
-            cachedTdd24hTotalAmount = total
-            cachedTdd24hInvocationSeq = determineBasalInvocationSeq
-            return total
-        }
-    }
-
-    /** Single [runBlocking] [tddCalculator.calculate](1, false) per [determine_basal] invocation. */
-    private fun getTddCalculate1DaySparseCached(): LongSparseArray<TDD>? {
-        synchronized(tdd24hCacheLock) {
-            if (cachedTdd1DaySparseSeq == determineBasalInvocationSeq) {
-                return cachedTdd1DaySparse
-            }
-            val r = runBlocking { tddCalculator.calculate(1, allowMissingDays = false) }
-            cachedTdd1DaySparse = r
-            cachedTdd1DaySparseSeq = determineBasalInvocationSeq
-            return r
-        }
-    }
-
-    /**
-     * [tirCalculator.calculate](1, 65, 180) per invocation: filled in the warmup [runBlocking] block,
-     * or via [runBlocking] here if that block was skipped (should not happen on the main path).
-     */
-    private fun getTirCalculate1Day65180Cached(): LongSparseArray<TIR> {
-        synchronized(tdd24hCacheLock) {
-            if (cachedTir65180Seq == determineBasalInvocationSeq && cachedTir65180 != null) {
-                return cachedTir65180!!
-            }
-        }
-        val r = runBlocking { tirCalculator.calculate(1, 65.0, 180.0) }
-        synchronized(tdd24hCacheLock) {
-            cachedTir65180 = r
-            cachedTir65180Seq = determineBasalInvocationSeq
-        }
-        return r
-    }
+    /** Suspend stats caches for one [determine_basal] pass; see [DetermineBasalInvocationCaches]. */
+    private val determineBasalInvocationCaches = DetermineBasalInvocationCaches()
 
     // État interne d’hystérèse
     private var lastHypoBlockAt: Long = 0L
@@ -1958,7 +1882,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         chainAfterRefractory = gatedUnits
 
          // 🔧 FIX 2: Adaptive AbsorptionGuard threshold (pediatric-safe)
-         val tdd24h = getTdd24hTotalAmountCached() ?: 30.0
+         val tdd24h = determineBasalInvocationCaches.getTdd24hTotalAmountCached(tddCalculator) ?: 30.0
          val activityThreshold = (tdd24h / 24.0) * 0.15 // 15% of hourly TDD
          
         if (sinceBolus < 20.0 && iobActivityNow > activityThreshold && !isExplicitUserAction && !mealPriorityContext) {
@@ -4714,7 +4638,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         microBolusAllowed: Boolean, currentTime: Long, flatBGsDetected: Boolean, dynIsfMode: Boolean, uiInteraction: UiInteraction,
         extraDebug: String = "" // 🌀 Extensible Debug Channel (e.g. Cosine Gate)
     ): RT {
-        beginDetermineBasalInvocation()
+        determineBasalInvocationCaches.beginInvocation()
         consoleError = mutableListOf()
         consoleLog = mutableListOf()
         exerciseInsulinLockoutActive = false
@@ -5280,10 +5204,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         var tirbasalhAP: Double? = null
         runBlocking {
             val tir1Day = tirCalculator.calculate(1, 65.0, 180.0)
-            synchronized(tdd24hCacheLock) {
-                cachedTir65180 = tir1Day
-                cachedTir65180Seq = determineBasalInvocationSeq
-            }
+            determineBasalInvocationCaches.storeTir65180FromWarmup(tir1Day)
             this@DetermineBasalaimiSMB2.tir1DAYabove = tirCalculator.averageTIR(tir1Day)?.abovePct()!!
             tir1DAYIR = tirCalculator.averageTIR(tir1Day)?.inRangePct()!!
             this@DetermineBasalaimiSMB2.currentTIRLow = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0))?.belowPct()!!
@@ -5623,7 +5544,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             mealFlags = mealFlags
         )
         // tdd7P already hoisted to start of function
-        var tdd24Hrs = getTdd24hTotalAmountCached()?.toFloat() ?: 0.0f
+        var tdd24Hrs = determineBasalInvocationCaches.getTdd24hTotalAmountCached(tddCalculator)?.toFloat() ?: 0.0f
         if (tdd24Hrs == 0.0f) tdd24Hrs = tdd7P.toFloat()
         val bgTime = glucoseStatus.date
         val minAgo = round((systemTime - bgTime) / 60.0 / 1000.0, 1)
@@ -5793,7 +5714,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         this.tdd2DaysPerHour = tdd2Days / 24
 
         var tddDaily = tddCalculator.averageTDD(
-            getTddCalculate1DaySparseCached()
+            determineBasalInvocationCaches.getTddCalculate1DaySparseCached(tddCalculator)
         )?.data?.totalAmount?.toFloat() ?: 0.0f
         if (tddDaily == 0.0f || tddDaily < tdd7P / 2) tddDaily = tdd7P.toFloat()
         this.tddPerHour = tddDaily / 24
@@ -7423,10 +7344,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             rT.reason.append(context.getString(R.string.reason_eventual_bg, convertBG(eventualBG), convertBG(max_bg)))
         }
         val tdd24h = tddCalculator.averageTDD(
-            getTddCalculate1DaySparseCached()
+            determineBasalInvocationCaches.getTddCalculate1DaySparseCached(tddCalculator)
         )?.data?.totalAmount ?: 0.0
         val tirInHypo = tirCalculator.averageTIR(
-            getTirCalculate1Day65180Cached()
+            determineBasalInvocationCaches.getTirCalculate1Day65180Cached(tirCalculator)
         )?.belowPct() ?: 0.0
         val safetyDecision = safetyAdjustment(
             currentBG = glucoseStatus.glucose.toFloat(),
@@ -8544,7 +8465,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
      */
     private fun runDecisionFinalBasalNeuralStep(rT: RT, diag: DecisionFinalDiagSnapshot): Double {
         val eventual = (rT.eventualBG ?: lastEventualBgSnapshot)
-        val tdd24h = getTdd24hTotalAmountCached() ?: 30.0
+        val tdd24h = determineBasalInvocationCaches.getTdd24hTotalAmountCached(tddCalculator) ?: 30.0
         val activityThreshold = (tdd24h / 24.0) * 0.15
         basalNeuralLearner.updateLearning(
             bgBefore = diag.bgValue,
