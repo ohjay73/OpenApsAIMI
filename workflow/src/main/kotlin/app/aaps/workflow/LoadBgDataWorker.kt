@@ -3,6 +3,7 @@ package app.aaps.workflow
 import android.content.Context
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import app.aaps.core.data.iob.InMemoryGlucoseValue
 import app.aaps.core.data.time.T
 import app.aaps.core.interfaces.aps.AutosensDataStore
 import app.aaps.core.interfaces.db.PersistenceLayer
@@ -46,12 +47,17 @@ class LoadBgDataWorker(
         }
     }
 
+    /**
+     * Lissage hors du verrou [AutosensDataStore.dataLock] : copie défensive, traitement, puis assignation.
+     * Évite de bloquer le thread UI (ex. [AutosensDataStore.lastBg]) pendant tout le UKF + IOB.
+     */
     private fun AutosensDataStore.smoothData(activePlugin: ActivePlugin) {
+        val workingCopy: MutableList<InMemoryGlucoseValue> = synchronized(dataLock) {
+            bucketedData?.map { it.copy(smoothed = null) }?.toMutableList()
+        } ?: return
+        val smoothed = activePlugin.activeSmoothing.smooth(workingCopy)
         synchronized(dataLock) {
-            bucketedData?.let {
-                val smoothedData = activePlugin.activeSmoothing.smooth(it)
-                bucketedData = smoothedData
-            }
+            bucketedData = smoothed
         }
     }
 
