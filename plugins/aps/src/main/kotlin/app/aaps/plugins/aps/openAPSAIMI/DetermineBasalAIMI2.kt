@@ -429,6 +429,43 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private var highBgOverrideUsed = false
     private val INSULIN_STEP = Constants.DEFAULT_INSULIN_STEP_U.toFloat()
 
+    /**
+     * **TDD 24h** (`tddCalculator.calculateDaily(-24, 0)`) is read from several places in one
+     * [determine_basal] pass ([finalizeAndCapSMB], main path, [logDecisionFinal]). Caching per
+     * invocation avoids redundant [runBlocking] + DB work without changing fallbacks. ONNX paths
+     * are untouched.
+     *
+     * **Other [runBlocking] call sites in this class** (not covered by this cache): basal history
+     * fetch in [init]; boluses in [finalizeAndCapSMB]; open-agent boluses; site changes;
+     * newest SMB bolus; warmup carbs / future COB / recent notes; recent bolus count;
+     * bolusesHistory; [tddCalculator.calculate] (7d/2d/1d); HealthConnect steps/HR;
+     * [tirCalculator.calculate] for TIR.
+     */
+    private val tdd24hCacheLock = Any()
+    private var determineBasalInvocationSeq: Long = 0L
+    private var cachedTdd24hInvocationSeq: Long = -1L
+    private var cachedTdd24hTotalAmount: Double? = null
+
+    private fun beginDetermineBasalInvocation() {
+        synchronized(tdd24hCacheLock) {
+            determineBasalInvocationSeq++
+        }
+    }
+
+    /** Single [runBlocking] fetch of 24h TDD total per [determine_basal] invocation; thread-safe. */
+    private fun getTdd24hTotalAmountCached(): Double? {
+        synchronized(tdd24hCacheLock) {
+            if (cachedTdd24hInvocationSeq == determineBasalInvocationSeq) {
+                return cachedTdd24hTotalAmount
+            }
+            val result = runBlocking { tddCalculator.calculateDaily(-24, 0) }
+            val total = result?.totalAmount
+            cachedTdd24hTotalAmount = total
+            cachedTdd24hInvocationSeq = determineBasalInvocationSeq
+            return total
+        }
+    }
+
     // État interne d’hystérèse
     private var lastHypoBlockAt: Long = 0L
     private var hypoClearCandidateSince: Long? = null
@@ -1876,7 +1913,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         chainAfterRefractory = gatedUnits
 
          // 🔧 FIX 2: Adaptive AbsorptionGuard threshold (pediatric-safe)
-         val tdd24h = runBlocking { tddCalculator.calculateDaily(-24, 0) }?.totalAmount ?: 30.0
+         val tdd24h = getTdd24hTotalAmountCached() ?: 30.0
          val activityThreshold = (tdd24h / 24.0) * 0.15 // 15% of hourly TDD
          
         if (sinceBolus < 20.0 && iobActivityNow > activityThreshold && !isExplicitUserAction && !mealPriorityContext) {
@@ -4702,6 +4739,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         microBolusAllowed: Boolean, currentTime: Long, flatBGsDetected: Boolean, dynIsfMode: Boolean, uiInteraction: UiInteraction,
         extraDebug: String = "" // 🌀 Extensible Debug Channel (e.g. Cosine Gate)
     ): RT {
+        beginDetermineBasalInvocation()
         consoleError = mutableListOf()
         consoleLog = mutableListOf()
         exerciseInsulinLockoutActive = false
@@ -5606,7 +5644,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             mealFlags = mealFlags
         )
         // tdd7P already hoisted to start of function
-        var tdd24Hrs = runBlocking { tddCalculator.calculateDaily(-24, 0) }?.totalAmount?.toFloat() ?: 0.0f
+        var tdd24Hrs = getTdd24hTotalAmountCached()?.toFloat() ?: 0.0f
         if (tdd24Hrs == 0.0f) tdd24Hrs = tdd7P.toFloat()
         // TODO eliminate
         val bgTime = glucoseStatus.date
@@ -8512,7 +8550,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val predChunk = "${if (predAvailable) "Y" else "N"}(sz=${predSize} ev=${eventual.roundToInt()})"
 
         // 🔧 FIX 4: Enhanced diagnostic logging with activity threshold
-        val tdd24h = runBlocking { tddCalculator.calculateDaily(-24, 0) }?.totalAmount ?: 30.0
+        val tdd24h = getTdd24hTotalAmountCached() ?: 30.0
         val activityThreshold = (tdd24h / 24.0) * 0.15
         
         // 🧬 Unified Learning Update (Centralized)
