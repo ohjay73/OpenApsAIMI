@@ -14,6 +14,10 @@ import kotlin.math.min
 import java.util.Locale
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.BooleanKey
+import app.aaps.core.keys.interfaces.BooleanPreferenceKey
+import app.aaps.core.keys.interfaces.DoublePreferenceKey
+import app.aaps.core.keys.interfaces.IntPreferenceKey
+import app.aaps.core.keys.interfaces.StringPreferenceKey
 import app.aaps.core.interfaces.aps.GlucoseStatusAIMI
 import org.json.JSONObject
 
@@ -138,13 +142,15 @@ class AimiAdvisorService {
             }
         }
 
+        val visibleRecommendations = recommendations.filter { shouldShowRecommendation(it, history) }
+
         return AdvisorReport(
             generatedAt = System.currentTimeMillis(),
             metrics = context.metrics,
             overallScore = score,
             overallSeverity = severity,
             overallAssessment = getAssessmentLabel(score),
-            recommendations = recommendations,
+            recommendations = visibleRecommendations,
             summary = formatSummary(context.metrics),
             advisorContext = context,
             orefAnalysis = orefInsight,
@@ -961,8 +967,9 @@ class AimiAdvisorService {
     }
     
     /**
-     * Determines if a recommendation should be shown based on history (48h cooldown).
-     * Fix #7: The original logic was INVERTED — it showed recs when a key was recently changed.
+     * Determines if a recommendation should be shown based on history (48h de-dup).
+     * - Hides actionable cards when the same preference target was already applied within 48h (identical key + value).
+     * - Hides when current preference already equals the proposed value (no Apply needed).
      */
     private fun shouldShowRecommendation(
         rec: AimiRecommendation,
@@ -977,25 +984,61 @@ class AimiAdvisorService {
             if (isT3cActive) return false
         }
 
-        // Fix #7: If action is UpdatePreference, suppress if key was recently changed to avoid recommendation loops.
         if (rec.action is app.aaps.plugins.aps.openAPSAIMI.model.AimiAction.PreferenceUpdate) {
             val update = rec.action as app.aaps.plugins.aps.openAPSAIMI.model.AimiAction.PreferenceUpdate
-            // Suppress (return false) if this key was recently modified (48h cooldown)
-            return !wasRecentlyChanged(history, update.key.key)
+            if (preferenceAlreadyMatchesProposed(update)) return false
+            if (wasIdenticalPreferenceProposalInLast48h(history, update)) return false
         }
         return true
     }
 
-    private fun wasRecentlyChanged(
-        history: List<app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository.AdvisorActionLog>,
-        keyString: String
-    ): Boolean {
-        // Check last 48h
-        val threshold = System.currentTimeMillis() - (48 * 3600 * 1000L)
-        return history.any { 
-            it.timestamp > threshold && 
-            it.key == keyString 
+    private fun preferenceAlreadyMatchesProposed(update: app.aaps.plugins.aps.openAPSAIMI.model.AimiAction.PreferenceUpdate): Boolean {
+        val p = preferences ?: return false
+        val key = update.key
+        val nv = update.newValue
+        return try {
+            when {
+                nv is Double && key is DoublePreferenceKey -> p.get(key) == nv
+                nv is Int && key is IntPreferenceKey -> p.get(key) == nv
+                nv is Boolean && key is BooleanPreferenceKey -> p.get(key) == nv
+                nv is String && key is StringPreferenceKey -> p.get(key) == nv
+                else -> false
+            }
+        } catch (_: Exception) {
+            false
         }
+    }
+
+    private fun wasIdenticalPreferenceProposalInLast48h(
+        history: List<app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository.AdvisorActionLog>,
+        update: app.aaps.plugins.aps.openAPSAIMI.model.AimiAction.PreferenceUpdate,
+    ): Boolean {
+        val threshold = System.currentTimeMillis() - (48 * 3600 * 1000L)
+        val keyStr = update.key.key
+        val proposedFp = advisorPreferenceValueFingerprint(update.newValue)
+        return history.any { entry ->
+            entry.timestamp >= threshold &&
+                entry.key == keyStr &&
+                advisorPreferenceValueFingerprint(entry.newValue) == proposedFp
+        }
+    }
+
+    /** Stable string for comparing history [AdvisorActionLog.newValue] (String) with a live proposal. */
+    private fun advisorPreferenceValueFingerprint(value: Any): String = when (value) {
+        is Double -> String.format(Locale.US, "%.8g", value)
+        is Float -> String.format(Locale.US, "%.8g", value.toDouble())
+        is Boolean -> value.toString().lowercase(Locale.US)
+        is Int -> value.toString()
+        is String -> {
+            val t = value.trim()
+            val d = t.toDoubleOrNull()
+            if (d != null) String.format(Locale.US, "%.8g", d)
+            else {
+                val b = t.lowercase(Locale.US)
+                if (b == "true" || b == "false") b else t.lowercase(Locale.US)
+            }
+        }
+        else -> value.toString().trim().lowercase(Locale.US)
     }
     /**
      * Generates a detailed clinical report (JSON) for expert analysis.
