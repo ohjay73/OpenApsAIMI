@@ -56,6 +56,8 @@ import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdIntegration
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdLogRow
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdRuntime
 import app.aaps.plugins.aps.openAPSAIMI.ports.PkpdPort
+import app.aaps.plugins.aps.openAPSAIMI.prediction.sanitizePredictionValues
+import app.aaps.plugins.aps.openAPSAIMI.safety.HypoThresholdMath
 import app.aaps.plugins.aps.openAPSAIMI.safety.HypoTools
 import app.aaps.plugins.aps.openAPSAIMI.safety.InsulinStackingStance
 import app.aaps.plugins.aps.openAPSAIMI.safety.SafetyDecision
@@ -263,59 +265,6 @@ internal data class AimiDecisionContext(
             json.toString()
         } catch(e: Exception) { "{ \"error\": \"JSON Generation Failed\" }" }
     }
-}
-
-internal data class PredictionSanityResult(
-    val predBg: Double,
-    val eventualBg: Double,
-    val label: String
-)
-
-internal fun sanitizePredictionValues(
-    bg: Double,
-    delta: Float,
-    predBgRaw: Double?,
-    eventualBgRaw: Double?,
-    series: Predictions?,
-    log: MutableList<String>? = null
-): PredictionSanityResult {
-    val baseBg = bg.coerceIn(25.0, 600.0)
-    var predBg = (predBgRaw ?: baseBg).coerceIn(25.0, 600.0)
-    var eventualBg = (eventualBgRaw ?: predBg).coerceIn(25.0, 600.0)
-    val anomalies = mutableListOf<String>()
-
-    val lengths = listOfNotNull(series?.IOB, series?.COB, series?.ZT, series?.UAM)
-    val minSize = lengths.minOfOrNull { it.size } ?: 0
-    if (minSize in 1..5) {
-        anomalies.add("series<$minSize")
-    }
-
-    if (!predBg.isFinite() || !eventualBg.isFinite()) {
-        anomalies.add("nonFinite")
-        predBg = baseBg
-        eventualBg = baseBg
-    }
-
-    val largeDrop = baseBg - predBg
-    val rising = delta >= 0f
-    if (rising && baseBg > 140 && largeDrop > 80) {
-        predBg = (baseBg + delta * 6).coerceIn(25.0, 600.0)
-        anomalies.add("jumpClamp")
-    }
-
-    if (eventualBg < 25 || eventualBg > 600) {
-        anomalies.add("eventualRange")
-        eventualBg = predBg
-    }
-
-    val label = if (anomalies.isEmpty()) "ok" else anomalies.joinToString("+")
-    if (anomalies.isNotEmpty()) {
-        log?.add(
-            "PRED_SANITY_FAIL: $label bg=${baseBg.roundToInt()} pred=${predBg.roundToInt()} ev=${eventualBg.roundToInt()} delta=${"%.1f".format(delta)}"
-        )
-    }
-
-    return PredictionSanityResult(predBg, eventualBg, label)
 }
 
 // ========================================
@@ -1378,7 +1327,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             (currentBg > safeFloor)
 
 // 2) Garde high TT : bypass si mode repas actif et pas de risque hypo
-        val hypoGuard = computeHypoThreshold(minBg = profile.min_bg, lgsThreshold = profile.lgsThreshold)
+        val hypoGuard = HypoThresholdMath.computeHypoThreshold(minBg = profile.min_bg, lgsThreshold = profile.lgsThreshold)
         val mealBypassHighTT = mealModeActive && currentBg > hypoGuard
 
         if (!profile.allowSMB_with_high_temptarget &&
@@ -1450,7 +1399,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     ): RT {
         // 0) LGS kill-switch (sans récursion)
         val lgsPref = profile.lgsThreshold
-        val hypoGuard = computeHypoThreshold(minBg = profile.min_bg, lgsThreshold = lgsPref)
+        val hypoGuard = HypoThresholdMath.computeHypoThreshold(minBg = profile.min_bg, lgsThreshold = lgsPref)
         val blockLgs = isBelowHypoThreshold(bg, predictedBg.toDouble(), eventualBG, hypoGuard, delta.toDouble())
         if (blockLgs) {
             rT.reason.append(context.getString(R.string.lgs_triggered, "%.0f".format(bg), "%.0f".format(hypoGuard)))
@@ -3309,30 +3258,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val hc: Int,
         val highBG: Int
     )
-    // Calcule le seuil "OpenAPS-like" et applique LGS si plus haut
-    private fun computeHypoThreshold(minBg: Double, lgsThreshold: Int?): Double {
-        var t = minBg - 0.5 * (minBg - 40.0) // 90→65, 100→70, 110→75, 130→85
-        if (lgsThreshold != null && lgsThreshold > t) t = lgsThreshold.toDouble()
-        return t
-    }
-
-    /**
-     * Helper: Get LGS threshold with safe fallback using OpenAPS formula
-     * Use this instead of hardcoded fallbacks (70.0) throughout the code
-     * 
-     * @param profile Profile containing lgsThreshold and min_bg
-     * @return LGS threshold from profile, or calculated from min_bg if null
-     */
-    private fun getLgsThresholdSafe(profile: OapsProfileAimi): Double {
-        return if (profile.lgsThreshold != null && profile.lgsThreshold!! > 0) {
-            profile.lgsThreshold!!.toDouble()
-        } else {
-            // Use OpenAPS-like formula on min_bg as fallback
-            computeHypoThreshold(profile.min_bg, null)
-        }
-    }
-
-
     private fun isBelowHypoThreshold(
         bgNow: Double,
         predicted: Double,
@@ -3399,7 +3324,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         fun safe(v: Double) = if (v.isFinite()) v else Double.POSITIVE_INFINITY
         val minBg = minOf(safe(bg), safe(predictedBg), safe(eventualBg))
 
-        val blockedNow = isBelowHypoThreshold(bg, predictedBg, eventualBg, computeHypoThreshold(80.0, profileUtil.convertToMgdlDetect(preferences.get(UnitDoubleKey.ApsLgsThreshold)).toInt() ), deltaMgdlPer5min)
+        val blockedNow = isBelowHypoThreshold(bg, predictedBg, eventualBg, HypoThresholdMath.computeHypoThreshold(80.0, profileUtil.convertToMgdlDetect(preferences.get(UnitDoubleKey.ApsLgsThreshold)).toInt() ), deltaMgdlPer5min)
         if (blockedNow) {
             lastHypoBlockAt = now
             hypoClearCandidateSince = null
@@ -4311,7 +4236,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     applySafetyPrecautions(meal, smb, guard ?: 0.0, reasonBuilder, runtime, exercise, suspected, confirmedRise)
                 },
                 runtimeToMinutes = { runtimeToMinutes(it!!) },
-                computeHypoThreshold = { minBg, lgs -> computeHypoThreshold(minBg, lgs) },
+                computeHypoThreshold = { minBg, lgs -> HypoThresholdMath.computeHypoThreshold(minBg, lgs) },
                 isBelowHypo = { bgNow, predictedValue, eventualValue, hypo, deltaValue ->
                     isBelowHypoThreshold(bgNow, predictedValue, eventualValue, hypo, deltaValue)
                 },
@@ -5963,7 +5888,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         fun safe(v: Double) = if (v.isFinite()) v else Double.POSITIVE_INFINITY
         val sanity = sanitizePredictionValues(bg, delta, predictedBg.toDouble(), rT.eventualBG, rT.predBGs, consoleLog)
         val minBg = minOf(safe(bg), safe(sanity.predBg), safe(sanity.eventualBg))
-        val threshold = computeHypoThreshold(minBg, profile.lgsThreshold)
+        val threshold = HypoThresholdMath.computeHypoThreshold(minBg, profile.lgsThreshold)
         val pumpReachable = try {
             activePlugin.activePump.isInitialized() && activePlugin.activePump.isConnected()
         } catch (e: Exception) { false }
@@ -7711,7 +7636,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             rT.reason.append(context.getString(R.string.reason_iob_max, round(iob_data.iob, 2), round(maxIobLimit, 2)))
             val finalResult = if (delta < 0) {
                 // BG is dropping, usually we cut to 0. BUT check floor first.
-                val floorRate = applyBasalFloor(0.0, profile.current_basal, safetyDecision, cachedActivityContext ?: app.aaps.plugins.aps.openAPSAIMI.activity.ActivityContext(), bg, delta.toDouble(), ((glucose_status as? GlucoseStatusAIMI)?.shortAvgDelta ?: 0.0).toDouble(), eventualBG.toDouble(), mealModeActive, getLgsThresholdSafe(profile))
+                val floorRate = applyBasalFloor(0.0, profile.current_basal, safetyDecision, cachedActivityContext ?: app.aaps.plugins.aps.openAPSAIMI.activity.ActivityContext(), bg, delta.toDouble(), ((glucose_status as? GlucoseStatusAIMI)?.shortAvgDelta ?: 0.0).toDouble(), eventualBG.toDouble(), mealModeActive, HypoThresholdMath.getLgsThresholdSafe(profile))
                 
                 if (floorRate > 0.0) {
                      rT.reason.append(context.getString(R.string.reason_bg_dropping_floor, delta, floorRate))
@@ -7726,7 +7651,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             } else {
                 //rT.reason.append("; setting current basal of ${round(basal, 2)} as temp. ")
                 // Apply floor here too just in case 'basal' itself is super low? (Unlikely if it came from profile, but possible)
-                val safeBasal = applyBasalFloor(basal, profile.current_basal, safetyDecision, cachedActivityContext ?: app.aaps.plugins.aps.openAPSAIMI.activity.ActivityContext(), bg, delta.toDouble(), ((glucose_status as? GlucoseStatusAIMI)?.shortAvgDelta ?: 0.0).toDouble(), eventualBG.toDouble(), mealModeActive, getLgsThresholdSafe(profile))
+                val safeBasal = applyBasalFloor(basal, profile.current_basal, safetyDecision, cachedActivityContext ?: app.aaps.plugins.aps.openAPSAIMI.activity.ActivityContext(), bg, delta.toDouble(), ((glucose_status as? GlucoseStatusAIMI)?.shortAvgDelta ?: 0.0).toDouble(), eventualBG.toDouble(), mealModeActive, HypoThresholdMath.getLgsThresholdSafe(profile))
                 rT.reason.append(context.getString(R.string.reason_set_temp_basal, round(safeBasal, 2)))
                 setTempBasal(safeBasal, 30, profile, rT, currenttemp, overrideSafetyLimits = false, adaptiveMultiplier = adaptiveMult)
             }
@@ -7856,7 +7781,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 predictedBg = predictedBg.toDouble(),
                 targetBg = targetBg.toDouble(),
                 minBg = profile.min_bg,
-                lgsThreshold = getLgsThresholdSafe(profile),
+                lgsThreshold = HypoThresholdMath.getLgsThresholdSafe(profile),
                 eventualBg = eventualBG,
                 iob = iob.toDouble(),
                 maxIob = maxIob,
@@ -8693,7 +8618,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val bgNow    = safe(bg)
         val predNow  = safe(predBg)
         val eventualNow = safe(eventualBg)
-        val lgsTh = computeHypoThreshold(minOf(bgNow, predNow, eventualNow), profile.lgsThreshold)
+        val lgsTh = HypoThresholdMath.computeHypoThreshold(minOf(bgNow, predNow, eventualNow), profile.lgsThreshold)
 
         // TIER 1 : BG réel sous seuil OU chute franche sous 70
         val tier1BgReal = bgNow < lgsTh || (bg < 70.0 && delta < 0)

@@ -1,6 +1,7 @@
 package app.aaps.plugins.aps.openAPSAIMI
 
 import app.aaps.core.interfaces.aps.Predictions
+import app.aaps.plugins.aps.openAPSAIMI.prediction.sanitizePredictionValues
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
