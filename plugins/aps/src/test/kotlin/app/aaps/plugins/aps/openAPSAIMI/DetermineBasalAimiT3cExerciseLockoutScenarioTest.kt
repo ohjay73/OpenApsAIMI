@@ -190,7 +190,7 @@ class DetermineBasalAimiT3cExerciseLockoutScenarioTest {
         )
         assertThat(rt).isNotNull()
         verify(exactly = 1) {
-            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any())
+            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
     }
 }

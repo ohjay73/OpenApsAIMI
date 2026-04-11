@@ -1,6 +1,6 @@
 # AIMI refactor — check-list d’avancement
 
-Dernière mise à jour : Phase 2 **P1** quasi complet (tags `logDecisionFinal` couverts sauf 3 cas lourds) ; **P2** amorcé (`CompressionReboundGuard`) ; checklist backlog P3/P4 actualisée.
+Dernière mise à jour : Phase 3 gouvernance adaptive basal **A0–A3 faits**, **A4 hors périmètre** (100 % téléphone, pas d’online / cloud). Suite du plan = **Phase 2** (P1 tags restants, P2 découpe, P3 `runBlocking`). Phase 2 **P1** quasi complet (tags `logDecisionFinal` sauf 3 lourds) ; **P2** amorcé (`CompressionReboundGuard`) ; P3/P4 backlog inchangé.
 
 ## Légende
 
@@ -58,7 +58,7 @@ Dernière mise à jour : Phase 2 **P1** quasi complet (tags `logDecisionFinal` c
 | Item | Statut |
 |------|--------|
 | `:plugins:aps:testFullDebugUnitTest` (régressions tests corrigées) | Fait |
-| Tests scénario / golden moteur (branches clés) | **Partiel (cible P1)** — harnais partagé `DetermineBasalAimiScenarioTestHarness` ; `DetermineBasalAimiLogDecisionFinalScenarioTest` : `SAFETY`, `TRAJ_SAFETY`, `HARD_BRAKE`, `COMPRESSION`, `MEAL_ADVISOR`, `AUTODRIVE_V3` (+ learning 1×) ; + `DetermineBasalInvocationCachesTest`, `DetermineBasalAimiPerInvocationCacheTest` (nominal + `STALE_DATA`), exercice std/T3c, `TherapySportDetectionTest`, `CompressionReboundGuardTest`. **Reste** (harnais lourd / fin de pipeline) : `AUTODRIVE` V2 seul, `DRIFT_TERMINATOR`, `MAX_IOB`. |
+| Tests scénario / golden moteur (branches clés) | **Partiel (cible P1)** — harnais partagé `DetermineBasalAimiScenarioTestHarness` ; `DetermineBasalAimiLogDecisionFinalScenarioTest` : `SAFETY`, `TRAJ_SAFETY`, `HARD_BRAKE`, `COMPRESSION`, `MEAL_ADVISOR`, `AUTODRIVE_V3`, `DRIFT_TERMINATOR`, `MAX_IOB` (+ learning 1×) ; + `DetermineBasalInvocationCachesTest`, `DetermineBasalAimiPerInvocationCacheTest` (nominal + `STALE_DATA`), exercice std/T3c, `TherapySportDetectionTest`, `CompressionReboundGuardTest`. **Reste** : tag `AUTODRIVE` (V2 seul sans V3) — instable dans le harnais léger sans refactor d’injectable horloge / prédiction. |
 
 ## Dual-brain / Sentinel
 
@@ -88,7 +88,7 @@ Dernière mise à jour : Phase 2 **P1** quasi complet (tags `logDecisionFinal` c
 
 | Priorité | Livrable | But |
 |----------|----------|-----|
-| **P1** | Golden / scénarios moteur par tag `logDecisionFinal` (2–3 tags / itération) | **Quasi fait** — tags couverts : `STALE_DATA`, `EXERCISE_LOCKOUT`, `T3C_EXERCISE_LOCKOUT`, `SAFETY`, `TRAJ_SAFETY`, `HARD_BRAKE`, `COMPRESSION`, `MEAL_ADVISOR`, `AUTODRIVE_V3`. **Backlog ciblé** : `AUTODRIVE` (V2 seul, sans V3), `DRIFT_TERMINATOR`, `MAX_IOB` (fin de `determine_basal`, IOB > plafond + `computeMealHighIobDecision`). |
+| **P1** | Golden / scénarios moteur par tag `logDecisionFinal` (2–3 tags / itération) | **Quasi fait** — tags couverts : `STALE_DATA`, `EXERCISE_LOCKOUT`, `T3C_EXERCISE_LOCKOUT`, `SAFETY`, `TRAJ_SAFETY`, `HARD_BRAKE`, `COMPRESSION`, `MEAL_ADVISOR`, `AUTODRIVE_V3`, `DRIFT_TERMINATOR`, `MAX_IOB`. **Backlog** : `AUTODRIVE` (V2 seul, sans V3) — test harnais non stabilisé (horloge locale + `tryAutodrive` / PKPD). |
 | **P2** | Découpe `DetermineBasalAIMI2` — premier domaine (ex. SMB + finalize, ou autodrive) | **Amorcé** — `CompressionReboundGuard` ; prochaines extractions : SMB finalize / meal high IOB, ou bloc autodrive. |
 | **P3** | `runBlocking` restants (HC pas / pas, boluses site, …) | Perf / réactivité ; chaque site = revue fraîcheur des données. |
 | **P4** | TODO pump `tbrMaxMode` / `tbrMaxAutoDrive` | Uniquement si besoin produit / matériel. |
@@ -121,3 +121,19 @@ Le chemin nominal « succès » complet **ne** passe **pas** par `logDecisionFin
 ## ONNX
 
 Aucun refactor listé ici ne modifie les chemins d’inférence ONNX ; garder cette discipline pour les prochains changements.
+
+---
+
+## Phase 3 — Gouvernance adaptive basal (on-device, hors cloud)
+
+Feuille de route **100 % on-phone** : état patient riche, politique graduée, apprentissage personnel borné, garde-fous explicites.
+
+| Étape | Livrable | Statut |
+|-------|----------|--------|
+| **A0** | Hystérésis entrée/sortie `HOLD_CONSERVATIVE` (seuil hypo 20 % → sortie &lt; 12 %) + palier **severe** (bg &lt; 70) vs **taux seul** (planchers / decay distincts) | **Fait** — `BasalNeuralLearner` + logs `BASAL_GOV` / APS ; tests `BasalNeuralLearnerGovernanceTest` |
+| **A1** | Préférences bornées (seuils, planchers, decay) + doc clinique | **Fait** — `DoubleKey` gouvernance (16 clés dont anticipation A3, `dependency` = adaptive basal ON) ; `BasalNeuralLearner.effectiveGovernanceParams()` + contraintes croisées ; écran AIMI Adaptive Basal (Compose + XML) ; chaînes **EN** dans `core/keys` ; tests mock `Preferences.get(DoublePreferenceKey)` → `defaultValue`. **Doc** : résumés string = aide contextuelle ; avis clinique formel hors repo. |
+| **A2** | Vecteur d’état enrichi (pente, IOB, confiance capteur) dans la fenêtre ou scoring parallèle | **Fait** — chaque échantillon gouvernance stocke `deltaMgDl`, `iobUnits`, `sensorNoise` ; taux hypo **pondéré** (`hypoRateGovernance`) + `meanGovernanceWeight` pour HOLD/hystérésis ; severe ne compte que si poids ≥ seuil ; `updateLearning(..., loopDeltaMgDl5m, sensorNoise)` branché depuis `DetermineBasalAIMI2` (decision final + T3c + `lastLoopCgmNoise`) ; test bruit vs fraction brute. |
+| **A3** | Prédiction courte → modulation **anticipative** de l’intensité HOLD / decay | **Fait** — `shortMinPredBg` dans `LearningSample` / `updateLearning` ; relief sur fenêtre récente (`anticipationRelief`, `hypoGovernanceAdjusted`) pour entrée/sortie HOLD ; decay basal/agg adouci si relief ; `DetermineBasalAIMI2` passe `minPredictedAcrossCurves(rT.predBGs)` ; logs `BASAL_GOV` + APS ; `BasalNeuralLearnerGovernanceTest` ; helper tests fenêtre `addFirst` cohérent prod. **Préférences** (EN, `DoubleKey` + écran Adaptive Basal) : lookback échantillons, marge mg/dL au-dessus du seuil hypo, damp hypo, plafond adoucissement decay HOLD. |
+| **A4** | Mise à jour **online** des paramètres personnels (pas de modèle lourd cloud), rollback + audit log | **N/A** — périmètre **uniquement on-device** sur téléphone : pas de couche online / sync cloud pour ce volet. Les mécanismes A0–A3 (fenêtre, prefs bornées, garde-fous HOLD, anticipation locale) couvrent la gouvernance hors cloud. |
+
+**Note** : A2–A3 ont fixé les contrats `updateLearning` / fenêtre ; toute extension (ex. persistance ou audit **local** dédié) = nouvelle décision produit, pas A4 « online ».

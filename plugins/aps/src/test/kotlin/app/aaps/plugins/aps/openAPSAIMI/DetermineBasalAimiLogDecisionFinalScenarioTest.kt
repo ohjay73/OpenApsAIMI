@@ -24,13 +24,22 @@ import com.google.common.truth.Truth.assertThat
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
+import java.util.Calendar
 
 /**
  * Phase 2 P1 : chemins [logDecisionFinal] supplémentaires → `updateLearning` une fois (décision A).
- * Couverture : SAFETY (bruit), TRAJ_SAFETY, HARD_BRAKE, COMPRESSION, MEAL_ADVISOR, AUTODRIVE_V3.
+ * Couverture : SAFETY (bruit), TRAJ_SAFETY, HARD_BRAKE, COMPRESSION, MEAL_ADVISOR, AUTODRIVE_V3,
+ * DRIFT_TERMINATOR, MAX_IOB. (Chemin **AUTODRIVE** tag `AUTODRIVE` V2 seul sans tick V3 : instable dans ce harnais → pas de test dédié ici.)
  */
 class DetermineBasalAimiLogDecisionFinalScenarioTest {
+
+    /** `nightbis` = heure locale ≤ 7 → Drift / autodrive V2 bloqués ; sans `--add-opens` on ne mock pas [Calendar] (Java 17+). */
+    private fun assumeOutsideNightBisWindow() {
+        val hour = Calendar.getInstance()[Calendar.HOUR_OF_DAY]
+        assumeTrue(hour >= 8, "Scenario needs local hour >= 8 (nightbis <=7 would skip drift/autodrive V2 path)")
+    }
 
     private fun preferencesBase(): Preferences = mockk(relaxed = true) {
         every { get(BooleanKey.OApsAIMIT3cBrittleMode) } returns false
@@ -113,7 +122,7 @@ class DetermineBasalAimiLogDecisionFinalScenarioTest {
         )
         assertThat(rt).isNotNull()
         verify(exactly = 1) {
-            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any())
+            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
     }
 
@@ -181,7 +190,7 @@ class DetermineBasalAimiLogDecisionFinalScenarioTest {
             extraDebug = "TRAJ_SAFETY scenario"
         )
         verify(exactly = 1) {
-            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any())
+            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
     }
 
@@ -232,7 +241,7 @@ class DetermineBasalAimiLogDecisionFinalScenarioTest {
             extraDebug = "HARD_BRAKE scenario"
         )
         verify(exactly = 1) {
-            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any())
+            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
     }
 
@@ -283,7 +292,7 @@ class DetermineBasalAimiLogDecisionFinalScenarioTest {
             extraDebug = "COMPRESSION scenario"
         )
         verify(exactly = 1) {
-            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any())
+            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
     }
 
@@ -337,7 +346,7 @@ class DetermineBasalAimiLogDecisionFinalScenarioTest {
             extraDebug = "MEAL_ADVISOR scenario"
         )
         verify(exactly = 1) {
-            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any())
+            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
     }
 
@@ -403,7 +412,116 @@ class DetermineBasalAimiLogDecisionFinalScenarioTest {
             extraDebug = "AUTODRIVE_V3 scenario"
         )
         verify(exactly = 1) {
-            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any())
+            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `DRIFT_TERMINATOR plateau triggers learning once`() {
+        assumeOutsideNightBisWindow()
+        val now = System.currentTimeMillis()
+        val prefs = preferencesBase()
+        every { prefs.get(BooleanKey.OApsAIMIautoDrive) } returns true
+        every { prefs.get(BooleanKey.OApsAIMIautoDriveActive) } returns false
+        val basalNeuralLearner = mockk<BasalNeuralLearner>(relaxed = true)
+        val harness = DetermineBasalAimiScenarioTestHarness(
+            now = now,
+            preferences = prefs,
+            trajectoryGuard = mockk(relaxed = true),
+            autodriveGater = mockk(relaxed = true),
+            autodriveEngine = mockk(relaxed = true),
+            physioAdapter = mockk(relaxed = true),
+            basalNeuralLearner = basalNeuralLearner,
+        )
+        harness.engine.determine_basal(
+            glucose_status = mockk<GlucoseStatusAIMI>(relaxed = true) {
+                every { glucose } returns 135.0
+                every { delta } returns 1.0
+                every { shortAvgDelta } returns 1.0
+                every { longAvgDelta } returns 0.5
+                every { combinedDelta } returns 1.5
+                every { date } returns now
+                every { noise } returns 0.0
+            },
+            currenttemp = mockk<CurrentTemp>(relaxed = true) {
+                every { duration } returns 0
+                every { rate } returns 1.0
+            },
+            iob_data_array = arrayOf(mockk<IobTotal>(relaxed = true) {
+                every { iob } returns 0.5
+                every { lastBolusTime } returns 0L
+            }),
+            profile = profileStandard(),
+            autosens_data = mockk<AutosensResult>(relaxed = true) { every { ratio } returns 1.0 },
+            mealData = mockk<MealData>(relaxed = true) {
+                every { lastCarbTime } returns 1L
+                every { mealCOB } returns 0.0
+                every { slopeFromMinDeviation } returns 2.0
+            },
+            microBolusAllowed = true,
+            currentTime = now,
+            flatBGsDetected = true,
+            dynIsfMode = false,
+            uiInteraction = mockk<UiInteraction>(relaxed = true),
+            extraDebug = "DRIFT_TERMINATOR scenario",
+        )
+        verify(exactly = 1) {
+            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `MAX_IOB cap path triggers learning once`() {
+        assumeOutsideNightBisWindow()
+        val now = System.currentTimeMillis()
+        val prefs = preferencesBase()
+        every { prefs.get(DoubleKey.ApsSmbMaxIob) } returns 10.0
+        val basalNeuralLearner = mockk<BasalNeuralLearner>(relaxed = true)
+        val harness = DetermineBasalAimiScenarioTestHarness(
+            now = now,
+            preferences = prefs,
+            trajectoryGuard = mockk(relaxed = true),
+            autodriveGater = mockk(relaxed = true),
+            autodriveEngine = mockk(relaxed = true),
+            physioAdapter = mockk(relaxed = true),
+            basalNeuralLearner = basalNeuralLearner,
+        )
+        val profile = profileStandard()
+        every { profile.enableSMB_always } returns true
+        harness.engine.determine_basal(
+            glucose_status = mockk<GlucoseStatusAIMI>(relaxed = true) {
+                every { glucose } returns 220.0
+                every { delta } returns 2.0
+                every { shortAvgDelta } returns 2.0
+                every { longAvgDelta } returns 1.0
+                every { combinedDelta } returns 3.0
+                every { date } returns now
+                every { noise } returns 0.0
+            },
+            currenttemp = mockk<CurrentTemp>(relaxed = true) {
+                every { duration } returns 0
+                every { rate } returns 1.0
+            },
+            iob_data_array = arrayOf(mockk<IobTotal>(relaxed = true) {
+                every { iob } returns 18.0
+                every { lastBolusTime } returns 0L
+            }),
+            profile = profile,
+            autosens_data = mockk<AutosensResult>(relaxed = true) { every { ratio } returns 1.0 },
+            mealData = mockk<MealData>(relaxed = true) {
+                every { lastCarbTime } returns 1L
+                every { mealCOB } returns 0.0
+                every { slopeFromMinDeviation } returns 2.0
+            },
+            microBolusAllowed = true,
+            currentTime = now,
+            flatBGsDetected = false,
+            dynIsfMode = false,
+            uiInteraction = mockk<UiInteraction>(relaxed = true),
+            extraDebug = "MAX_IOB scenario",
+        )
+        verify(exactly = 1) {
+            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
     }
 }

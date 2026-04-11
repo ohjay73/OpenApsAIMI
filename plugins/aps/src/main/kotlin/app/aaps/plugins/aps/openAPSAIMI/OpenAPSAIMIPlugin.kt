@@ -60,6 +60,7 @@ import app.aaps.core.interfaces.utils.HardLimits
 import app.aaps.core.interfaces.utils.Round
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.DoubleKey
+import app.aaps.core.keys.R as CoreKeysR
 import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.IntentKey
 import app.aaps.core.keys.interfaces.PreferenceItem
@@ -1345,10 +1346,26 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         PreferenceSubScreenDef(
             key = "aimi_compose_adaptive_basal",
             titleResId = R.string.oaps_aimi_adaptive_basal_title,
-            items = listOf(
-                BooleanKey.OApsAIMIT3cAdaptiveBasalEnabled,
-                DoubleKey.OApsAIMIAdaptiveBasalMaxScaling,
-            ),
+            items = buildList {
+                add(BooleanKey.OApsAIMIT3cAdaptiveBasalEnabled)
+                add(DoubleKey.OApsAIMIAdaptiveBasalMaxScaling)
+                add(DoubleKey.OApsAIMIGovernanceHypoRateEnter)
+                add(DoubleKey.OApsAIMIGovernanceHypoRateExit)
+                add(DoubleKey.OApsAIMIGovernanceHypoBgMgdl)
+                add(DoubleKey.OApsAIMIGovernanceSevereHypoBgMgdl)
+                add(DoubleKey.OApsAIMIGovernanceHoldBasalFloorRate)
+                add(DoubleKey.OApsAIMIGovernanceHoldBasalDecayRate)
+                add(DoubleKey.OApsAIMIGovernanceHoldAggFloorRate)
+                add(DoubleKey.OApsAIMIGovernanceHoldAggDecayRate)
+                add(DoubleKey.OApsAIMIGovernanceHoldBasalFloorSevere)
+                add(DoubleKey.OApsAIMIGovernanceHoldBasalDecaySevere)
+                add(DoubleKey.OApsAIMIGovernanceHoldAggFloorSevere)
+                add(DoubleKey.OApsAIMIGovernanceHoldAggDecaySevere)
+                add(DoubleKey.OApsAIMIGovernanceAnticipationLookbackSamples)
+                add(DoubleKey.OApsAIMIGovernanceAnticipationMarginMgdl)
+                add(DoubleKey.OApsAIMIGovernanceAnticipationHypoDamp)
+                add(DoubleKey.OApsAIMIGovernanceAnticipationDecayBlendMax)
+            },
         )
 
     private fun aimiComposeT3cSubScreen(): PreferenceSubScreenDef =
@@ -2058,6 +2075,134 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                             doubleKey = DoubleKey.OApsAIMIAdaptiveBasalMaxScaling,
                             dialogMessage = R.string.oaps_aimi_adaptive_basal_max_scaling_summary,
                             title = R.string.oaps_aimi_adaptive_basal_max_scaling_title
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIGovernanceHypoRateEnter,
+                            title = CoreKeysR.string.aimi_gov_hypo_rate_enter_title,
+                            dialogMessage = CoreKeysR.string.aimi_gov_hypo_rate_enter_summary
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIGovernanceHypoRateExit,
+                            title = CoreKeysR.string.aimi_gov_hypo_rate_exit_title,
+                            dialogMessage = CoreKeysR.string.aimi_gov_hypo_rate_exit_summary
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIGovernanceHypoBgMgdl,
+                            title = CoreKeysR.string.aimi_gov_hypo_bg_mgdl_title,
+                            dialogMessage = CoreKeysR.string.aimi_gov_hypo_bg_mgdl_summary
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIGovernanceSevereHypoBgMgdl,
+                            title = CoreKeysR.string.aimi_gov_severe_hypo_bg_mgdl_title,
+                            dialogMessage = CoreKeysR.string.aimi_gov_severe_hypo_bg_mgdl_summary
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIGovernanceHoldBasalFloorRate,
+                            title = CoreKeysR.string.aimi_gov_hold_basal_floor_rate_title,
+                            dialogMessage = CoreKeysR.string.aimi_gov_hold_basal_floor_rate_summary
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIGovernanceHoldBasalDecayRate,
+                            title = CoreKeysR.string.aimi_gov_hold_basal_decay_rate_title,
+                            dialogMessage = CoreKeysR.string.aimi_gov_hold_basal_decay_rate_summary
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIGovernanceHoldAggFloorRate,
+                            title = CoreKeysR.string.aimi_gov_hold_agg_floor_rate_title,
+                            dialogMessage = CoreKeysR.string.aimi_gov_hold_agg_floor_rate_summary
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIGovernanceHoldAggDecayRate,
+                            title = CoreKeysR.string.aimi_gov_hold_agg_decay_rate_title,
+                            dialogMessage = CoreKeysR.string.aimi_gov_hold_agg_decay_rate_summary
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIGovernanceHoldBasalFloorSevere,
+                            title = CoreKeysR.string.aimi_gov_hold_basal_floor_severe_title,
+                            dialogMessage = CoreKeysR.string.aimi_gov_hold_basal_floor_severe_summary
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIGovernanceHoldBasalDecaySevere,
+                            title = CoreKeysR.string.aimi_gov_hold_basal_decay_severe_title,
+                            dialogMessage = CoreKeysR.string.aimi_gov_hold_basal_decay_severe_summary
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIGovernanceHoldAggFloorSevere,
+                            title = CoreKeysR.string.aimi_gov_hold_agg_floor_severe_title,
+                            dialogMessage = CoreKeysR.string.aimi_gov_hold_agg_floor_severe_summary
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIGovernanceHoldAggDecaySevere,
+                            title = CoreKeysR.string.aimi_gov_hold_agg_decay_severe_title,
+                            dialogMessage = CoreKeysR.string.aimi_gov_hold_agg_decay_severe_summary
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIGovernanceAnticipationLookbackSamples,
+                            title = CoreKeysR.string.aimi_gov_anticipation_lookback_samples_title,
+                            dialogMessage = CoreKeysR.string.aimi_gov_anticipation_lookback_samples_summary
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIGovernanceAnticipationMarginMgdl,
+                            title = CoreKeysR.string.aimi_gov_anticipation_margin_mgdl_title,
+                            dialogMessage = CoreKeysR.string.aimi_gov_anticipation_margin_mgdl_summary
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIGovernanceAnticipationHypoDamp,
+                            title = CoreKeysR.string.aimi_gov_anticipation_hypo_damp_title,
+                            dialogMessage = CoreKeysR.string.aimi_gov_anticipation_hypo_damp_summary
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIGovernanceAnticipationDecayBlendMax,
+                            title = CoreKeysR.string.aimi_gov_anticipation_decay_blend_max_title,
+                            dialogMessage = CoreKeysR.string.aimi_gov_anticipation_decay_blend_max_summary
                         )
                     )
                 })

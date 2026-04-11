@@ -147,7 +147,7 @@ class DetermineBasalAimiPerInvocationCacheTest {
         assertThat(tirCalculate65180Calls.get()).isEqualTo(1)
         // Décision A : pas d'updateLearning basal neural sur le chemin nominal (hors logDecisionFinal).
         verify(exactly = 0) {
-            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any())
+            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
     }
 
@@ -205,7 +205,7 @@ class DetermineBasalAimiPerInvocationCacheTest {
         assertThat(tirCalculate65180Calls.get()).isEqualTo(1)
         // Sortie notable : logDecisionFinal(STALE_DATA) → une passe learning (décision A, côté « exit »).
         verify(exactly = 1) {
-            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any())
+            basalNeuralLearner.updateLearning(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
     }
 
