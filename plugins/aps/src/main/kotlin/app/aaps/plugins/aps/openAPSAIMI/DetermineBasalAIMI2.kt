@@ -59,6 +59,9 @@ import app.aaps.plugins.aps.openAPSAIMI.ports.PkpdPort
 import app.aaps.plugins.aps.openAPSAIMI.prediction.minPredictedAcrossCurves
 import app.aaps.plugins.aps.openAPSAIMI.prediction.sanitizePredictionValues
 import app.aaps.plugins.aps.openAPSAIMI.safety.HypoGuard
+import app.aaps.plugins.aps.openAPSAIMI.safety.signalEventualDrop
+import app.aaps.plugins.aps.openAPSAIMI.safety.signalMinPredDrop
+import app.aaps.plugins.aps.openAPSAIMI.safety.signalTrajectoryStack
 import app.aaps.plugins.aps.openAPSAIMI.safety.HypoThresholdMath
 import app.aaps.plugins.aps.openAPSAIMI.safety.HypoTools
 import app.aaps.plugins.aps.openAPSAIMI.safety.InsulinStackingStance
@@ -2104,9 +2107,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             eventual_bg = evExp,
             min_predicted_bg = mnExp,
             trajectory_energy = teExp?.takeIf { it.isFinite() },
-            signal_eventual_drop = evExp != null && evExp < this.bg - 6.0,
-            signal_min_pred_drop = mnExp != null && mnExp < this.bg - 10.0,
-            signal_trajectory_stack = teExp != null && teExp.isFinite() && teExp > 2.0,
+            signal_eventual_drop = signalEventualDrop(this.bg, evExp),
+            signal_min_pred_drop = signalMinPredDrop(this.bg, mnExp),
+            signal_trajectory_stack = signalTrajectoryStack(teExp),
             smb_multiplier = stackingEval.smbMultiplier,
             smb_cap_u = stackingEval.smbAbsoluteCapU,
             suppress_red_carpet_restore = stackingEval.suppressRedCarpetRestore,
@@ -2122,15 +2125,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 InsulinStackingStance.Kind.SURVEILLANCE_IOB -> stackingEval.summary
                 InsulinStackingStance.Kind.CORRECTION_ACTIVE ->
                     "CORRECTION_ACTIVE reason=${stackingEval.activeReason ?: "default"} meal_priority=$mealPriorityContext " +
-                        "signals(ev=${signalEventualDrop(evExp)} mn=${signalMinPredDrop(mnExp)} traj=${signalTrajectoryStack(teExp)})"
+                        "signals(ev=${signalEventualDrop(this.bg, evExp)} mn=${signalMinPredDrop(this.bg, mnExp)} traj=${signalTrajectoryStack(teExp)})"
             },
             tuning_reference = InsulinStackingStance.tuningReferenceAscii()
         )
     }
-
-    private fun signalEventualDrop(ev: Double?): Boolean = ev != null && ev < this.bg - 6.0
-    private fun signalMinPredDrop(mn: Double?): Boolean = mn != null && mn < this.bg - 10.0
-    private fun signalTrajectoryStack(te: Double?): Boolean = te != null && te.isFinite() && te > 2.0
 
     /**
      * 🛡️ Sécurité Ultime : Plafonne le SMB final juste avant l'envoi.
