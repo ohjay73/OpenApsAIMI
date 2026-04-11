@@ -3,7 +3,9 @@ package app.aaps.plugins.aps.openAPSAIMI
 import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Environment
+import androidx.collection.LongSparseArray
 import app.aaps.core.data.model.BS
+import app.aaps.core.data.model.TDD
 import app.aaps.core.data.model.TB
 import app.aaps.core.data.model.TE
 import app.aaps.core.data.model.UE
@@ -21,6 +23,7 @@ import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
+import app.aaps.core.interfaces.stats.TIR
 import app.aaps.core.interfaces.stats.TddCalculator
 import app.aaps.core.interfaces.stats.TirCalculator
 import app.aaps.core.interfaces.utils.DateUtil
@@ -61,8 +64,11 @@ import app.aaps.plugins.aps.openAPSAIMI.prediction.sanitizePredictionValues
 import app.aaps.plugins.aps.openAPSAIMI.safety.HypoGuard
 import app.aaps.plugins.aps.openAPSAIMI.safety.signalEventualDrop
 import app.aaps.plugins.aps.openAPSAIMI.safety.signalMinPredDrop
+import app.aaps.plugins.aps.openAPSAIMI.safety.capSmbDose
+import app.aaps.plugins.aps.openAPSAIMI.safety.clampSmbToMaxSmbAndMaxIob
 import app.aaps.plugins.aps.openAPSAIMI.safety.signalTrajectoryStack
 import app.aaps.plugins.aps.openAPSAIMI.safety.HypoThresholdMath
+import app.aaps.plugins.aps.openAPSAIMI.safety.resolveSafetyStart
 import app.aaps.plugins.aps.openAPSAIMI.safety.HypoTools
 import app.aaps.plugins.aps.openAPSAIMI.safety.InsulinStackingStance
 import app.aaps.plugins.aps.openAPSAIMI.safety.SafetyDecision
@@ -435,16 +441,24 @@ class DetermineBasalaimiSMB2 @Inject constructor(
      * invocation avoids redundant [runBlocking] + DB work without changing fallbacks. ONNX paths
      * are untouched.
      *
-     * **Other [runBlocking] call sites in this class** (not covered by this cache): basal history
+     * **Other [runBlocking] call sites in this class** (not covered by these caches): basal history
      * fetch in [init]; boluses in [finalizeAndCapSMB]; open-agent boluses; site changes;
      * newest SMB bolus; warmup carbs / future COB / recent notes; recent bolus count;
-     * bolusesHistory; [tddCalculator.calculate] (7d/2d/1d); HealthConnect steps/HR;
-     * [tirCalculator.calculate] for TIR.
+     * bolusesHistory; [tddCalculator.calculate] (2d only — 1d shared cache); HealthConnect steps/HR;
+     * other [tirCalculator] calls (daily/hour/3d ranges).
      */
     private val tdd24hCacheLock = Any()
     private var determineBasalInvocationSeq: Long = 0L
     private var cachedTdd24hInvocationSeq: Long = -1L
     private var cachedTdd24hTotalAmount: Double? = null
+
+    /** [tddCalculator.calculate](1, false) — used mid-pipeline and again for safety; one fetch per invocation. */
+    private var cachedTdd1DaySparseSeq: Long = -1L
+    private var cachedTdd1DaySparse: LongSparseArray<TDD>? = null
+
+    /** [tirCalculator.calculate](1, 65, 180) — warmup block then hypo safety; populated on first use. */
+    private var cachedTir65180Seq: Long = -1L
+    private var cachedTir65180: LongSparseArray<TIR>? = null
 
     private fun beginDetermineBasalInvocation() {
         synchronized(tdd24hCacheLock) {
@@ -464,6 +478,37 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             cachedTdd24hInvocationSeq = determineBasalInvocationSeq
             return total
         }
+    }
+
+    /** Single [runBlocking] [tddCalculator.calculate](1, false) per [determine_basal] invocation. */
+    private fun getTddCalculate1DaySparseCached(): LongSparseArray<TDD>? {
+        synchronized(tdd24hCacheLock) {
+            if (cachedTdd1DaySparseSeq == determineBasalInvocationSeq) {
+                return cachedTdd1DaySparse
+            }
+            val r = runBlocking { tddCalculator.calculate(1, allowMissingDays = false) }
+            cachedTdd1DaySparse = r
+            cachedTdd1DaySparseSeq = determineBasalInvocationSeq
+            return r
+        }
+    }
+
+    /**
+     * [tirCalculator.calculate](1, 65, 180) per invocation: filled in the warmup [runBlocking] block,
+     * or via [runBlocking] here if that block was skipped (should not happen on the main path).
+     */
+    private fun getTirCalculate1Day65180Cached(): LongSparseArray<TIR> {
+        synchronized(tdd24hCacheLock) {
+            if (cachedTir65180Seq == determineBasalInvocationSeq && cachedTir65180 != null) {
+                return cachedTir65180!!
+            }
+        }
+        val r = runBlocking { tirCalculator.calculate(1, 65.0, 180.0) }
+        synchronized(tdd24hCacheLock) {
+            cachedTir65180 = r
+            cachedTir65180Seq = determineBasalInvocationSeq
+        }
+        return r
     }
 
     // État interne d’hystérèse
@@ -2181,51 +2226,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
      * @param maxIob Max IOB autorisé
      * @return La dose plafonnée
      */
-    private fun capSmbDose(
-        proposedSmb: Float,
-        bg: Double,
-        maxSmbConfig: Double,
-        iob: Double,
-        maxIob: Double
-    ): Float {
-        // 1. Plafond absolu MaxSMB (Respect strict de la config)
-        var capped = calculateMin(proposedSmb, maxSmbConfig.toFloat())
-
-        // 2. Protection supplémentaire pour BG < 120 (Zone Normale/Basse)
-        // On s'assure qu'aucun boost "Hyper" (comme Autodrive ou Reactivity fort) ne s'applique ici.
-        // Si BG < 120, on est TRÈS conservateur.
-        if (bg < 120) {
-            // 2. Protection supplémentaire pour BG < 120 (Zone Normale/Basse)
-            // L'utilisateur demande explicitement que la logique soit écrite ici.
-            // On s'assure que si on est en zone "normale", on n'utilise PAS le MaxSMBHB ni aucun boost.
-            // On re-vérifie par rapport à OApsAIMIMaxSMB (passé ici via maxSmbConfig normalement, mais on force le min).
-            
-            // Même si maxSmbConfig était élevé par erreur, on le redescend à une valeur de sécurité hardcodée 
-            // SI et seulement SI l'utilisateur n'a pas mis un OApsAIMIMaxSMB géant volontairement.
-            // MAIS pour respecter la demande "as tu restauré un maxsmb bg < 120", on s'assure que capped <= maxSmbConfig
-            // Ce qui est déjà fait en 1.
-            
-            // On ajoute une sécurité "Absolue" pour cette zone critique :
-            // Si BG est < 120, on refuse tout SMB > 2.0U (sauf si l'utilisateur a configuré un maxSMB < 2.0, alors c'est plus bas).
-            // C'est une ceinture de sécurité contre une config utilisateur dangereuse type "MaxSMB = 10" utilisé tout le temps.
-            // OU, si on suit strictement la demande : respecter la préférence "MaxSMB" (Low).
-            
-            // On va supposer que `maxSmbConfig` EST la valeur de la préférence Low/Normal (car passée par l'appelant).
-            // On ajoute juste un double-check :
-            if (capped > maxSmbConfig) {
-                 capped = maxSmbConfig.toFloat()
-            }
-        }
-
-        // 3. Vérification IOB (Ceinture et bretelles)
-        // Si l'injection nous fait dépasser MaxIOB, on réduit.
-        if (iob + capped > maxIob) {
-            capped = max(0.0, maxIob - iob).toFloat()
-        }
-
-        return capped
-    }
-
     private fun logSmbGateExplain(audit: SmbGateAudit, proposed: Float, gated: Float, final: Float, activityThreshold: Double) {
         val refractoryLine =
             "GATE_REFRACTORY sinceLastBolus=${"%.1f".format(audit.sinceBolus)}m window=${"%.1f".format(audit.refractoryWindow)}"
@@ -2241,11 +2241,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             consoleLog.add(absorptionLine)
             consoleLog.add(predLine)
         }
-    }
-
-    // Fonction utilitaire pour éviter l'import min
-    private fun calculateMin(a: Float, b: Float): Float {
-        return if (a < b) a else b
     }
 
     private fun applySafetyPrecautions(
@@ -2359,7 +2354,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         // Limites max
         val beforeLimits = smbToGive
-        smbToGive = applyMaxLimits(smbToGive)
+        smbToGive = clampSmbToMaxSmbAndMaxIob(smbToGive, maxSMB, maxIob, iob)
         if (smbToGive != beforeLimits) {
             //reason?.appendLine("🧱 Limites: ${"%.2f".format(beforeLimits)} → ${"%.2f".format(smbToGive)} U")
             reason?.appendLine(context.getString(R.string.limits_smb, beforeLimits, smbToGive))
@@ -2367,26 +2362,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         smbToGive = smbToGive.coerceAtLeast(0f)
         return smbToGive
     }
-    private fun applyMaxLimits(smbToGive: Float): Float {
-        var result = smbToGive
-
-        // Vérifiez d'abord si smbToGive dépasse maxSMB
-        if (result > maxSMB) {
-            result = maxSMB.toFloat()
-        }
-        // Ensuite, vérifiez si la somme de iob et smbToGive dépasse maxIob
-        if (iob + result > maxIob) {
-            val room = maxIob.toFloat() - iob
-            if (room < 0) {
-                 // Debug pour tracking
-                 // consoleLog.add("DEBUG: Negative Room detected in applyMaxLimits ($room). Clamped to 0.") 
-            }
-            result = max(0.0f, room)
-        }
-
-        return result
-    }
-
     // Helper to check for recent bolus activity (prevent double dosing)
     private fun hasReceivedRecentBolus(minutes: Int, lastBolusTimeMs: Long): Boolean {
         val lookbackTime = dateUtil.now() - minutes * 60 * 1000L
@@ -5305,6 +5280,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         var tirbasalhAP: Double? = null
         runBlocking {
             val tir1Day = tirCalculator.calculate(1, 65.0, 180.0)
+            synchronized(tdd24hCacheLock) {
+                cachedTir65180 = tir1Day
+                cachedTir65180Seq = determineBasalInvocationSeq
+            }
             this@DetermineBasalaimiSMB2.tir1DAYabove = tirCalculator.averageTIR(tir1Day)?.abovePct()!!
             tir1DAYIR = tirCalculator.averageTIR(tir1Day)?.inRangePct()!!
             this@DetermineBasalaimiSMB2.currentTIRLow = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0))?.belowPct()!!
@@ -5646,7 +5625,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // tdd7P already hoisted to start of function
         var tdd24Hrs = getTdd24hTotalAmountCached()?.toFloat() ?: 0.0f
         if (tdd24Hrs == 0.0f) tdd24Hrs = tdd7P.toFloat()
-        // TODO eliminate
         val bgTime = glucoseStatus.date
         val minAgo = round((systemTime - bgTime) / 60.0 / 1000.0, 1)
         
@@ -5815,7 +5793,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         this.tdd2DaysPerHour = tdd2Days / 24
 
         var tddDaily = tddCalculator.averageTDD(
-            runBlocking { tddCalculator.calculate(1, allowMissingDays = false) }
+            getTddCalculate1DaySparseCached()
         )?.data?.totalAmount?.toFloat() ?: 0.0f
         if (tddDaily == 0.0f || tddDaily < tdd7P / 2) tddDaily = tdd7P.toFloat()
         this.tddPerHour = tddDaily / 24
@@ -6240,22 +6218,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         rT.reason.append(context.getString(R.string.reason_maxsmb, maxSMB))
         var nowMinutes = calendarInstance[Calendar.HOUR_OF_DAY] + calendarInstance[Calendar.MINUTE] / 60.0 + calendarInstance[Calendar.SECOND] / 3600.0
         nowMinutes = (kotlin.math.round(nowMinutes * 100) / 100)  // Arrondi à 2 décimales
-        val circadianSensitivity = (0.00000379 * nowMinutes.pow(5)) -
-            (0.00016422 * nowMinutes.pow(4)) +
-            (0.00128081 * nowMinutes.pow(3)) +
-            (0.02533782 * nowMinutes.pow(2)) -
-            (0.33275556 * nowMinutes) +
-            1.38581503
-
-        val circadianSmb = kotlin.math.round(
-            ((0.00000379 * delta * nowMinutes.pow(5)) -
-                (0.00016422 * delta * nowMinutes.pow(4)) +
-                (0.00128081 * delta * nowMinutes.pow(3)) +
-                (0.02533782 * delta * nowMinutes.pow(2)) -
-                (0.33275556 * delta * nowMinutes) +
-                1.38581503) * 100
-        ) / 100  // Arrondi à 2 décimales
-        // TODO eliminate
+        val circadianSensitivity = circadianSensitivityHourly(nowMinutes)
         val deliverAt = currentTime
 
         // Dynamic Pump Capabilities
@@ -6287,11 +6250,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             rT.reason.append(context.getString(R.string.reason_cgm_flat))
         }
 
-        // TODO eliminate
-        //val max_iob = profile.max_iob // maximum amount of non-bolus IOB OpenAPS will ever deliver
-        //val max_iob = maxIob
         var maxIobLimit = maxIob
-        //this.maxIob = maxIob
         // if min and max are set, then set target to their average
         var target_bg = (profile.min_bg + profile.max_bg) / 2
         var min_bg = profile.min_bg
@@ -7464,10 +7423,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             rT.reason.append(context.getString(R.string.reason_eventual_bg, convertBG(eventualBG), convertBG(max_bg)))
         }
         val tdd24h = tddCalculator.averageTDD(
-            runBlocking { tddCalculator.calculate(1, allowMissingDays = false) }
+            getTddCalculate1DaySparseCached()
         )?.data?.totalAmount ?: 0.0
         val tirInHypo = tirCalculator.averageTIR(
-            runBlocking { tirCalculator.calculate(1, 65.0, 180.0) }
+            getTirCalculate1Day65180Cached()
         )?.belowPct() ?: 0.0
         val safetyDecision = safetyAdjustment(
             currentBG = glucoseStatus.glucose.toFloat(),
@@ -8519,7 +8478,27 @@ class DetermineBasalaimiSMB2 @Inject constructor(
          }
     }
 
-    private fun logDecisionFinal(tag: String, rT: RT, bg: Double? = null, delta: Float? = null) {
+    /**
+     * Immutable snapshot for the TICK line and basal-neural step — keeps [logDecisionFinal]
+     * phases explicit without changing field reads vs the previous monolithic implementation.
+     */
+    private data class DecisionFinalDiagSnapshot(
+        val smbFinal: Double,
+        val tbrUph: Double,
+        val bgValue: Double,
+        val deltaValue: Double,
+        val modeLabel: String,
+        val predChunk: String,
+        val refractoryStatus: String,
+    )
+
+    /** Console: DECISION_FINAL line + [lastSmbFinal]; no ML side effects. */
+    private fun appendDecisionFinalSummaryLine(
+        tag: String,
+        rT: RT,
+        bg: Double?,
+        delta: Float?,
+    ): DecisionFinalDiagSnapshot {
         val smb = rT.insulinReq ?: 0.0
         val smbUnits = rT.units ?: 0.0
         val tbr = (rT.rate ?: 0.0).coerceAtLeast(0.0)
@@ -8548,16 +8527,29 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val smbFinalValue = if (smbUnits > 0.0) smbUnits else smb
         lastSmbFinal = smbFinalValue
         val predChunk = "${if (predAvailable) "Y" else "N"}(sz=${predSize} ev=${eventual.roundToInt()})"
+        return DecisionFinalDiagSnapshot(
+            smbFinal = smbFinalValue,
+            tbrUph = tbr,
+            bgValue = bgValue,
+            deltaValue = deltaValue,
+            modeLabel = modeLabel,
+            predChunk = predChunk,
+            refractoryStatus = refractoryStatus,
+        )
+    }
 
-        // 🔧 FIX 4: Enhanced diagnostic logging with activity threshold
+    /**
+     * TDD-derived activity threshold + basal neural [updateLearning] + BASAL_GOV console line.
+     * Order preserved vs legacy single function (threshold before learning; gov before TICK).
+     */
+    private fun runDecisionFinalBasalNeuralStep(rT: RT, diag: DecisionFinalDiagSnapshot): Double {
+        val eventual = (rT.eventualBG ?: lastEventualBgSnapshot)
         val tdd24h = getTdd24hTotalAmountCached() ?: 30.0
         val activityThreshold = (tdd24h / 24.0) * 0.15
-        
-        // 🧬 Unified Learning Update (Centralized)
         basalNeuralLearner.updateLearning(
-            bgBefore = bgValue,
+            bgBefore = diag.bgValue,
             bgAfter = eventual,
-            basalDelivered = tbr,
+            basalDelivered = diag.tbrUph,
             targetBg = targetBg.toDouble(),
             accel = bgacc,
             duraISFminutes = duraISFminutes,
@@ -8570,14 +8562,23 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 "n=${gov.sampleCount} hypo=${"%.2f".format(Locale.US, gov.hypoRate)} high=${"%.2f".format(Locale.US, gov.highRate)} " +
                 "mae=${"%.1f".format(Locale.US, gov.meanAbsTargetError)} reason=${gov.reason}"
         )
-        
+        return activityThreshold
+    }
+
+    private fun appendDecisionFinalTickLine(diag: DecisionFinalDiagSnapshot, activityThreshold: Double) {
         val tickLine =
-            "TICK ts=${System.currentTimeMillis()} bg=${bgValue.roundToInt()} d=${"%.1f".format(Locale.US, deltaValue)} iob=${"%.2f".format(Locale.US, iob)} act=${"%.3f".format(Locale.US, iobActivityNow)} th=${"%.3f".format(Locale.US, activityThreshold)} " +
-                "cob=${"%.1f".format(Locale.US, cob)} mode=$modeLabel autodriveState=$lastAutodriveState pred=$predChunk " +
-                "safety=$lastSafetySource ref=$refractoryStatus maxIOB=${"%.2f".format(Locale.US, maxIob)} maxSMB=${"%.2f".format(Locale.US, maxSMB)} " +
-                "smb=${"%.2f".format(Locale.US, lastSmbProposed)}->${"%.2f".format(Locale.US, lastSmbCapped)}->${"%.2f".format(Locale.US, smbFinalValue)} " +
-                "tbr=${"%.2f".format(Locale.US, tbr)} src=$lastDecisionSource"
+            "TICK ts=${System.currentTimeMillis()} bg=${diag.bgValue.roundToInt()} d=${"%.1f".format(Locale.US, diag.deltaValue)} iob=${"%.2f".format(Locale.US, iob)} act=${"%.3f".format(Locale.US, iobActivityNow)} th=${"%.3f".format(Locale.US, activityThreshold)} " +
+                "cob=${"%.1f".format(Locale.US, cob)} mode=${diag.modeLabel} autodriveState=$lastAutodriveState pred=${diag.predChunk} " +
+                "safety=$lastSafetySource ref=${diag.refractoryStatus} maxIOB=${"%.2f".format(Locale.US, maxIob)} maxSMB=${"%.2f".format(Locale.US, maxSMB)} " +
+                "smb=${"%.2f".format(Locale.US, lastSmbProposed)}->${"%.2f".format(Locale.US, lastSmbCapped)}->${"%.2f".format(Locale.US, diag.smbFinal)} " +
+                "tbr=${"%.2f".format(Locale.US, diag.tbrUph)} src=$lastDecisionSource"
         consoleLog.add(tickLine)
+    }
+
+    private fun logDecisionFinal(tag: String, rT: RT, bg: Double? = null, delta: Float? = null) {
+        val diag = appendDecisionFinalSummaryLine(tag, rT, bg, delta)
+        val activityThreshold = runDecisionFinalBasalNeuralStep(rT, diag)
+        appendDecisionFinalTickLine(diag, activityThreshold)
     } // 🛑 END OF determine_basal
 
 
@@ -8594,85 +8595,18 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         eventualBg: Double
     ): DecisionResult {
         lastSafetySource = "CALLED"
-        // 0. Sanity Check (Units/Calibration)
-        if (bg < 25 || bg > 600) {
-             consoleLog.add("⚠ Unit Mismatch Suspected? BG=$bg")
-        }
-
-        // 1. Extreme Low / LGS — 3-Tier Differentiated Logic
-        // -------------------------------------------------------
-        // TIER 1 : BG actuel sous seuil → arrêt strict (sécurité absolue)
-        // TIER 2 : Prédiction sous seuil mais BG encore safe → basale 25% (évite rebond bang-bang)
-        // TIER 3 : Éventuel bas mais BG + pred ok → basale 50% (précaution douce)
-        // -------------------------------------------------------
-        fun safe(v: Double) = if (v.isFinite()) v else 999.0
-        val bgNow    = safe(bg)
-        val predNow  = safe(predBg)
-        val eventualNow = safe(eventualBg)
-        val lgsTh = HypoThresholdMath.computeHypoThreshold(minOf(bgNow, predNow, eventualNow), profile.lgsThreshold)
-
-        // TIER 1 : BG réel sous seuil OU chute franche sous 70
-        val tier1BgReal = bgNow < lgsTh || (bg < 70.0 && delta < 0)
-        // TIER 2 : Prédiction sous seuil mais BG encore au-dessus
-        val tier2PredLow = !tier1BgReal && predNow < lgsTh && bgNow >= lgsTh
-        // TIER 3 : Éventuel sous seuil seulement
-        val tier3EventualLow = !tier1BgReal && !tier2PredLow && eventualNow < lgsTh
-
-        when {
-            tier1BgReal -> {
-                val reasonStr = "LGS_BG_ACTUEL: BG=${bgNow.toInt()} <= Th=${lgsTh.toInt()} — Arrêt insuline total (pred=${predNow.toInt()} ev=${eventualNow.toInt()})"
-                consoleLog.add("🛑 SAFETY_LGS_TIER1 $reasonStr")
-                lastSafetySource = "SafetyLGS_T1"
-                return DecisionResult.Applied(
-                    source = "SafetyLGS_T1",
-                    bolusU = 0.0,
-                    tbrUph = 0.0,  // Strict 0.0
-                    tbrMin = 30,
-                    reason = reasonStr
-                )
-            }
-            tier2PredLow -> {
-                val safeBasal = profile.current_basal * 0.25 // 25% basale profil
-                val reasonStr = "LGS_PRED_LOW: pred=${predNow.toInt()} <= Th=${lgsTh.toInt()} (BG actuel=${bgNow.toInt()} OK) — Basale réduite 25%"
-                consoleLog.add("🟠 SAFETY_LGS_TIER2 $reasonStr")
-                lastSafetySource = "SafetyLGS_T2"
-                return DecisionResult.Applied(
-                    source = "SafetyLGS_T2",
-                    bolusU = 0.0,
-                    tbrUph = safeBasal, // Basale résiduelle pour éviter rebond
-                    tbrMin = 30,
-                    reason = reasonStr
-                )
-            }
-            tier3EventualLow -> {
-                val safeBasal = profile.current_basal * 0.50 // 50% basale profil
-                val reasonStr = "LGS_EVENTUAL_LOW: ev=${eventualNow.toInt()} <= Th=${lgsTh.toInt()} (BG=${bgNow.toInt()} pred=${predNow.toInt()} OK) — Basale réduite 50%"
-                consoleLog.add("🟡 SAFETY_LGS_TIER3 $reasonStr")
-                lastSafetySource = "SafetyLGS_T3"
-                return DecisionResult.Applied(
-                    source = "SafetyLGS_T3",
-                    bolusU = 0.0,
-                    tbrUph = safeBasal,
-                    tbrMin = 15,
-                    reason = reasonStr
-                )
-            }
-        }
-
-        // 2. High Noise / Stale Data
-        if (noise >= 3) {
-            lastSafetySource = "SafetyNoise"
-             return DecisionResult.Applied(
-                source = "SafetyNoise",
-                bolusU = 0.0,
-                tbrUph = 0.0,
-                tbrMin = 30,
-                reason = "High Noise ($noise) - Force TBR 0.0"
-            )
-        }
-        
-        lastSafetySource = "SafetyPass"
-        return DecisionResult.Fallthrough("Safety OK")
+        val resolution = resolveSafetyStart(
+            bg = bg,
+            delta = delta,
+            noise = noise,
+            predBg = predBg,
+            eventualBg = eventualBg,
+            currentBasalUph = profile.current_basal,
+            lgsThreshold = profile.lgsThreshold,
+        )
+        resolution.consoleLines.forEach { consoleLog.add(it) }
+        lastSafetySource = resolution.lastSafetySource
+        return resolution.decision
     }
 
     private fun tryMealAdvisor(bg: Double, delta: Float, iobData: IobTotal, profile: OapsProfileAimi, lastBolusTime: Long, modesCondition: Boolean, isExplicitTrigger: Boolean): DecisionResult {

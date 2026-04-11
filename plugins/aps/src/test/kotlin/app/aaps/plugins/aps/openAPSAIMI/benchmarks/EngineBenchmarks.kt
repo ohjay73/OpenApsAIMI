@@ -33,6 +33,7 @@ class EngineBenchmarks {
         mockkStatic(Environment::class)
         val mockFile = mockk<File>(relaxed = true)
         every { Environment.getExternalStorageDirectory() } returns mockFile
+        every { Environment.getExternalStoragePublicDirectory(any()) } returns mockFile
         every { mockFile.absolutePath } returns "/tmp"
 
         // Suspend PersistenceLayer stubs
