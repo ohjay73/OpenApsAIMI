@@ -36,12 +36,12 @@ object HighBgOverride {
         val highBgOverride =
             (bg >= Constants.HIGH_BG_OVERRIDE_BG_STRONG ||
                 (bg >= Constants.HIGH_BG_OVERRIDE_BG_MIN && delta >= 1.5)) &&
-                !isBelowHypoThreshold(
+                !HypoGuard.isBelowHypoThreshold(
                     bgNow = bg,
                     predicted = predictedBg,
                     eventual = eventualBg,
                     hypo = hypoGuard,
-                    delta = delta
+                    delta = delta,
                 ) &&
                 iob < maxSmb
 
@@ -52,13 +52,5 @@ object HighBgOverride {
         if (out > maxSmb) out = maxSmb
         // force cadence agressive (interval = 0)
         return Result(out, true, 0)
-    }
-
-    private fun isBelowHypoThreshold(
-        bgNow: Double, predicted: Double, eventual: Double, hypo: Double, delta: Double
-    ): Boolean {
-        // même gardiennage que ta méthode actuelle
-        val minPred = minOf(bgNow, predicted, eventual)
-        return minPred <= hypo
     }
 }

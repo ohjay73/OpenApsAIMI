@@ -57,6 +57,7 @@ import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdLogRow
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdRuntime
 import app.aaps.plugins.aps.openAPSAIMI.ports.PkpdPort
 import app.aaps.plugins.aps.openAPSAIMI.prediction.sanitizePredictionValues
+import app.aaps.plugins.aps.openAPSAIMI.safety.HypoGuard
 import app.aaps.plugins.aps.openAPSAIMI.safety.HypoThresholdMath
 import app.aaps.plugins.aps.openAPSAIMI.safety.HypoTools
 import app.aaps.plugins.aps.openAPSAIMI.safety.InsulinStackingStance
@@ -1400,7 +1401,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // 0) LGS kill-switch (sans récursion)
         val lgsPref = profile.lgsThreshold
         val hypoGuard = HypoThresholdMath.computeHypoThreshold(minBg = profile.min_bg, lgsThreshold = lgsPref)
-        val blockLgs = isBelowHypoThreshold(bg, predictedBg.toDouble(), eventualBG, hypoGuard, delta.toDouble())
+        val blockLgs = HypoGuard.isBelowHypoThreshold(bg, predictedBg.toDouble(), eventualBG, hypoGuard, delta.toDouble())
         if (blockLgs) {
             rT.reason.append(context.getString(R.string.lgs_triggered, "%.0f".format(bg), "%.0f".format(hypoGuard)))
             rT.duration = maxOf(duration, 30)
@@ -3258,44 +3259,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val hc: Int,
         val highBG: Int
     )
-    private fun isBelowHypoThreshold(
-        bgNow: Double,
-        predicted: Double,
-        eventual: Double,
-        hypo: Double,
-        delta: Double
-    ): Boolean {
-        val tol = 5.0
-        val floor = hypo - tol
-        
-        // 1. Hypo actuelle = TOUJOURS bloquer (sécurité absolue)
-        val strongNow = bgNow <= floor
-        if (strongNow) return true
-        
-        // 2. ⚡ NOUVEAU: Bypass progressif si BG monte clairement
-        //    - delta >= 4 : bypass total des prédictions (montée forte)
-        //    - delta >= 2 && bg > hypo : bypass strongFuture seulement
-        val risingFast = delta >= 4.0
-        val risingModerate = delta >= 2.0 && bgNow > hypo
-        
-        if (risingFast) {
-            // Montée forte: ignorer complètement les prédictions
-            return false
-        }
-        
-        // 3. Prédictions futures (seulement si pas en montée modérée)
-        val strongFuture = (predicted <= floor && eventual <= floor)
-        if (strongFuture && risingModerate) {
-            // Montée modérée: ignorer strongFuture mais pas fastFall
-            // Continue to check fastFall only
-        } else if (strongFuture) {
-            return true
-        }
-        
-        // 4. Chute rapide avec prédiction basse
-        val fastFall = (delta <= -2.0 && predicted <= hypo)
-        return fastFall
-    }
     // Hystérèse : on ne débloque qu’après avoir été > (seuil+margin) pendant X minutes
     private fun canFallbackSmbWithoutPrediction(
         bg: Double,
@@ -3324,7 +3287,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         fun safe(v: Double) = if (v.isFinite()) v else Double.POSITIVE_INFINITY
         val minBg = minOf(safe(bg), safe(predictedBg), safe(eventualBg))
 
-        val blockedNow = isBelowHypoThreshold(bg, predictedBg, eventualBg, HypoThresholdMath.computeHypoThreshold(80.0, profileUtil.convertToMgdlDetect(preferences.get(UnitDoubleKey.ApsLgsThreshold)).toInt() ), deltaMgdlPer5min)
+        val blockedNow = HypoGuard.isBelowHypoThreshold(bg, predictedBg, eventualBg, HypoThresholdMath.computeHypoThreshold(80.0, profileUtil.convertToMgdlDetect(preferences.get(UnitDoubleKey.ApsLgsThreshold)).toInt() ), deltaMgdlPer5min)
         if (blockedNow) {
             lastHypoBlockAt = now
             hypoClearCandidateSince = null
@@ -4238,7 +4201,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 runtimeToMinutes = { runtimeToMinutes(it!!) },
                 computeHypoThreshold = { minBg, lgs -> HypoThresholdMath.computeHypoThreshold(minBg, lgs) },
                 isBelowHypo = { bgNow, predictedValue, eventualValue, hypo, deltaValue ->
-                    isBelowHypoThreshold(bgNow, predictedValue, eventualValue, hypo, deltaValue)
+                    HypoGuard.isBelowHypoThreshold(bgNow, predictedValue, eventualValue, hypo, deltaValue)
                 },
                 logDataMl = { predicted, given -> logDataMLToCsv(predicted, given) },
                 logData = { predicted, given -> logDataToCsv(predicted, given) },
