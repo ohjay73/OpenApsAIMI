@@ -58,6 +58,8 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
     private lateinit var advisorService: AimiAdvisorService
     private lateinit var historyRepo: app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository
 
+    /** Observation / PKPD recommendation cards; used to remove rows after apply without full recreate(). */
+    private val recommendationRowViews = mutableListOf<Pair<View, AimiRecommendation>>()
 
     
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -117,7 +119,7 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                 withContext(Dispatchers.Main) {
                     if (isFinishing) return@withContext
                     rootLayout.removeView(loadingText)
-
+                    recommendationRowViews.clear()
 
                     // 1. Header (Title + Score Pill)
                     rootLayout.addView(createDashboardHeader(report))
@@ -132,7 +134,9 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                     if (standardRecs.isNotEmpty()) {
                         rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_adv_section_obs)))
                         standardRecs.forEach { rec ->
-                            rootLayout.addView(createObservationCard(rec, report.metrics, cardColor))
+                            val card = createObservationCard(rec, report.metrics, cardColor)
+                            rootLayout.addView(card)
+                            recommendationRowViews.add(card to rec)
                         }
                     }
 
@@ -140,7 +144,9 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                     if (pkpdRecs.isNotEmpty()) {
                         rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_adv_section_pkpd)))
                         pkpdRecs.forEach { rec ->
-                            rootLayout.addView(createObservationCard(rec, report.metrics, cardColor))
+                            val card = createObservationCard(rec, report.metrics, cardColor)
+                            rootLayout.addView(card)
+                            recommendationRowViews.add(card to rec)
                         }
                     }
 
@@ -726,7 +732,7 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle(rh.gs(R.string.aimi_adv_apply_dialog_title))
             .setMessage(sb.toString())
-            .setPositiveButton(rh.gs(R.string.aimi_adv_apply_dialog_confirm)) { _, _ ->
+            .setPositiveButton(rh.gs(R.string.aimi_adv_apply_btn)) { _, _ ->
                 applyAction(action)
             }
             .setNegativeButton(android.R.string.cancel, null)
@@ -761,7 +767,7 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             if (applied) {
                  logAction(action)
                  android.widget.Toast.makeText(this, rh.gs(R.string.aimi_adv_success_msg, 1), android.widget.Toast.LENGTH_SHORT).show()
-                 recreate()
+                 refreshRecommendationRowsAfterApply()
             } else {
                  android.widget.Toast.makeText(this, rh.gs(R.string.aimi_adv_no_change_msg), android.widget.Toast.LENGTH_SHORT).show()
             }
@@ -781,6 +787,17 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                 "OLD", // New model doesn't strictly store old value, but we could find it if needed
                 action.newValue.toString()
             )
+    }
+
+    private fun refreshRecommendationRowsAfterApply() {
+        val history = historyRepo.getRecentActions(10)
+        val toRemove = recommendationRowViews.filter { (_, rec) ->
+            !advisorService.isRecommendationVisible(rec, history)
+        }
+        toRemove.forEach { (view, _) ->
+            (view.parent as? ViewGroup)?.removeView(view)
+        }
+        recommendationRowViews.removeAll { toRemove.contains(it) }
     }
 
     private fun createCognitiveCard(factor: Double, cardBg: Int): CardView {

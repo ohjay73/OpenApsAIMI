@@ -1272,7 +1272,6 @@
     <string name="aimi_adv_apply_btn">APPLIQUER</string>
     <string name="aimi_adv_apply_dialog_title">Confirmation des Ajustements</string>
     <string name="aimi_adv_apply_dialog_prefix">L\'Advisor propose les ajustements suivants :\n\n</string>
-    <string name="aimi_adv_apply_dialog_confirm">TOUT APPLIQUER</string>
     <string name="aimi_adv_success_msg">%1$d changements appliqués !</string>
     <string name="aimi_adv_no_change_msg">Aucun changement compatible appliqué.</string>
     <string name="aimi_adv_section_obs">OBSERVATIONS</string>
