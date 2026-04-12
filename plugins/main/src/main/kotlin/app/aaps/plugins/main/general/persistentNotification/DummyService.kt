@@ -2,6 +2,7 @@ package app.aaps.plugins.main.general.persistentNotification
 
 import android.app.Notification
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.IBinder
 import app.aaps.core.interfaces.logging.AAPSLogger
@@ -67,13 +68,13 @@ class DummyService : DaggerService() {
         try {
             aapsLogger.debug("Starting DummyService with ID ${notificationHolder.notificationID}")
             
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                // Android 14+: Use DATA_SYNC instead of LOCATION (no need for location permission)
-                // DATA_SYNC is more appropriate for AndroidAPS which syncs health/glucose data
+            // Must match plugins/main AndroidManifest: DummyService uses foregroundServiceType "specialUse".
+            // Using DATA_SYNC here caused InvalidForegroundServiceTypeException / FGS failure on API 34+.
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 startForeground(
-                    notificationHolder.notificationID, 
+                    notificationHolder.notificationID,
                     notificationHolder.notification,
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
                 )
             } else {
                 startForeground(notificationHolder.notificationID, notificationHolder.notification)

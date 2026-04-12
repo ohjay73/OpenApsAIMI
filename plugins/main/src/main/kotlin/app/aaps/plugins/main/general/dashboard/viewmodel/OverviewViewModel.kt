@@ -32,11 +32,14 @@ import app.aaps.plugins.aps.openAPSAIMI.autodrive.AutodriveEngine // 🧠 Engine
 import app.aaps.core.interfaces.aps.RT
 import app.aaps.plugins.aps.openAPSAIMI.trajectory.TrajectoryType
 import app.aaps.core.interfaces.rx.bus.RxBus
+import app.aaps.core.interfaces.rx.events.EventAcceptOpenLoopChange
 import app.aaps.core.interfaces.rx.events.EventBucketedDataCreated
+import app.aaps.core.interfaces.rx.events.EventNewOpenLoopNotification
 import app.aaps.core.interfaces.rx.events.EventPumpStatusChanged
 import app.aaps.core.interfaces.rx.events.EventRefreshOverview
 import app.aaps.core.interfaces.rx.events.EventUpdateOverviewGraph
 import app.aaps.core.interfaces.rx.events.EventUpdateOverviewIobCob
+import app.aaps.core.interfaces.rx.events.EventUpdateOverviewSensitivity
 import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualitySnapshot
 import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualityTier
 import app.aaps.core.interfaces.utils.DateUtil
@@ -202,6 +205,16 @@ class OverviewViewModel(
             .observeOn(aapsSchedulers.io)
             .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
 
+        disposables += rxBus
+            .toObservable(EventAcceptOpenLoopChange::class.java)
+            .observeOn(aapsSchedulers.io)
+            .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
+
+        disposables += rxBus
+            .toObservable(EventNewOpenLoopNotification::class.java)
+            .observeOn(aapsSchedulers.io)
+            .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
+
         disposables += activePlugin.activeOverview.overviewBus
             .toObservable(EventUpdateOverviewGraph::class.java)
             .observeOn(aapsSchedulers.io)
@@ -209,6 +222,13 @@ class OverviewViewModel(
 
         disposables += activePlugin.activeOverview.overviewBus
             .toObservable(EventUpdateOverviewIobCob::class.java)
+            .observeOn(aapsSchedulers.io)
+            .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
+
+        // Same bus as OverviewFragment.updateSensitivity() — keeps activity % / AIMI metrics in sync after autosens refresh.
+        disposables += activePlugin.activeOverview.overviewBus
+            .toObservable(EventUpdateOverviewSensitivity::class.java)
+            .debounce(1L, TimeUnit.SECONDS)
             .observeOn(aapsSchedulers.io)
             .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
 
