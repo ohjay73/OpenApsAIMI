@@ -711,12 +711,9 @@ class ComposeMainActivity : AppCompatActivity() {
                 findScreenDef = { key -> findScreenDef(key) },
                 onOpenLegacyXmlPreferences = { pluginSimpleName ->
                     withProtection(ProtectionCheck.Protection.PREFERENCES) {
-                        val i = Intent(this@ComposeMainActivity, uiInteraction.preferencesActivity)
-                            .setAction("info.nightscout.androidaps.MainActivity")
-                        if (pluginSimpleName != null) {
-                            i.putExtra(UiInteraction.PLUGIN_NAME, pluginSimpleName)
-                        }
-                        startActivity(i)
+                        val route = if (pluginSimpleName == null) AppRoute.Preferences.route
+                        else AppRoute.PluginPreferences.createRoute(pluginSimpleName)
+                        navController.navigate(route) { launchSingleTop = true }
                     }
                 },
             )
@@ -742,18 +739,19 @@ class ComposeMainActivity : AppCompatActivity() {
     }
 
     private fun findScreenDef(key: String): PreferenceSubScreenDef? {
-        // Check built-in screens from BuiltInSearchables
+        // Check built-in screens from BuiltInSearchables (including nested subscreens)
         builtInSearchables.getSearchableItems().forEach { item ->
-            if (item is SearchableItem.Category && item.screenDef.key == key) {
-                return item.screenDef
+            if (item is SearchableItem.Category) {
+                if (item.screenDef.key == key) return item.screenDef
+                val nested = findNestedScreen(item.screenDef, key)
+                if (nested != null) return nested
             }
         }
-        // Check plugin screens
+        // Check plugin screens (including nested subscreens)
         for (plugin in activePlugin.getPluginsList()) {
             val content = plugin.getPreferenceScreenContent()
             if (content is PreferenceSubScreenDef) {
                 if (content.key == key) return content
-                // Check nested screens
                 val nested = findNestedScreen(content, key)
                 if (nested != null) return nested
             }

@@ -9,7 +9,7 @@ object Versions {
 
     const val compileSdk = 36  // Back to original - SDK 34 breaks omnipod and other modules
     const val minSdk = 31
-    const val targetSdk = 34 // Bumped to 34 for Health Connect compatibility on Android 14
+    const val targetSdk = 34 // Health Connect / Android 14 compatibility
     const val wearMinSdk = 30
     const val wearTargetSdk = 30
 

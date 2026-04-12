@@ -1,80 +1,74 @@
 <menu xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     tools:context="app.aaps.MainActivity">
 
     <item
         android:id="@+id/nav_preferences"
         android:orderInCategory="1"
-        app:showAsAction="never"
-        android:title="@string/nav_preferences" />
+        android:title="@string/nav_preferences"
+        app:showAsAction="never" />
     <item
         android:id="@+id/nav_plugin_preferences"
         android:orderInCategory="1"
-        app:showAsAction="never"
-        android:title="@string/nav_plugin_preferences" />
+        android:title="@string/nav_plugin_preferences"
+        app:showAsAction="never" />
     <item
         android:id="@+id/nav_historybrowser"
         android:orderInCategory="1"
-        app:showAsAction="never"
-        android:title="@string/nav_history_browser" />
+        android:title="@string/nav_history_browser"
+        app:showAsAction="never" />
     <item
         android:id="@+id/nav_setupwizard"
         android:orderInCategory="1"
-        app:showAsAction="never"
-        android:title="@string/nav_setupwizard" />
+        android:title="@string/nav_setupwizard"
+        app:showAsAction="never" />
     <item
         android:id="@+id/nav_dashboard_preview"
         android:orderInCategory="1"
-        app:showAsAction="never"
-        android:title="@string/nav_dashboard_preview" />
+        android:title="@string/nav_dashboard_preview"
+        app:showAsAction="never" />
     <item
         android:id="@+id/nav_comparator"
         android:orderInCategory="1"
-        app:showAsAction="never"
-        android:title="@string/menu_comparator" />
+        android:title="@string/menu_comparator"
+        app:showAsAction="never" />
     <item
         android:id="@+id/nav_meal_advisor"
         android:orderInCategory="1"
-        app:showAsAction="never"
-        android:title="@string/aimi_meal_advisor_title" />
+        android:title="@string/aimi_meal_advisor_title"
+        app:showAsAction="never" />
     <item
         android:id="@+id/nav_aimi_advisor"
         android:orderInCategory="1"
-        app:showAsAction="never"
-        android:title="@string/aimi_advisor_title" />
+        android:title="@string/aimi_advisor_title"
+        app:showAsAction="never" />
     <item
         android:id="@+id/nav_aimi_context"
         android:orderInCategory="1"
-        app:showAsAction="never"
-        android:title="@string/context_title" />
+        android:title="@string/context_title"
+        app:showAsAction="never" />
 
     <item
         android:id="@+id/nav_stats"
         android:orderInCategory="1"
-        app:showAsAction="never"
-        android:title="@string/statistics" />
-    <!--    <item
-            android:id="@+id/nav_survey"
-            android:orderInCategory="1"
-            app:showAsAction="never"
-            android:title="@string/nav_survey" />
-    -->
+        android:title="@string/statistics"
+        app:showAsAction="never" />
     <item
         android:id="@+id/nav_defaultprofile"
         android:orderInCategory="1"
-        app:showAsAction="never"
-        android:title="@string/nav_profile_helper" />
+        android:title="@string/nav_profile_helper"
+        app:showAsAction="never" />
     <group android:id="@+id/about_exit">
         <item
             android:id="@+id/nav_about"
             android:orderInCategory="1"
-            app:showAsAction="never"
-            android:title="@string/nav_about" />
+            android:title="@string/nav_about"
+            app:showAsAction="never" />
         <item
             android:id="@+id/nav_exit"
             android:orderInCategory="1"
-            app:showAsAction="never"
-            android:title="@string/nav_exit" />
+            android:title="@string/nav_exit"
+            app:showAsAction="never" />
     </group>
 </menu>

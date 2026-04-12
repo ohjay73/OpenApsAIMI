@@ -191,7 +191,7 @@ fun MaintenanceDialogs(
         is ExportState.MasterPasswordMissing -> {
             OkDialog(
                 title = stringResource(CoreUiR.string.nav_export),
-                message = stringResource(CoreUiR.string.master_password_missing, stringResource(CoreUiR.string.protection)),
+                message = stringResource(CoreUiR.string.master_password_missing),
                 onDismiss = { maintenanceViewModel.cancelExport() }
             )
         }

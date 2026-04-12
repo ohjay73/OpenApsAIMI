@@ -607,10 +607,8 @@ class DashboardFragment : DaggerFragment() {
     }
 
     private fun openSettings(): Boolean {
-        val intent = Intent(requireContext(), uiInteraction.preferencesActivity)
-            .putExtra(UiInteraction.PLUGIN_NAME, resourceHelper.gs(app.aaps.core.ui.R.string.nav_plugin_preferences))
-            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        startActivity(intent)
+        val pluginKey = activePlugin.activeOverview.javaClass.simpleName
+        uiInteraction.openComposeMainAtRoute(requireContext(), "plugin_preferences/$pluginKey")
         return true
     }
 

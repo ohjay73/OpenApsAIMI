@@ -47,7 +47,6 @@ import app.aaps.ui.search.BuiltInSearchables
 
 /**
  * Screen for displaying all preferences from all plugins.
- * Maintains the same ordering as the legacy MyPreferenceFragment.
  *
  * Plugins are looked up via their interfaces through ActivePlugin, eliminating
  * direct dependencies on specific plugin implementations.
@@ -99,7 +98,6 @@ fun AllPreferencesScreen(
         }
     }
 
-    // Build plugin preference screens in the same order as MyPreferenceFragment
     val pluginContents = buildList {
         // 1. Overview plugin (always enabled)
         getPreferenceContentIfEnabled(activePlugin.activeOverview as PluginBase)?.let { add(it) }

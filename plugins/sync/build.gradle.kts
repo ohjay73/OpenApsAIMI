@@ -23,7 +23,6 @@ dependencies {
     implementation(project(":core:nssdk"))
     implementation(project(":core:ui"))
     implementation(project(":core:utils"))
-    implementation(project(":core:validators"))
     implementation(project(":shared:impl"))
     implementation(project(":plugins:aps"))  // For ContextManager access
 
