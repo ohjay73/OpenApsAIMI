@@ -110,7 +110,7 @@
                     android:textSize="12sp"
                     android:textStyle="bold"
                     android:textColor="@color/dashboard_on_surface"
-                    android:maxLines="2"
+                    android:maxLines="1"
                     android:ellipsize="end"
                     app:cornerRadius="18dp"
                     app:backgroundTint="@color/dashboard_chip_background"

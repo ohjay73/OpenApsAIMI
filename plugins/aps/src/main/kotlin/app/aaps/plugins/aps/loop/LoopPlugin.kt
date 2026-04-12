@@ -1049,6 +1049,9 @@ class LoopPlugin @Inject constructor(
                 })
             }
         }
+        // DISCONNECTED_PUMP / SUPER_BOLUS: insertRunningMode alone does not notify overview/dashboard —
+        // without this, hybrid dashboard metrics can lag until the next BG/IOb event or minute tick.
+        rxBus.send(EventRefreshOverview("goToZeroTemp"))
     }
 
     /**
@@ -1074,6 +1077,8 @@ class LoopPlugin @Inject constructor(
                     }
                 }
             })
+        // SUSPENDED_BY_USER / SUSPENDED_BY_PUMP: same gap as goToZeroTemp — refresh overview + hybrid dashboard immediately.
+        rxBus.send(EventRefreshOverview("suspendLoop"))
     }
 
     var task: Runnable? = null
