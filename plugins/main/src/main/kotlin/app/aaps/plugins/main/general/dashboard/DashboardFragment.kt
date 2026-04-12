@@ -111,6 +111,21 @@ class DashboardFragment : DaggerFragment() {
     private var graphViewportLayoutListener: View.OnLayoutChangeListener? = null
     private var forceGraphViewportReset = false
     private var lastGraphFormatRangeHours: Int? = null
+
+    /**
+     * Lag (now − newest BG) from the previous graph draw. Used to detect CGM gap recovery: after a long
+     * stale period, a fresh newest reading should snap the viewport back to live even if the user had panned.
+     */
+    private var lastGraphBgLagMs: Long? = null
+
+    companion object {
+
+        /** If newest BG was at least this old, we consider data “stale” for recovery detection. */
+        private const val STALE_BG_LAG_MS = 10 * 60 * 1000L
+
+        /** Lag must improve by at least this much vs last draw to count as “fresh again” (handles gradual catch-up). */
+        private const val LAG_IMPROVEMENT_FOR_RECOVERY_MS = 2 * 60 * 1000L
+    }
     private fun sensor(): Boolean {
         val ctx = context ?: return false
 
@@ -615,6 +630,7 @@ class DashboardFragment : DaggerFragment() {
         val hasBgData = overviewData.bgReadingsArray.isNotEmpty()
         binding.glucoseGraph.showPlaceholder(!hasBgData)
         if (!hasBgData) {
+            lastGraphBgLagMs = null
             aapsLogger.debug(LTag.CORE, "Dashboard graph skipped: no BG data")
             return
         }
@@ -636,11 +652,22 @@ class DashboardFragment : DaggerFragment() {
         val rangeChanged =
             lastGraphFormatRangeHours != null && lastGraphFormatRangeHours != overviewData.rangeToDisplay
         lastGraphFormatRangeHours = overviewData.rangeToDisplay
-        val followLive = forceGraphViewportReset || rangeChanged ||
+
+        val newestBgMs = overviewData.bgReadingsArray.maxOfOrNull { it.timestamp } ?: 0L
+        val dataLagMs = (now - newestBgMs).coerceAtLeast(0L)
+        val prevLag = lastGraphBgLagMs
+        val staleGapRecovered =
+            prevLag != null &&
+                prevLag >= STALE_BG_LAG_MS &&
+                dataLagMs <= prevLag - LAG_IMPROVEMENT_FOR_RECOVERY_MS
+        lastGraphBgLagMs = dataLagMs
+
+        val followLive = forceGraphViewportReset || rangeChanged || staleGapRecovered ||
             viewportShouldFollowLiveRange(binding.glucoseGraph.graph, overviewData)
         forceGraphViewportReset = false
         graphData.formatAxis(overviewData.fromTime, overviewData.endTime, resetX = followLive)
-        graphData.performUpdate(keepViewport = true)
+        // Match Overview: when resetting X to live, allow GraphView to refresh viewport; when user panned away, keep it.
+        graphData.performUpdate(keepViewport = !followLive)
     }
 
     private var isHypoRiskDialogShowing = false
