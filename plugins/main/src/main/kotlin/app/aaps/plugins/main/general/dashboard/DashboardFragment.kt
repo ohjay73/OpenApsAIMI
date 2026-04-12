@@ -38,6 +38,7 @@ import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.AapsSchedulers
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventPreferenceChange
+import app.aaps.core.interfaces.rx.events.EventRefreshOverview
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.interfaces.utils.TrendCalculator
@@ -64,6 +65,7 @@ import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorNotificationMa
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorStatusIndicator
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Provider
@@ -126,6 +128,16 @@ class DashboardFragment : DaggerFragment() {
      */
     private var graphRefreshJob: Job? = null
 
+    /**
+     * Mirrors [app.aaps.plugins.main.general.overview.OverviewFragment] refresh loop: without a periodic
+     * [EventRefreshOverview], [OverviewViewModel] only updates when Rx events fire — metrics (steps, HR, IOB…)
+     * can stay stale in [app.aaps.ComposeMainActivity] until the next BG / loop event.
+     */
+    private var periodicOverviewRefreshJob: Job? = null
+
+    /** One-shot after resume when embedded in Compose so [AndroidView] / viewport height has settled. */
+    private var embeddedLayoutSettleRefreshJob: Job? = null
+
     companion object {
 
         /** If newest BG was at least this old, we consider data “stale” for recovery detection. */
@@ -135,6 +147,12 @@ class DashboardFragment : DaggerFragment() {
         private const val LAG_IMPROVEMENT_FOR_RECOVERY_MS = 2 * 60 * 1000L
 
         private const val GRAPH_REFRESH_DEBOUNCE_MS = 120L
+
+        /** Same interval as [app.aaps.plugins.main.general.overview.OverviewFragment] refreshLoop. */
+        private const val DASHBOARD_PERIODIC_REFRESH_MS = 60 * 1000L
+
+        /** Delayed refresh after [ComposeMainActivity] host attaches the view tree (metrics / graph height). */
+        private const val EMBEDDED_LAYOUT_SETTLE_REFRESH_MS = 2_000L
     }
     private fun sensor(): Boolean {
         val ctx = context ?: return false
@@ -410,6 +428,34 @@ class DashboardFragment : DaggerFragment() {
                     binding.statusCard.syncDashboardMetricsModeFromPreferences()
                 }
             }, fabricPrivacy::logException)
+        startDashboardPeriodicRefresh()
+    }
+
+    private fun cancelDashboardRefreshJobs() {
+        periodicOverviewRefreshJob?.cancel()
+        periodicOverviewRefreshJob = null
+        embeddedLayoutSettleRefreshJob?.cancel()
+        embeddedLayoutSettleRefreshJob = null
+    }
+
+    private fun startDashboardPeriodicRefresh() {
+        cancelDashboardRefreshJobs()
+        periodicOverviewRefreshJob = viewLifecycleOwner.lifecycleScope.launch {
+            while (isActive) {
+                delay(DASHBOARD_PERIODIC_REFRESH_MS)
+                if (!isAdded || _binding == null) continue
+                if (!config.appInitialized) continue
+                rxBus.send(EventRefreshOverview("DashboardFragment.periodic"))
+            }
+        }
+        if (isEmbeddedInComposeMainShell()) {
+            embeddedLayoutSettleRefreshJob = viewLifecycleOwner.lifecycleScope.launch {
+                delay(EMBEDDED_LAYOUT_SETTLE_REFRESH_MS)
+                if (!isAdded || _binding == null) return@launch
+                if (!config.appInitialized) return@launch
+                rxBus.send(EventRefreshOverview("DashboardFragment.embeddedLayoutSettle"))
+            }
+        }
     }
 
     private fun updateContextBadge() {
@@ -423,6 +469,7 @@ class DashboardFragment : DaggerFragment() {
     }
 
     override fun onPause() {
+        cancelDashboardRefreshJobs()
         super.onPause()
         viewModel.stop()
         disposables.clear()
