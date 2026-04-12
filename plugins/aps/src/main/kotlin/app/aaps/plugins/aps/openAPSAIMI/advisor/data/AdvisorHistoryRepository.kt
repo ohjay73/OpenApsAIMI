@@ -72,6 +72,7 @@ class AdvisorHistoryRepository(context: Context) {
 
     private fun saveHistory(list: List<AdvisorActionLog>) {
         val json = gson.toJson(list)
-        prefs.edit().putString(KEY_HISTORY, json).apply()
+        // commit() so a immediate recreate() (e.g. after Apply) sees the new entry before 48h de-dup runs.
+        prefs.edit().putString(KEY_HISTORY, json).commit()
     }
 }

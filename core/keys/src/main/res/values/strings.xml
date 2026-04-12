@@ -8,6 +8,12 @@
     <!-- Overview preferences -->
     <string name="pref_title_keep_screen_on">Keep screen on</string>
     <string name="pref_summary_keep_screen_on">Prevent Android to turn screen off. It will consume lot of energy when not plugged to power outlet.</string>
+    <string name="pref_title_overview_use_dashboard_layout">Use dashboard as home</string>
+    <string name="pref_summary_overview_use_dashboard_layout">Use the AIMI hybrid dashboard as the main home content. In the modern (Compose) UI, search, Manage and the bottom bar stay available; in classic UI this switches the Home tab between dashboard and legacy overview.</string>
+    <string name="pref_title_overview_show_hybrid_aimi_pulse">Show last AIMI run on dashboard</string>
+    <string name="pref_summary_overview_show_hybrid_aimi_pulse">When enabled, shows the summary card under the glucose ring (last loop, SMB, etc.). Off by default to leave more room for the graph.</string>
+    <string name="pref_title_overview_dashboard_extended_metrics">Dashboard: extended metrics</string>
+    <string name="pref_summary_overview_dashboard_extended_metrics">Full two-column stats and AIMI trajectory strip. Off = compact row (steps, IOB, heart rate, TBR).</string>
     <string name="pref_title_show_treatment_button">Show treatment button</string>
     <string name="pref_title_show_wizard_button">Show wizard button</string>
     <string name="pref_title_show_insulin_button">Show insulin button</string>
@@ -352,9 +358,6 @@
     <string name="pref_light_theme">Light theme</string>
     <string name="pref_follow_system_theme">Use device theme</string>
 
-    <!-- StringKey: Overview preferences -->
-    <string name="pref_title_copy_settings_from_ns">Copy settings from NS</string>
-
     <!-- StringKey: Safety preferences -->
     <string name="pref_title_patient_age">Patient age</string>
 
@@ -468,7 +471,6 @@
 
     <!--    Appearance preferences-->
     <string name="prefs_range_title">Range for visualization</string>
-    <string name="overview_show_notes_field_in_dialogs_title">Show notes field in treatment dialogs</string>
 
     <string name="key_oaps_aimi_mealAdjFact">key_oaps_aimi_mealAdjFact</string>
     <string name="key_oaps_aimi_meal_factor">key_oaps_aimi_meal_factor</string>
@@ -508,4 +510,43 @@
     <string name="key_prebolus2_BF_mode">key_prebolus2_BF_mode</string>
     <string name="key_oaps_aimi_BFAdjFact">key_oaps_aimi_BFAdjFact</string>
     <string name="key_oaps_aimi_BF_interval">key_oaps_aimi_BF_interval</string>
+
+    <string name="pref_title_aimi_advisor_personal_oref_ml">AIMI Advisor: personal on-device risk model</string>
+    <string name="pref_summary_aimi_advisor_personal_oref_ml">When you open Advisor, trains small models from recent loop+CGM features. Informational only; does not change insulin delivery.</string>
+    <string name="pref_title_aimi_advisor_llm_rich_oref">AI Coach: include structured OREF insights</string>
+    <string name="pref_summary_aimi_advisor_llm_rich_oref">Adds a plain-language facts block for the coach LLM. Turn off for a shorter cloud prompt.</string>
+
+    <!-- AIMI adaptive basal governance (on-device, Universal Adaptive Basal) -->
+    <string name="aimi_gov_hypo_rate_enter_title">Governance: hypo rate to enter HOLD</string>
+    <string name="aimi_gov_hypo_rate_enter_summary">Fraction of recent samples with BG below the hypo threshold required to enter conservative HOLD (0–1). Lower = harder to trigger.</string>
+    <string name="aimi_gov_hypo_rate_exit_title">Governance: hypo rate to exit HOLD</string>
+    <string name="aimi_gov_hypo_rate_exit_summary">Must stay below this (and no severe sample) to leave HOLD after hysteresis. Should be lower than enter rate.</string>
+    <string name="aimi_gov_hypo_bg_mgdl_title">Governance: hypo BG threshold (mg/dL)</string>
+    <string name="aimi_gov_hypo_bg_mgdl_summary">Post-sample BG below this counts toward hypo rate in the rolling governance window.</string>
+    <string name="aimi_gov_severe_hypo_bg_mgdl_title">Governance: severe hypo BG (mg/dL)</string>
+    <string name="aimi_gov_severe_hypo_bg_mgdl_summary">Any sample at or below this uses the stricter severe tier floors/decays. Kept strictly below the hypo threshold.</string>
+    <string name="aimi_gov_hold_basal_floor_rate_title">HOLD: basal scaling floor (rate tier)</string>
+    <string name="aimi_gov_hold_basal_floor_rate_summary">Minimum universal basal scaling factor while HOLD applies without a severe sample in the window.</string>
+    <string name="aimi_gov_hold_basal_decay_rate_title">HOLD: basal decay per update (rate tier)</string>
+    <string name="aimi_gov_hold_basal_decay_rate_summary">Each learning update multiplies basal scaling by this value during HOLD (rate tier). Must be &lt; 1.</string>
+    <string name="aimi_gov_hold_agg_floor_rate_title">HOLD: T3C aggressiveness floor (rate tier)</string>
+    <string name="aimi_gov_hold_agg_floor_rate_summary">Minimum T3C aggressiveness factor during HOLD (rate tier).</string>
+    <string name="aimi_gov_hold_agg_decay_rate_title">HOLD: T3C aggressiveness decay (rate tier)</string>
+    <string name="aimi_gov_hold_agg_decay_rate_summary">Multiplicative decay per update for aggressiveness during HOLD (rate tier).</string>
+    <string name="aimi_gov_hold_basal_floor_severe_title">HOLD: basal scaling floor (severe tier)</string>
+    <string name="aimi_gov_hold_basal_floor_severe_summary">Used when at least one sample in the window is at or below the severe hypo BG.</string>
+    <string name="aimi_gov_hold_basal_decay_severe_title">HOLD: basal decay (severe tier)</string>
+    <string name="aimi_gov_hold_basal_decay_severe_summary">Basal scaling multiplicative decay per update during HOLD when severe tier applies.</string>
+    <string name="aimi_gov_hold_agg_floor_severe_title">HOLD: T3C aggressiveness floor (severe tier)</string>
+    <string name="aimi_gov_hold_agg_floor_severe_summary">Minimum aggressiveness when severe hypo tier applies.</string>
+    <string name="aimi_gov_hold_agg_decay_severe_title">HOLD: T3C aggressiveness decay (severe tier)</string>
+    <string name="aimi_gov_hold_agg_decay_severe_summary">Aggressiveness decay per update when severe tier applies.</string>
+    <string name="aimi_gov_anticipation_lookback_samples_title">Governance: anticipation lookback (samples)</string>
+    <string name="aimi_gov_anticipation_lookback_samples_summary">How many recent learning samples (typically 5 min apart) are used to score short-horizon prediction relief. Rounded to a whole number.</string>
+    <string name="aimi_gov_anticipation_margin_mgdl_title">Governance: anticipation margin above hypo (mg/dL)</string>
+    <string name="aimi_gov_anticipation_margin_mgdl_summary">Minimum predicted BG must be at least hypo threshold plus this margin to count as recovery-oriented for relief.</string>
+    <string name="aimi_gov_anticipation_hypo_damp_title">Governance: anticipation hypo dampening</string>
+    <string name="aimi_gov_anticipation_hypo_damp_summary">When relief is high, weighted hypo rate for HOLD enter/exit is multiplied by (1 minus this fraction times relief). 0 disables hypo dampening from predictions.</string>
+    <string name="aimi_gov_anticipation_decay_blend_max_title">Governance: anticipation HOLD decay softening</string>
+    <string name="aimi_gov_anticipation_decay_blend_max_summary">Caps how much HOLD basal/aggressiveness decay is eased toward neutral when prediction relief is high. 0 leaves decay unchanged by anticipation.</string>
 </resources>

@@ -73,11 +73,20 @@ Analyze the meal image and return STRICT JSON ONLY.
 """
 
     fun cleanJsonResponse(raw: String): String {
-        return raw.trim()
-            .removePrefix("```json").removePrefix("```")
+        var s = raw.trim()
+            .removePrefix("```json")
+            .removePrefix("```JSON")
+            .removePrefix("```")
             .removeSuffix("```")
             .trim()
-            .let { if (!it.startsWith("{")) it.substringAfter("{").let { s -> "{$s" }.substringBeforeLast("}").let { s -> "$s}" } else it }
+        s = s.replace("\r\n", " ").replace('\n', ' ').replace('\r', ' ')
+        val start = s.indexOf('{')
+        val end = s.lastIndexOf('}')
+        return if (start >= 0 && end > start) {
+            s.substring(start, end + 1)
+        } else {
+            s
+        }
     }
 
     private fun roundToHalf(value: Double): Double = round(value * 2.0) / 2.0
@@ -155,7 +164,7 @@ Analyze the meal image and return STRICT JSON ONLY.
             }
         }
 
-        return EstimationResult(
+        val parsed = EstimationResult(
             description = root.optString("food_name", "Unknown Food"),
             visibleItems = visibleItems,
             uncertainItems = root.optJSONArray("uncertain_items").toStringList(),
@@ -174,11 +183,12 @@ Analyze the meal image and return STRICT JSON ONLY.
             recommendedCarbsForDose = roundToHalf(recCarbs),
             recommendedCarbsReason = recReason
         )
+        return MealAdvisorResponseSanitizer.secureEstimationResult(parsed)
     }
 
     fun emptyErrorResult(desc: String, reason: String): EstimationResult {
         val zero = MacroRange(0.0, 0.0, 0.0)
-        return EstimationResult(
+        val err = EstimationResult(
             description = desc,
             visibleItems = emptyList(),
             uncertainItems = emptyList(),
@@ -197,5 +207,6 @@ Analyze the meal image and return STRICT JSON ONLY.
             recommendedCarbsForDose = 0.0,
             recommendedCarbsReason = "Error recovery"
         )
+        return MealAdvisorResponseSanitizer.secureEstimationResult(err)
     }
 }

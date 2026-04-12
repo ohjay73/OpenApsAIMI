@@ -85,8 +85,7 @@ class ApexPumpPlugin @Inject constructor(
         .pluginIcon(R.drawable.ic_apex_detailed)
         .pluginName(R.string.apex_plugin_name)
         .shortName(R.string.apex_plugin_shortname)
-        .description(R.string.apex_plugin_description)
-        .preferencesId(PluginDescription.PREFERENCE_SCREEN),
+        .description(R.string.apex_plugin_description),
     emptyList(),
     aapsLogger,
     rh,

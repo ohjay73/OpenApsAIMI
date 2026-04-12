@@ -38,6 +38,7 @@ import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.AapsSchedulers
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventPreferenceChange
+import app.aaps.core.interfaces.rx.events.EventRefreshOverview
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.interfaces.utils.TrendCalculator
@@ -62,6 +63,9 @@ import dagger.android.support.DaggerFragment
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorStatusLiveData
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorNotificationManager
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorStatusIndicator
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Provider
@@ -111,6 +115,45 @@ class DashboardFragment : DaggerFragment() {
     private var graphViewportLayoutListener: View.OnLayoutChangeListener? = null
     private var forceGraphViewportReset = false
     private var lastGraphFormatRangeHours: Int? = null
+
+    /**
+     * Lag (now − newest BG) from the previous graph draw. Used to detect CGM gap recovery: after a long
+     * stale period, a fresh newest reading should snap the viewport back to live even if the user had panned.
+     */
+    private var lastGraphBgLagMs: Long? = null
+
+    /**
+     * Coalesces rapid graph refresh triggers (overviewBus + layout posts) so we do not run heavy
+     * [updateGraph] back-to-back on the main thread — that can ANR and freeze the whole shell (menus, maintenance).
+     */
+    private var graphRefreshJob: Job? = null
+
+    /**
+     * Mirrors [app.aaps.plugins.main.general.overview.OverviewFragment] refresh loop: without a periodic
+     * [EventRefreshOverview], [OverviewViewModel] only updates when Rx events fire — metrics (steps, HR, IOB…)
+     * can stay stale in [app.aaps.ComposeMainActivity] until the next BG / loop event.
+     */
+    private var periodicOverviewRefreshJob: Job? = null
+
+    /** One-shot after resume when embedded in Compose so [AndroidView] / viewport height has settled. */
+    private var embeddedLayoutSettleRefreshJob: Job? = null
+
+    companion object {
+
+        /** If newest BG was at least this old, we consider data “stale” for recovery detection. */
+        private const val STALE_BG_LAG_MS = 10 * 60 * 1000L
+
+        /** Lag must improve by at least this much vs last draw to count as “fresh again” (handles gradual catch-up). */
+        private const val LAG_IMPROVEMENT_FOR_RECOVERY_MS = 2 * 60 * 1000L
+
+        private const val GRAPH_REFRESH_DEBOUNCE_MS = 120L
+
+        /** Same interval as [app.aaps.plugins.main.general.overview.OverviewFragment] refreshLoop. */
+        private const val DASHBOARD_PERIODIC_REFRESH_MS = 60 * 1000L
+
+        /** Delayed refresh after [ComposeMainActivity] host attaches the view tree (metrics / graph height). */
+        private const val EMBEDDED_LAYOUT_SETTLE_REFRESH_MS = 2_000L
+    }
     private fun sensor(): Boolean {
         val ctx = context ?: return false
 
@@ -226,7 +269,7 @@ class DashboardFragment : DaggerFragment() {
         }
         viewModel.graphMessage.observe(viewLifecycleOwner) {
             binding.glucoseGraph.setUpdateMessage(it)
-            updateGraph()
+            scheduleGraphRefresh()
         }
 
         binding.adjustmentStatus.setOnClickListener {
@@ -385,6 +428,34 @@ class DashboardFragment : DaggerFragment() {
                     binding.statusCard.syncDashboardMetricsModeFromPreferences()
                 }
             }, fabricPrivacy::logException)
+        startDashboardPeriodicRefresh()
+    }
+
+    private fun cancelDashboardRefreshJobs() {
+        periodicOverviewRefreshJob?.cancel()
+        periodicOverviewRefreshJob = null
+        embeddedLayoutSettleRefreshJob?.cancel()
+        embeddedLayoutSettleRefreshJob = null
+    }
+
+    private fun startDashboardPeriodicRefresh() {
+        cancelDashboardRefreshJobs()
+        periodicOverviewRefreshJob = viewLifecycleOwner.lifecycleScope.launch {
+            while (isActive) {
+                delay(DASHBOARD_PERIODIC_REFRESH_MS)
+                if (!isAdded || _binding == null) continue
+                if (!config.appInitialized) continue
+                rxBus.send(EventRefreshOverview("DashboardFragment.periodic"))
+            }
+        }
+        if (isEmbeddedInComposeMainShell()) {
+            embeddedLayoutSettleRefreshJob = viewLifecycleOwner.lifecycleScope.launch {
+                delay(EMBEDDED_LAYOUT_SETTLE_REFRESH_MS)
+                if (!isAdded || _binding == null) return@launch
+                if (!config.appInitialized) return@launch
+                rxBus.send(EventRefreshOverview("DashboardFragment.embeddedLayoutSettle"))
+            }
+        }
     }
 
     private fun updateContextBadge() {
@@ -398,6 +469,7 @@ class DashboardFragment : DaggerFragment() {
     }
 
     override fun onPause() {
+        cancelDashboardRefreshJobs()
         super.onPause()
         viewModel.stop()
         disposables.clear()
@@ -410,6 +482,8 @@ class DashboardFragment : DaggerFragment() {
             }
         }
         graphViewportLayoutListener = null
+        graphRefreshJob?.cancel()
+        graphRefreshJob = null
         super.onDestroyView()
         auditorIndicator?.stopAnimations()
         auditorIndicator = null
@@ -470,6 +544,17 @@ class DashboardFragment : DaggerFragment() {
         binding.root.post {
             if (_binding != null) {
                 setupDashboardGraphChrome()
+                scheduleGraphRefresh()
+            }
+        }
+    }
+
+    private fun scheduleGraphRefresh() {
+        if (_binding == null || !isAdded) return
+        graphRefreshJob?.cancel()
+        graphRefreshJob = viewLifecycleOwner.lifecycleScope.launch {
+            delay(GRAPH_REFRESH_DEBOUNCE_MS)
+            if (_binding != null && isAdded) {
                 updateGraph()
             }
         }
@@ -569,10 +654,8 @@ class DashboardFragment : DaggerFragment() {
     }
 
     private fun openSettings(): Boolean {
-        val intent = Intent(requireContext(), uiInteraction.preferencesActivity)
-            .putExtra(UiInteraction.PLUGIN_NAME, resourceHelper.gs(app.aaps.core.ui.R.string.nav_plugin_preferences))
-            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        startActivity(intent)
+        val pluginKey = activePlugin.activeOverview.javaClass.simpleName
+        uiInteraction.openComposeMainAtRoute(requireContext(), "plugin_preferences/$pluginKey")
         return true
     }
 
@@ -615,6 +698,7 @@ class DashboardFragment : DaggerFragment() {
         val hasBgData = overviewData.bgReadingsArray.isNotEmpty()
         binding.glucoseGraph.showPlaceholder(!hasBgData)
         if (!hasBgData) {
+            lastGraphBgLagMs = null
             aapsLogger.debug(LTag.CORE, "Dashboard graph skipped: no BG data")
             return
         }
@@ -636,11 +720,22 @@ class DashboardFragment : DaggerFragment() {
         val rangeChanged =
             lastGraphFormatRangeHours != null && lastGraphFormatRangeHours != overviewData.rangeToDisplay
         lastGraphFormatRangeHours = overviewData.rangeToDisplay
-        val followLive = forceGraphViewportReset || rangeChanged ||
+
+        val newestBgMs = overviewData.bgReadingsArray.maxOfOrNull { it.timestamp } ?: 0L
+        val dataLagMs = (now - newestBgMs).coerceAtLeast(0L)
+        val prevLag = lastGraphBgLagMs
+        val staleGapRecovered =
+            prevLag != null &&
+                prevLag >= STALE_BG_LAG_MS &&
+                dataLagMs <= prevLag - LAG_IMPROVEMENT_FOR_RECOVERY_MS
+        lastGraphBgLagMs = dataLagMs
+
+        val followLive = forceGraphViewportReset || rangeChanged || staleGapRecovered ||
             viewportShouldFollowLiveRange(binding.glucoseGraph.graph, overviewData)
         forceGraphViewportReset = false
         graphData.formatAxis(overviewData.fromTime, overviewData.endTime, resetX = followLive)
-        graphData.performUpdate(keepViewport = true)
+        // Match Overview: when resetting X to live, allow GraphView to refresh viewport; when user panned away, keep it.
+        graphData.performUpdate(keepViewport = !followLive)
     }
 
     private var isHypoRiskDialogShowing = false

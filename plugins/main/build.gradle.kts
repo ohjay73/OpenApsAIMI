@@ -24,7 +24,6 @@ dependencies {
     implementation(project(":core:nssdk"))
     implementation(project(":core:ui"))
     implementation(project(":core:utils"))
-    implementation(project(":core:validators"))
     implementation(project(":shared:impl"))
     implementation(project(":plugins:aps"))  // For AIMI Auditor UI components
 
@@ -33,6 +32,7 @@ dependencies {
     testImplementation(project(":shared:tests"))
 
     api(libs.androidx.appcompat)
+    api(libs.androidx.fragment)
     api(libs.com.google.android.material)
 
     // Compose

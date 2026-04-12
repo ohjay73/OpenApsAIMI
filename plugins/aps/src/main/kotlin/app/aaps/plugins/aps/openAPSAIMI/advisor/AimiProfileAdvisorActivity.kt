@@ -18,7 +18,9 @@ import androidx.core.content.ContextCompat
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.ui.activities.TranslatedDaggerAppCompatActivity
 import app.aaps.plugins.aps.R
+import app.aaps.core.keys.BooleanKey
 import app.aaps.plugins.aps.openAPSAIMI.advisor.oref.OrefAnalysisReport
+import app.aaps.plugins.aps.openAPSAIMI.advisor.oref.OrefUserInsightFormatter
 import javax.inject.Inject
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -56,6 +58,8 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
     private lateinit var advisorService: AimiAdvisorService
     private lateinit var historyRepo: app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository
 
+    /** Observation / PKPD recommendation cards; used to remove rows after apply without full recreate(). */
+    private val recommendationRowViews = mutableListOf<Pair<View, AimiRecommendation>>()
 
     
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -108,14 +112,14 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         // Bound to activity lifecycle: avoids UI updates after destroy (crash) and cancels when user leaves
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val history = historyRepo.getRecentActions(7)
-                val report = advisorService.generateReport(periodDays = 7, history = history, assetContext = applicationContext)
+                val history = historyRepo.getRecentActions(10)
+                val report = advisorService.generateReport(periodDays = 10, history = history, assetContext = applicationContext)
                 val advisorCtx = report.advisorContext
 
                 withContext(Dispatchers.Main) {
                     if (isFinishing) return@withContext
                     rootLayout.removeView(loadingText)
-
+                    recommendationRowViews.clear()
 
                     // 1. Header (Title + Score Pill)
                     rootLayout.addView(createDashboardHeader(report))
@@ -130,7 +134,9 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                     if (standardRecs.isNotEmpty()) {
                         rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_adv_section_obs)))
                         standardRecs.forEach { rec ->
-                            rootLayout.addView(createObservationCard(rec, report.metrics, cardColor))
+                            val card = createObservationCard(rec, report.metrics, cardColor)
+                            rootLayout.addView(card)
+                            recommendationRowViews.add(card to rec)
                         }
                     }
 
@@ -138,7 +144,9 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                     if (pkpdRecs.isNotEmpty()) {
                         rootLayout.addView(createSectionHeader(rh.gs(R.string.aimi_adv_section_pkpd)))
                         pkpdRecs.forEach { rec ->
-                            rootLayout.addView(createObservationCard(rec, report.metrics, cardColor))
+                            val card = createObservationCard(rec, report.metrics, cardColor)
+                            rootLayout.addView(card)
+                            recommendationRowViews.add(card to rec)
                         }
                     }
 
@@ -658,22 +666,30 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             setTextColor(Color.WHITE)
         })
         
-        var desc = when(rec.descriptionResId) {
-             R.string.aimi_adv_rec_hypos_desc -> rh.gs(rec.descriptionResId, (metrics.timeBelow54 * 100).roundToInt(), metrics.severeHypoEvents)
-             R.string.aimi_adv_rec_control_desc -> rh.gs(rec.descriptionResId, (metrics.tir70_180 * 100).roundToInt())
-             R.string.aimi_adv_rec_hypers_desc -> rh.gs(rec.descriptionResId, (metrics.timeAbove180 * 100).roundToInt())
-             R.string.aimi_adv_rec_basal_desc -> rh.gs(rec.descriptionResId, (metrics.basalPercent * 100).roundToInt())
-             else -> {
-                  if (rec.descriptionArgs.isNotEmpty()) {
-                      try {
-                          rh.gs(rec.descriptionResId, *rec.descriptionArgs.toTypedArray())
-                      } catch(e: Exception) {
-                          rh.gs(rec.descriptionResId) + " " + rec.descriptionArgs.joinToString(" ")
-                      }
-                  } else {
-                      rh.gs(rec.descriptionResId)
-                  }
-              }
+        var desc = when {
+            rec.descriptionResId == 0 -> {
+                val act = rec.action
+                when (act) {
+                    is AimiAction.PreferenceUpdate -> act.reason
+                    else -> rec.descriptionArgs.joinToString(" ").ifEmpty { "" }
+                }
+            }
+            rec.descriptionResId == R.string.aimi_adv_rec_hypos_desc ->
+                rh.gs(rec.descriptionResId, (metrics.timeBelow54 * 100).roundToInt(), metrics.severeHypoEvents)
+            rec.descriptionResId == R.string.aimi_adv_rec_control_desc ->
+                rh.gs(rec.descriptionResId, (metrics.tir70_180 * 100).roundToInt())
+            rec.descriptionResId == R.string.aimi_adv_rec_hypers_desc ->
+                rh.gs(rec.descriptionResId, (metrics.timeAbove180 * 100).roundToInt())
+            rec.descriptionResId == R.string.aimi_adv_rec_basal_desc ->
+                rh.gs(rec.descriptionResId, (metrics.basalPercent * 100).roundToInt())
+            rec.descriptionArgs.isNotEmpty() -> {
+                try {
+                    rh.gs(rec.descriptionResId, *rec.descriptionArgs.toTypedArray())
+                } catch (e: Exception) {
+                    rh.gs(rec.descriptionResId) + " " + rec.descriptionArgs.joinToString(" ")
+                }
+            }
+            else -> rh.gs(rec.descriptionResId)
         }
         
         textLayout.addView(TextView(this).apply {
@@ -716,7 +732,7 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle(rh.gs(R.string.aimi_adv_apply_dialog_title))
             .setMessage(sb.toString())
-            .setPositiveButton(rh.gs(R.string.aimi_adv_apply_dialog_confirm)) { _, _ ->
+            .setPositiveButton(rh.gs(R.string.aimi_adv_apply_btn)) { _, _ ->
                 applyAction(action)
             }
             .setNegativeButton(android.R.string.cancel, null)
@@ -751,7 +767,7 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             if (applied) {
                  logAction(action)
                  android.widget.Toast.makeText(this, rh.gs(R.string.aimi_adv_success_msg, 1), android.widget.Toast.LENGTH_SHORT).show()
-                 recreate()
+                 refreshRecommendationRowsAfterApply()
             } else {
                  android.widget.Toast.makeText(this, rh.gs(R.string.aimi_adv_no_change_msg), android.widget.Toast.LENGTH_SHORT).show()
             }
@@ -771,6 +787,17 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                 "OLD", // New model doesn't strictly store old value, but we could find it if needed
                 action.newValue.toString()
             )
+    }
+
+    private fun refreshRecommendationRowsAfterApply() {
+        val history = historyRepo.getRecentActions(10)
+        val toRemove = recommendationRowViews.filter { (_, rec) ->
+            !advisorService.isRecommendationVisible(rec, history)
+        }
+        toRemove.forEach { (view, _) ->
+            (view.parent as? ViewGroup)?.removeView(view)
+        }
+        recommendationRowViews.removeAll { toRemove.contains(it) }
     }
 
     private fun createCognitiveCard(factor: Double, cardBg: Int): CardView {
@@ -867,6 +894,20 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(24, 24, 24, 24)
         }
+        layout.addView(TextView(this).apply {
+            text = getString(R.string.aimi_adv_oref_user_insight_title)
+            textSize = 15f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#E2E8F0"))
+            setPadding(0, 0, 0, 8)
+        })
+        layout.addView(TextView(this).apply {
+            text = OrefUserInsightFormatter.buildParagraph(this@AimiProfileAdvisorActivity, oref)
+            textSize = 14f
+            setTextColor(Color.parseColor("#94A3B8"))
+            setLineSpacing(6f, 1.2f)
+            setPadding(0, 0, 0, 20)
+        })
         layout.addView(TextView(this).apply {
             text = oref.toPromptSection().trim()
             textSize = 13f
@@ -1024,7 +1065,7 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
         }
         
         if (activeKey.isBlank()) {
-            val basicAnalysis = advisorService.generatePlainTextAnalysis(context, report)
+            val basicAnalysis = advisorService.generatePlainTextAnalysis(context, report, insightContext = this@AimiProfileAdvisorActivity)
             val placeholder = rh.gs(R.string.aimi_coach_placeholder) + " (${provider.name})"
             contentText.text = "$basicAnalysis\n\n⚙️ $placeholder"
         } else {
@@ -1033,13 +1074,15 @@ class AimiProfileAdvisorActivity : TranslatedDaggerAppCompatActivity() {
                     val history = withContext(Dispatchers.IO) {
                         historyRepo.getRecentActions(7)
                     }
+                    val richOref = preferences.get(BooleanKey.OApsAIMIAdvisorLlmRichOref)
                     val advice = AiCoachingService().fetchAdvice(
                         this@AimiProfileAdvisorActivity,
                         context,
                         report,
                         activeKey,
                         provider,
-                        history
+                        history,
+                        includeRichOref = richOref,
                     )
                     if (!isFinishing) {
                         contentText.text = advice

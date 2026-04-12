@@ -3,6 +3,23 @@ package app.aaps.plugins.aps.openAPSAIMI.advisor.oref
 /**
  * Local OREF-style analysis (features + outcomes). Optional bundled ONNX models add risk scores on-device.
  */
+enum class OrefDataSufficiency {
+    /** Not enough CGM/APS or aligned rows for a reliable view. */
+    INSUFFICIENT,
+    /** Some signal; interpret trends cautiously. */
+    LIMITED,
+    /** Enough aligned rows and labels for a stable window summary. */
+    GOOD,
+}
+
+/** On-device personal MLP (Advisor) status — independent of bundled ONNX. */
+enum class OrefPersonalMlStatus {
+    OFF,
+    INSUFFICIENT_DATA,
+    TRAINED_AND_USED,
+    TRAIN_FAILED,
+}
+
 data class OrefAnalysisReport(
     val windowDays: Int,
     val mergedRowCount: Int,
@@ -32,11 +49,18 @@ data class OrefAnalysisReport(
     val meanBgChangePred: Double? = null,
     /** Extra detail for [OrefMlStatus.LOAD_FAILED] */
     val mlErrorDetail: String? = null,
+    val dataSufficiency: OrefDataSufficiency = OrefDataSufficiency.GOOD,
+    val personalMlStatus: OrefPersonalMlStatus = OrefPersonalMlStatus.OFF,
+    /** Mean personal hypo model score (0–100%), sigmoid output averaged over aligned rows */
+    val personalMeanHypoSignalPct: Double? = null,
+    val personalMeanHyperSignalPct: Double? = null,
+    val personalMlDetail: String? = null,
 ) {
 
     fun toPromptSection(): String = buildString {
         append("--- OREF-STYLE LOCAL ANALYSIS (on-device, no Nightscout) ---\n")
         append("Window: ${windowDays}d | APS-CGM aligned rows: $mergedRowCount | Valid4h outcomes: $validOutcomeRows\n")
+        append("Data sufficiency: ${dataSufficiency.name}\n")
         timeInRange70180Pct?.let { append("CGM TIR 70-180 (merged timeline): ${"%.1f".format(it)}%\n") }
         timeBelow70Pct?.let { append("CGM TBR <70: ${"%.1f".format(it)}%\n") }
         timeAbove180Pct?.let { append("CGM TAR >180: ${"%.1f".format(it)}%\n") }
@@ -54,6 +78,10 @@ data class OrefAnalysisReport(
             meanCalHyperRiskPct?.let { append("ONNX hyper risk (calibrated mean): ${"%.1f".format(it)}%\n") }
         }
         meanBgChangePred?.let { append("ONNX mean predicted BG change: ${"%.2f".format(it)}\n") }
+        append("Personal MLP (Advisor): ${personalMlStatus.name}\n")
+        personalMeanHypoSignalPct?.let { append("Personal hypo signal (mean): ${"%.1f".format(it)}%\n") }
+        personalMeanHyperSignalPct?.let { append("Personal hyper signal (mean): ${"%.1f".format(it)}%\n") }
+        personalMlDetail?.let { append("Personal MLP detail: $it\n") }
         if (hints.isNotEmpty()) {
             append("Hints:\n")
             hints.forEach { append("- $it\n") }
@@ -67,6 +95,29 @@ data class OrefAnalysisReport(
         if (mlStatus == OrefMlStatus.NOT_BUNDLED) {
             append("NOTE: Add hypo_lgbm.onnx, hyper_lgbm.onnx, bg_change_lgbm.onnx under assets/oref/ for local risk scores.\n")
         }
+    }
+
+    /**
+     * Compact facts for the AI Coach — no new numbers vs [toPromptSection]; reframed for plain-language coaching.
+     */
+    fun toCoachUserInsightsSection(): String = buildString {
+        append("--- USER INSIGHTS (structured, on-device) ---\n")
+        append("Analysis window: ${windowDays} days.\n")
+        append("Data quality: ${dataSufficiency.name} (aligned loop+CGM rows: $mergedRowCount, labelled 4h outcomes: $validOutcomeRows).\n")
+        timeInRange70180Pct?.let { append("Time in range 70–180 mg/dL: ${"%.0f".format(it)}%.\n") }
+        timeBelow70Pct?.let { append("Time below 70 mg/dL: ${"%.0f".format(it)}%.\n") }
+        timeAbove180Pct?.let { append("Time above 180 mg/dL: ${"%.0f".format(it)}%.\n") }
+        append("Heuristic focus: ${priority.name}.\n")
+        when (personalMlStatus) {
+            OrefPersonalMlStatus.TRAINED_AND_USED -> {
+                personalMeanHypoSignalPct?.let { append("Personal on-device hypo-related signal (informational): ${"%.0f".format(it)}%.\n") }
+                personalMeanHyperSignalPct?.let { append("Personal on-device hyper-related signal (informational): ${"%.0f".format(it)}%.\n") }
+            }
+            OrefPersonalMlStatus.INSUFFICIENT_DATA -> append("Personal on-device model: not enough labelled history to train yet.\n")
+            OrefPersonalMlStatus.TRAIN_FAILED -> append("Personal on-device model: last training or inference failed (see technical block).\n")
+            OrefPersonalMlStatus.OFF -> append("Personal on-device model: disabled in settings (bundled ONNX may still run).\n")
+        }
+        append("Safety: Do not invent percentages; do not prescribe insulin changes—suggest discussing with a care team.\n")
     }
 }
 

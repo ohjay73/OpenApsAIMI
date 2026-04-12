@@ -2,9 +2,9 @@ package app.aaps.core.interfaces.ui
 
 import android.content.Context
 import androidx.annotation.DrawableRes
+import androidx.fragment.app.FragmentActivity
 import androidx.annotation.RawRes
 import androidx.annotation.StringRes
-import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.FragmentManager
 import app.aaps.core.data.model.ICfg
 import app.aaps.core.interfaces.R
@@ -15,8 +15,20 @@ import app.aaps.core.interfaces.R
  */
 interface UiInteraction {
 
+    companion object {
+
+        /** Intent extra: plugin [Class.simpleName] for plugin-specific preference screens. */
+        const val PLUGIN_NAME = "plugin"
+    }
+
     /** The main activity of the application. */
     val mainActivity: Class<*>
+
+    /**
+     * Activity class used for legacy XML preference entry points.
+     * Prefer Compose navigation; this typically points at [app.aaps.ComposeMainActivity].
+     */
+    val preferencesActivity: Class<*>
 
     /** The activity for browsing history. */
     val historyBrowseActivity: Class<*>
@@ -26,32 +38,6 @@ interface UiInteraction {
 
     /** A generic activity that can host a single fragment. */
     val singleFragmentActivity: Class<*>
-
-    /** The main preferences activity. */
-    val preferencesActivity: Class<*>
-
-    /** The fragment for "My Preferences". */
-    val myPreferenceFragment: Class<*>
-
-    companion object {
-
-        /** Key for passing a plugin name in an Intent extra. */
-        const val PLUGIN_NAME = "PluginName"
-
-        /**
-         * Key for identifying a preference from [Preferences].
-         */
-        const val PREFERENCE = "Preference"
-    }
-
-    /**
-     * Enum for specific preference screens.
-     */
-    enum class Preferences {
-
-        /** The protection preference screen. */
-        PROTECTION
-    }
 
     /**
      * Display names for units preferences.
@@ -124,13 +110,6 @@ interface UiInteraction {
         /** An announcement. */
         ANNOUNCEMENT
     }
-
-    /**
-     * Opens the preferences screen for a specific plugin.
-     * @param activity The host activity.
-     * @param pluginSimpleName The simple class name of the plugin. If null, no activity started
-     */
-    fun runPreferencesForPlugin(activity: FragmentActivity, pluginSimpleName: String?)
 
     /**
      * Starts a repeating alarm sound.
@@ -223,4 +202,10 @@ interface UiInteraction {
 
     /** Opens profile management in the Compose main activity. */
     fun openProfileManagementScreen(activity: FragmentActivity)
+
+    /** Opens plugin preferences in the Compose-based preference UI. */
+    fun runPreferencesForPlugin(activity: FragmentActivity, pluginSimpleName: String)
+
+    /** Brings [mainActivity] to front and requests navigation to the given route (see Compose host extras). */
+    fun openComposeMainAtRoute(context: Context, navRoute: String)
 }

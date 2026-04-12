@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.openAPSAIMI.advisor
 
+import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
@@ -37,7 +38,7 @@ class AimiModeSettingsActivity : TranslatedDaggerAppCompatActivity() {
     // private val prefs by lazy { PreferenceManager.getDefaultSharedPreferences(this) }
     @Inject lateinit var preferences: Preferences
     @Inject lateinit var persistenceLayer: app.aaps.core.interfaces.db.PersistenceLayer
-    private val sp by lazy { androidx.preference.PreferenceManager.getDefaultSharedPreferences(this) }
+    private val sp by lazy { getSharedPreferences("aimi_mode_activity", Context.MODE_PRIVATE) }
 
     private var selectedMode = ModeType.LUNCH
 

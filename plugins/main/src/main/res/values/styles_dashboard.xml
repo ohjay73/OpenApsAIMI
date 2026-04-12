@@ -2,7 +2,8 @@
 <resources>
     <style name="Widget.AAPS.Dashboard.Card" parent="@style/Widget.MaterialComponents.CardView">
         <item name="cardElevation">@dimen/dashboard_card_elevation</item>
-        <item name="cardUseCompatPadding">true</item>
+        <!-- false: less outer gap vs compat shadow padding (dashboard felt overly spaced on phones). -->
+        <item name="cardUseCompatPadding">false</item>
         <item name="cardBackgroundColor">@color/dashboard_card_background</item>
         <item name="strokeColor">@color/dashboard_card_stroke</item>
         <item name="strokeWidth">1dp</item>

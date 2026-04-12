@@ -31,11 +31,24 @@ enum class BooleanKey(
     OverviewShowCarbsButton("show_carbs_button", true, R.string.pref_title_show_carbs_button, defaultedBySM = true),
     OverviewShowCgmButton("show_cgm_button", false, R.string.pref_title_show_cgm_button, R.string.pref_summary_show_cgm_button, defaultedBySM = true, showInNsClientMode = false),
     /** Must read stored value in simple mode so Home can switch AIMI dashboard vs legacy overview. */
-    OverviewUseDashboardLayout("overview_use_dashboard", true),
+    OverviewUseDashboardLayout(
+        "overview_use_dashboard", true,
+        R.string.pref_title_overview_use_dashboard_layout,
+        R.string.pref_summary_overview_use_dashboard_layout
+    ),
     /** "Last AIMI run" summary card on the hybrid dashboard (Compose + classic). */
-    OverviewShowHybridDashboardAimiPulse("overview_show_hybrid_aimi_pulse", false, defaultedBySM = true),
+    OverviewShowHybridDashboardAimiPulse(
+        "overview_show_hybrid_aimi_pulse", false,
+        R.string.pref_title_overview_show_hybrid_aimi_pulse,
+        R.string.pref_summary_overview_show_hybrid_aimi_pulse,
+        defaultedBySM = true
+    ),
     /** When true, hybrid dashboard shows the full two-column metrics grid + AIMI insight strip; when false, compact metric row. Must not use [defaultedBySM]: simple mode would ignore stored value via [calculatedDefaultValue] path. */
-    OverviewDashboardExtendedMetrics("overview_dashboard_extended_metrics", false),
+    OverviewDashboardExtendedMetrics(
+        "overview_dashboard_extended_metrics", false,
+        R.string.pref_title_overview_dashboard_extended_metrics,
+        R.string.pref_summary_overview_dashboard_extended_metrics
+    ),
     OverviewShowCalibrationButton("show_calibration_button", false, R.string.pref_title_show_calibration_button, R.string.pref_summary_show_calibration_button, defaultedBySM = true, showInNsClientMode = false),
     OverviewShowNotesInDialogs("show_notes_entry_dialogs", false, R.string.pref_title_show_notes_in_dialogs, defaultedBySM = true),
     OverviewUseBolusAdvisor("use_bolus_advisor", true, R.string.pref_title_use_bolus_advisor, R.string.pref_summary_use_bolus_advisor, defaultedBySM = true),
@@ -210,4 +223,19 @@ enum class BooleanKey(
 
     // 🚨 Emergency SOS (Hypo)
     AimiEmergencySosEnable("aimi_emergency_sos_enable", false),
+
+    /** On-device MLP risk models for AIMI Advisor (OREF features); trains when Advisor runs if enough rows. */
+    OApsAIMIAdvisorPersonalOrefMl(
+        "key_aimi_advisor_personal_oref_ml",
+        false,
+        R.string.pref_title_aimi_advisor_personal_oref_ml,
+        R.string.pref_summary_aimi_advisor_personal_oref_ml,
+    ),
+    /** When true, AI Coach prompt includes structured user-insight block from OREF (easier plain-language coaching). */
+    OApsAIMIAdvisorLlmRichOref(
+        "key_aimi_advisor_llm_rich_oref",
+        true,
+        R.string.pref_title_aimi_advisor_llm_rich_oref,
+        R.string.pref_summary_aimi_advisor_llm_rich_oref,
+    ),
 }

@@ -21,9 +21,9 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="com.dexcom.cgm.EXTERNAL_PERMISSION" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <uses-permission-sdk-23 android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
@@ -91,10 +91,6 @@
             android:name="app.aaps.MainActivity"
             android:exported="false"
             android:theme="@style/AppTheme.NoActionBar" />
-        <activity
-            android:name="app.aaps.activities.PreferencesActivity"
-            android:exported="false"
-            android:theme="@style/AppTheme" />
         <activity
             android:name="app.aaps.activities.HistoryBrowseActivity"
             android:exported="false"
@@ -216,6 +212,15 @@
                 <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
             </intent-filter>
         </activity-alias>
+
+        <!-- WorkManager (Android 14+): SystemForegroundService must declare a type when targetSdk >= 34.
+             Without this merge, startForeground() can run as FGS type "none" and throw InvalidForegroundServiceTypeException. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:directBootAware="false"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
 
     </application>
 

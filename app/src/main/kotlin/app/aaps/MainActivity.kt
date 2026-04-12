@@ -8,8 +8,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.PersistableBundle
-import android.text.SpannableString
-import android.text.style.ForegroundColorSpan
 import android.util.TypedValue
 import android.view.Menu
 import android.view.MenuInflater
@@ -26,29 +24,26 @@ import androidx.appcompat.widget.Toolbar
 import androidx.core.view.GravityCompat
 import androidx.core.view.MenuCompat
 import androidx.core.view.MenuProvider
+import android.text.SpannableString
+import android.text.style.ForegroundColorSpan
 import app.aaps.activities.DashboardPreviewActivity
 import app.aaps.activities.HistoryBrowseActivity
-import app.aaps.activities.PreferencesActivity
+import app.aaps.ComposeMainActivity
+import app.aaps.compose.navigation.AppRoute
 import app.aaps.core.data.plugin.PluginType
-import app.aaps.core.data.ue.Action
-import app.aaps.core.data.ue.Sources
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.insulin.Insulin
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.configuration.ConfigBuilder
 import app.aaps.core.interfaces.notifications.NotificationManager
 import app.aaps.core.interfaces.constraints.ConstraintsChecker
-import app.aaps.core.interfaces.logging.LTag
-import app.aaps.core.interfaces.logging.UserEntryLogger
 import app.aaps.core.interfaces.maintenance.FileListProvider
-import app.aaps.core.interfaces.notifications.Notification
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.protection.ExportPasswordDataStore
 import app.aaps.core.interfaces.protection.ProtectionCheck
 import app.aaps.core.interfaces.rx.AapsSchedulers
-import app.aaps.core.interfaces.rx.events.EventAppExit
 import app.aaps.core.interfaces.rx.events.EventAppInitialized
 import app.aaps.core.interfaces.rx.events.EventRebuildTabs
 import app.aaps.core.interfaces.smsCommunicator.SmsCommunicator
@@ -112,7 +107,6 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
     @Inject lateinit var skinDashboardPreferenceSync: SkinDashboardPreferenceSync
 
     private lateinit var actionBarDrawerToggle: ActionBarDrawerToggle
-    private var pluginPreferencesMenuItem: MenuItem? = null
     private var menu: Menu? = null
     private var menuOpen = false
     private var isProtectionCheckActive = false
@@ -177,54 +171,50 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
                 MenuCompat.setGroupDividerEnabled(menu, true)
                 this@MainActivity.menu = menu
                 menuInflater.inflate(R.menu.menu_main, menu)
-                pluginPreferencesMenuItem = menu.findItem(R.id.nav_plugin_preferences)
             }
 
             override fun onMenuItemSelected(menuItem: MenuItem): Boolean =
                 when (menuItem.itemId) {
-                    R.id.nav_preferences        -> {
-                        protectionCheck.queryProtection(this@MainActivity, ProtectionCheck.Protection.PREFERENCES, {
-                            startActivity(
-                                Intent(this@MainActivity, PreferencesActivity::class.java)
-                                    .setAction("info.nightscout.androidaps.MainActivity")
-                            )
-                        })
-                        true
-                    }
-
-                    R.id.nav_historybrowser     -> {
+                    R.id.nav_historybrowser -> {
                         startActivity(Intent(this@MainActivity, HistoryBrowseActivity::class.java).setAction("info.nightscout.androidaps.MainActivity"))
                         true
                     }
 
-                    R.id.nav_setupwizard        -> {
+                    R.id.nav_setupwizard    -> {
                         protectionCheck.queryProtection(this@MainActivity, ProtectionCheck.Protection.PREFERENCES, {
                             startActivity(Intent(this@MainActivity, SetupWizardActivity::class.java).setAction("info.nightscout.androidaps.MainActivity"))
                         })
                         true
                     }
 
-                    R.id.nav_dashboard_preview  -> {
+                    R.id.nav_preferences -> {
+                        protectionCheck.queryProtection(this@MainActivity, ProtectionCheck.Protection.PREFERENCES, {
+                            uiInteraction.openComposeMainAtRoute(this@MainActivity, AppRoute.Preferences.route)
+                        })
+                        true
+                    }
+
+                    R.id.nav_dashboard_preview -> {
                         startActivity(Intent(this@MainActivity, DashboardPreviewActivity::class.java))
                         true
                     }
 
-                    R.id.nav_comparator         -> {
+                    R.id.nav_comparator -> {
                         startActivity(Intent(this@MainActivity, app.aaps.activities.ComparatorActivity::class.java))
                         true
                     }
 
-                    R.id.nav_meal_advisor       -> {
+                    R.id.nav_meal_advisor -> {
                         startActivity(Intent(this@MainActivity, app.aaps.plugins.aps.openAPSAIMI.advisor.meal.MealAdvisorActivity::class.java))
                         true
                     }
 
-                    R.id.nav_aimi_advisor       -> {
+                    R.id.nav_aimi_advisor -> {
                         startActivity(Intent(this@MainActivity, app.aaps.plugins.aps.openAPSAIMI.advisor.AimiProfileAdvisorActivity::class.java))
                         true
                     }
 
-                    R.id.nav_aimi_context       -> {
+                    R.id.nav_aimi_context -> {
                         startActivity(Intent(this@MainActivity, app.aaps.plugins.aps.openAPSAIMI.context.ui.ContextActivity::class.java))
                         true
                     }
@@ -235,7 +225,7 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
                         true
                     }
 
-                    else                        ->
+                    else ->
                         actionBarDrawerToggle.onOptionsItemSelected(menuItem)
                 }
         }
@@ -387,17 +377,18 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
             binding.mainDrawerLayout.closeDrawers()
         }
         val result = super.onMenuOpened(featureId, menu)
+        val pluginPrefsItem = this.menu?.findItem(R.id.nav_plugin_preferences)
         if (binding.mainPager.currentItem >= 0) {
             (binding.mainPager.adapter as? TabPageAdapter)?.let { tabPageAdapter ->
                 val plugin = tabPageAdapter.getPluginAt(binding.mainPager.currentItem)
-                this.menu?.findItem(R.id.nav_plugin_preferences)?.title = rh.gs(R.string.nav_preferences_plugin, plugin.name)
-                pluginPreferencesMenuItem?.isEnabled = plugin.preferencesId != PluginDescription.PREFERENCE_NONE
+                pluginPrefsItem?.title = rh.gs(R.string.nav_preferences_plugin, plugin.name)
+                pluginPrefsItem?.isEnabled = plugin.hasPreferences()
             }
         }
-        if (pluginPreferencesMenuItem?.isEnabled == false) {
-            val spanString = SpannableString(this.menu?.findItem(R.id.nav_plugin_preferences)?.title.toString())
+        if (pluginPrefsItem?.isEnabled == false) {
+            val spanString = SpannableString(pluginPrefsItem?.title?.toString().orEmpty())
             spanString.setSpan(ForegroundColorSpan(rh.gac(app.aaps.core.ui.R.attr.disabledTextColor)), 0, spanString.length, 0)
-            this.menu?.findItem(R.id.nav_plugin_preferences)?.title = spanString
+            pluginPrefsItem?.title = spanString
         }
         return result
     }

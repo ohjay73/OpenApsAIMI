@@ -97,6 +97,17 @@
 
 ---
 
+### 6️⃣ **MEAL_ADVISOR_RESPONSE_PIPELINE.md** (réponse LLM + qualité)
+**Utilisation**: Comprendre les couches **contexte → API JSON → parse → sanitization → UI**  
+**Contenu**:
+- `MealVisionUserPrompt`, `MealVisionJsonParser`, `MealAdvisorResponseSanitizer`
+- `response_format` (OpenAI / DeepSeek), Gemini safety, tests associés
+
+**Format**: Référence technique courte  
+**Niveau**: Développeur / review sécurité produit
+
+---
+
 ## 🗺️ GUIDE D'UTILISATION
 
 ### Pour une **réponse rapide** (2 minutes):

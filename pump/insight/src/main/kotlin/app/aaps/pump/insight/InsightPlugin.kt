@@ -7,9 +7,6 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
 import android.os.SystemClock
-import androidx.preference.PreferenceCategory
-import androidx.preference.PreferenceManager
-import androidx.preference.PreferenceScreen
 import app.aaps.core.data.model.BS
 import app.aaps.core.data.model.TE
 import app.aaps.core.data.plugin.PluginType
@@ -28,6 +25,7 @@ import app.aaps.core.interfaces.notifications.NotificationManager
 import app.aaps.core.interfaces.plugin.OwnDatabasePlugin
 import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.interfaces.profile.Profile
+import app.aaps.core.interfaces.pump.BlePreCheck
 import app.aaps.core.interfaces.pump.BolusProgressData
 import app.aaps.core.interfaces.pump.DetailedBolusInfo
 import app.aaps.core.interfaces.pump.Insight
@@ -43,19 +41,15 @@ import app.aaps.core.interfaces.pump.PumpSync.TemporaryBasalType
 import app.aaps.core.interfaces.pump.defs.fillFor
 import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.resources.ResourceHelper
+import app.aaps.core.interfaces.rx.AapsSchedulers
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventInitializationChanged
 import app.aaps.core.interfaces.rx.events.EventRefreshOverview
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.keys.interfaces.Preferences
-import app.aaps.core.keys.interfaces.withActivity
 import app.aaps.core.ui.compose.icons.IcPluginInsight
 import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
-import app.aaps.core.validators.preferences.AdaptiveIntPreference
-import app.aaps.core.validators.preferences.AdaptiveIntentPreference
-import app.aaps.core.validators.preferences.AdaptiveSwitchPreference
 import app.aaps.pump.insight.app_layer.Service
-import app.aaps.pump.insight.app_layer.activities.InsightPairingInformationActivity
 import app.aaps.pump.insight.app_layer.history.StartReadingHistoryMessage
 import app.aaps.pump.insight.app_layer.history.StopReadingHistoryMessage
 import app.aaps.pump.insight.app_layer.history.history_events.BolusDeliveredEvent
@@ -97,6 +91,7 @@ import app.aaps.pump.insight.app_layer.status.GetOperatingModeMessage
 import app.aaps.pump.insight.app_layer.status.GetPumpStatusRegisterMessage
 import app.aaps.pump.insight.app_layer.status.GetTotalDailyDoseMessage
 import app.aaps.pump.insight.app_layer.status.ResetPumpStatusRegisterMessage
+import app.aaps.pump.insight.compose.InsightComposeContent
 import app.aaps.pump.insight.connection_service.InsightConnectionService
 import app.aaps.pump.insight.database.InsightBolusID
 import app.aaps.pump.insight.database.InsightDatabase
@@ -122,7 +117,6 @@ import app.aaps.pump.insight.exceptions.app_layer_errors.NoActiveTBRToCancelExce
 import app.aaps.pump.insight.keys.InsightBooleanKey
 import app.aaps.pump.insight.keys.InsightDoubleNonKey
 import app.aaps.pump.insight.keys.InsightIntKey
-import app.aaps.pump.insight.keys.InsightIntentKey
 import app.aaps.pump.insight.keys.InsightLongNonKey
 import app.aaps.pump.insight.utils.ExceptionTranslator
 import app.aaps.pump.insight.utils.ParameterBlockUtil
@@ -156,7 +150,9 @@ class InsightPlugin @Inject constructor(
     private val pumpEnactResultProvider: Provider<PumpEnactResult>,
     private val notificationManager: NotificationManager,
     private val ch: ConcentrationHelper,
-    private val bolusProgressData: BolusProgressData
+    private val bolusProgressData: BolusProgressData,
+    aapsSchedulers: AapsSchedulers,
+    blePreCheck: BlePreCheck
 ) : PumpPluginBase(
     pluginDescription = PluginDescription()
         .icon(IcPluginInsight)
@@ -164,10 +160,21 @@ class InsightPlugin @Inject constructor(
         .shortName(R.string.insightpump_shortname)
         .mainType(PluginType.PUMP)
         .description(R.string.description_pump_insight_local)
-        .fragmentClass(InsightFragment::class.java.name)
-        .preferencesId(PluginDescription.PREFERENCE_SCREEN),
+        .composeContent { plugin ->
+            InsightComposeContent(
+                insightPlugin = plugin as InsightPlugin,
+                rh = rh,
+                rxBus = rxBus,
+                dateUtil = dateUtil,
+                commandQueue = commandQueue,
+                context = context,
+                aapsSchedulers = aapsSchedulers,
+                pumpSync = pumpSync,
+                blePreCheck = blePreCheck
+            )
+        },
     ownPreferences = listOf(
-        InsightIntentKey::class.java, InsightBooleanKey::class.java, InsightIntKey::class.java,
+        InsightBooleanKey::class.java, InsightIntKey::class.java,
         InsightLongNonKey::class.java, InsightDoubleNonKey::class.java,
     ),
     aapsLogger, rh, preferences, commandQueue
@@ -1591,7 +1598,6 @@ class InsightPlugin @Inject constructor(
         key = "insight_settings",
         titleResId = R.string.insight_local,
         items = listOf(
-            InsightIntentKey.InsightPairing.withActivity(InsightPairingInformationActivity::class.java),
             InsightBooleanKey.LogReservoirChanges,
             InsightBooleanKey.LogTubeChanges,
             InsightBooleanKey.LogSiteChanges,
@@ -1607,40 +1613,6 @@ class InsightPlugin @Inject constructor(
         ),
         icon = pluginDescription.icon
     )
-
-    // TODO: Remove after full migration to Compose preferences (getPreferenceScreenContent)
-    override fun addPreferenceScreen(preferenceManager: PreferenceManager, parent: PreferenceScreen, context: Context, requiredKey: String?) {
-        if (requiredKey != null) return
-
-        // val speedEntries = arrayOf<CharSequence>("12 s/U", "30 s/U", "60 s/U")
-        // val speedValues = arrayOf<CharSequence>("0", "1", "2")
-
-        val category = PreferenceCategory(context)
-        parent.addPreference(category)
-        category.apply {
-            key = "insight_settings"
-            title = rh.gs(R.string.insight_local)
-            initialExpandedChildrenCount = 0
-            addPreference(
-                AdaptiveIntentPreference(
-                    ctx = context, intentKey = InsightIntentKey.InsightPairing, title = R.string.insight_pairing,
-                    intent = Intent().setComponent(ComponentName(context, InsightPairingInformationActivity::class.java)),
-                )
-            )
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = InsightBooleanKey.LogReservoirChanges, title = R.string.log_reservoir_changes))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = InsightBooleanKey.LogTubeChanges, title = R.string.log_tube_changes))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = InsightBooleanKey.LogSiteChanges, title = R.string.log_site_changes))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = InsightBooleanKey.LogBatteryChanges, title = R.string.log_battery_changes))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = InsightBooleanKey.LogOperatingModeChanges, title = R.string.log_operating_mode_changes))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = InsightBooleanKey.LogAlerts, title = R.string.log_alerts))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = InsightBooleanKey.EnableTbrEmulation, title = R.string.enable_tbr_emulation, summary = R.string.enable_tbr_emulation_summary))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = InsightBooleanKey.DisableVibration, title = R.string.disable_vibration, summary = R.string.disable_vibration_summary))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = InsightBooleanKey.DisableVibrationAuto, title = R.string.disable_vibration_auto, summary = R.string.disable_vibration_auto_summary))
-            addPreference(AdaptiveIntPreference(ctx = context, intKey = InsightIntKey.MinRecoveryDuration, title = R.string.min_recovery_duration))
-            addPreference(AdaptiveIntPreference(ctx = context, intKey = InsightIntKey.MaxRecoveryDuration, title = R.string.max_recovery_duration))
-            addPreference(AdaptiveIntPreference(ctx = context, intKey = InsightIntKey.DisconnectDelay, title = R.string.disconnect_delay))
-        }
-    }
 
     companion object {
 

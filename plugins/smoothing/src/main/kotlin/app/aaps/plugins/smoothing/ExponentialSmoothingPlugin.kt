@@ -23,7 +23,6 @@ class ExponentialSmoothingPlugin @Inject constructor(
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.SMOOTHING)
-        .pluginIcon(app.aaps.core.ui.R.drawable.ic_timeline_24)
         .icon(Icons.Default.Timeline)
         .pluginName(R.string.exponential_smoothing_name)
         .shortName(R.string.smoothing_shortname)
@@ -147,7 +146,7 @@ class ExponentialSmoothingPlugin @Inject constructor(
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.SMOOTHING)
-        .pluginIcon(app.aaps.core.ui.R.drawable.ic_timeline_24)
+        .pluginIcon(app.aaps.core.ui.R.drawable.ic_stats)
         .pluginName(R.string.exponential_smoothing_name)
         .shortName(R.string.smoothing_shortname)
         .description(R.string.description_exponential_smoothing),

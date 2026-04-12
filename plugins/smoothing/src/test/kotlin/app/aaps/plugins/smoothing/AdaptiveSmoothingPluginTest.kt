@@ -1,6 +1,7 @@
 package app.aaps.plugins.smoothing
 
 import app.aaps.core.data.iob.InMemoryGlucoseValue
+import app.aaps.core.data.model.TE
 import app.aaps.core.data.model.TrendArrow
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.db.PersistenceLayer
@@ -9,11 +10,12 @@ import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.keys.BooleanKey
 import app.aaps.shared.tests.TestBaseWithProfile
 import com.google.common.truth.Truth.assertThat
-import io.reactivex.rxjava3.core.Single
+import kotlinx.coroutines.flow.emptyFlow
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mock
 import org.mockito.kotlin.any
+import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.whenever
 import kotlin.math.abs
@@ -31,10 +33,12 @@ class AdaptiveSmoothingPluginTest : TestBaseWithProfile() {
         whenever(sp.getDouble(eq("ukf_learned_r"), any())).thenReturn(25.0)
         whenever(sp.getLong(eq("ukf_last_processed_timestamp"), any())).thenReturn(0L)
         whenever(sp.getLong(eq("ukf_sensor_change_timestamp"), any())).thenReturn(0L)
-        whenever(persistenceLayer.getTherapyEventDataFromTime(any(), eq(false))).thenReturn(Single.just(emptyList()))
 
-        whenever(iobCobCalculator.calculateIobFromBolus()).thenReturn(IobTotal(time = 0L, iob = 0.2))
-        whenever(iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended()).thenReturn(IobTotal(time = 0L, iob = 0.2))
+        whenever(persistenceLayer.observeChanges(eq(TE::class.java))).thenReturn(emptyFlow())
+        whenever { persistenceLayer.getTherapyEventDataFromTime(any(), any()) } doReturn emptyList()
+
+        whenever { iobCobCalculator.calculateIobFromBolus() } doReturn IobTotal(time = 0L, iob = 0.2)
+        whenever { iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended() } doReturn IobTotal(time = 0L, iob = 0.2)
         whenever(preferences.get(BooleanKey.OApsAIMInight)).thenReturn(true)
 
         plugin = AdaptiveSmoothingPlugin(
@@ -68,8 +72,8 @@ class AdaptiveSmoothingPluginTest : TestBaseWithProfile() {
 
     @Test
     fun `compression low artifact is blocked when drop is implausible and low iob`() {
-        whenever(iobCobCalculator.calculateIobFromBolus()).thenReturn(IobTotal(time = 0L, iob = 0.1))
-        whenever(iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended()).thenReturn(IobTotal(time = 0L, iob = 0.1))
+        whenever { iobCobCalculator.calculateIobFromBolus() } doReturn IobTotal(time = 0L, iob = 0.1)
+        whenever { iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended() } doReturn IobTotal(time = 0L, iob = 0.1)
 
         val series = cgmSeries(
             118.0, 116.0, 115.0, 112.0, 108.0, 104.0,

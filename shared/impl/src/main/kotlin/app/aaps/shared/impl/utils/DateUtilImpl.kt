@@ -235,26 +235,25 @@ class DateUtilImpl @Inject constructor(
 
     override fun hourAgo(time: Long, rh: ResourceHelper): String {
         val duration = (now() - time).milliseconds
-        val hours = duration.inWholeHours
+        // Must match string resources: hoursago uses %1$.1f (float), not integer hours.
+        val hours = duration.toDouble(DurationUnit.HOURS)
         return rh.gs(R.string.hoursago, hours)
     }
 
     override fun dayAgo(time: Long, rh: ResourceHelper, round: Boolean): String {
         val duration = (now() - time).milliseconds
+        val daysAsDouble = duration.toDouble(DurationUnit.DAYS)
         if (round) {
-            val daysAsDouble = duration.toDouble(DurationUnit.DAYS)
             return if (duration.isPositive()) {
-                val roundedDays = ceil(daysAsDouble)
-                rh.gs(R.string.days_ago_round, roundedDays)
+                rh.gs(R.string.days_ago_round, ceil(daysAsDouble))
             } else {
-                val roundedDays = floor(daysAsDouble)
-                rh.gs(R.string.in_days_round, roundedDays)
+                rh.gs(R.string.in_days_round, floor(daysAsDouble))
             }
         }
         return if (duration.isPositive()) {
-            rh.gs(R.string.days_ago, duration.inWholeDays)
+            rh.gs(R.string.days_ago, daysAsDouble)
         } else {
-            rh.gs(R.string.in_days, abs(duration.inWholeDays))
+            rh.gs(R.string.in_days, abs(daysAsDouble))
         }
     }
 

@@ -31,6 +31,25 @@ class DeepSeekVisionProvider : AIVisionProvider {
     }
     
     private fun callDeepSeekAPI(apiKey: String, base64Image: String, userDescription: String): String {
+        val userPrompt = MealVisionUserPrompt.buildAnalysisUserPrompt(userDescription)
+        return try {
+            postDeepSeekCompletion(apiKey, base64Image, userPrompt, includeResponseFormat = true)
+        } catch (e: Exception) {
+            val errText = (e.message ?: "").lowercase()
+            if (errText.contains("400") && errText.contains("response_format")) {
+                postDeepSeekCompletion(apiKey, base64Image, userPrompt, includeResponseFormat = false)
+            } else {
+                throw e
+            }
+        }
+    }
+
+    private fun postDeepSeekCompletion(
+        apiKey: String,
+        base64Image: String,
+        userPrompt: String,
+        includeResponseFormat: Boolean,
+    ): String {
         val url = URL("https://api.deepseek.com/v1/chat/completions")
         val connection = url.openConnection() as HttpURLConnection
         connection.requestMethod = "POST"
@@ -40,14 +59,11 @@ class DeepSeekVisionProvider : AIVisionProvider {
         connection.connectTimeout = 30000
         connection.readTimeout = 45000
 
-        val userPrompt = if (userDescription.isNotBlank()) {
-            "User description: \"$userDescription\". Analyze this meal image and return JSON only according to the required schema."
-        } else {
-            "Analyze this meal image and return JSON only according to the required schema."
-        }
-        
         val jsonBody = JSONObject().apply {
             put("model", "deepseek-chat")
+            if (includeResponseFormat) {
+                put("response_format", JSONObject().put("type", "json_object"))
+            }
             put("messages", JSONArray().apply {
                 put(JSONObject().apply {
                     put("role", "system")
@@ -72,9 +88,9 @@ class DeepSeekVisionProvider : AIVisionProvider {
             put("max_tokens", 2048)
             put("temperature", 0.0)
         }
-        
+
         connection.outputStream.use { it.write(jsonBody.toString().toByteArray()) }
-        
+
         val code = connection.responseCode
         if (code == HttpURLConnection.HTTP_OK) {
             return connection.inputStream.bufferedReader().use { it.readText() }
@@ -83,15 +99,7 @@ class DeepSeekVisionProvider : AIVisionProvider {
             throw Exception("HTTP $code: $err")
         }
     }
-    
-    private fun parseResponse(jsonStr: String): EstimationResult {
-        val root = JSONObject(jsonStr)
-        val content = root.getJSONArray("choices")
-            .getJSONObject(0)
-            .getJSONObject("message")
-            .getString("content")
-        
-        val cleaned = FoodAnalysisPrompt.cleanJsonResponse(content)
-        return FoodAnalysisPrompt.parseJsonToResult(cleaned)
-    }
+
+    private fun parseResponse(jsonStr: String): EstimationResult =
+        MealVisionChatCompletionsParser.parseOpenAiStyleResponse(jsonStr, "DeepSeek")
 }

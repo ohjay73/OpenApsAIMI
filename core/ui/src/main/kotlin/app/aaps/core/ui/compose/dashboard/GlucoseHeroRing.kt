@@ -69,8 +69,10 @@ fun GlucoseHeroRing(
         val noseWidthPx = with(density) { 16.dp.toPx() }
         val noseExtra = if (noseAngle != null) noseLengthPx + strokePx * 0.25f else 0f
         val ringRadius: Float = (minSidePx / 2f) - (strokePx / 2f) - noseExtra
-        val mainSp = with(density) { (ringRadius * 0.7f / fontScale).coerceIn(18f, 56f).toSp() }
-        val subSp = with(density) { (ringRadius * 0.2f / fontScale).coerceIn(10f, 18f).toSp() }
+        // BG + delta: scale with ring; time-under-BG stays slightly smaller so the hero stays readable.
+        val mainSp = with(density) { (ringRadius * 1.02f / fontScale).coerceIn(24f, 78f).toSp() }
+        val deltaSp = with(density) { (ringRadius * 0.42f / fontScale).coerceIn(15f, 30f).toSp() }
+        val subSp = with(density) { (ringRadius * 0.24f / fontScale).coerceIn(11f, 19f).toSp() }
 
         Box(Modifier.fillMaxSize()) {
             Canvas(modifier = Modifier.fillMaxSize()) {
@@ -121,7 +123,7 @@ fun GlucoseHeroRing(
                 if (state.subLeftText.isNotBlank()) {
                     Text(
                         text = state.subLeftText,
-                        style = deltaStyle.copy(fontSize = subSp),
+                        style = deltaStyle.copy(fontSize = deltaSp),
                         textAlign = TextAlign.Center,
                         maxLines = 1,
                     )

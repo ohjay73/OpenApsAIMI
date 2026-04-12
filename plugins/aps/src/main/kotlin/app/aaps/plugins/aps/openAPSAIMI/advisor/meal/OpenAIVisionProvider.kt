@@ -18,7 +18,7 @@ class OpenAIVisionProvider : AIVisionProvider {
         try {
             val base64Image = bitmapToBase64(bitmap)
             val responseJson = callOpenAIAPI(apiKey, base64Image, userDescription)
-            return@withContext parseResponse(responseJson)
+            return@withContext MealVisionChatCompletionsParser.parseOpenAiStyleResponse(responseJson, "OpenAI")
         } catch (e: Exception) {
             return@withContext FoodAnalysisPrompt.emptyErrorResult("OpenAI Error", e.message ?: "Unknown error")
         }
@@ -40,14 +40,11 @@ class OpenAIVisionProvider : AIVisionProvider {
         connection.connectTimeout = 30000
         connection.readTimeout = 45000
         
-        val userPrompt = if (userDescription.isNotBlank()) {
-            "User description: \"$userDescription\". Analyze this meal image and return JSON only according to the required schema."
-        } else {
-            "Analyze this meal image and return JSON only according to the required schema."
-        }
+        val userPrompt = MealVisionUserPrompt.buildAnalysisUserPrompt(userDescription)
 
         val jsonBody = JSONObject().apply {
             put("model", "gpt-4o")
+            put("response_format", JSONObject().put("type", "json_object"))
             put("messages", JSONArray().apply {
                 put(JSONObject().apply {
                     put("role", "system")
@@ -84,14 +81,4 @@ class OpenAIVisionProvider : AIVisionProvider {
         }
     }
     
-    private fun parseResponse(jsonStr: String): EstimationResult {
-        val root = JSONObject(jsonStr)
-        val content = root.getJSONArray("choices")
-            .getJSONObject(0)
-            .getJSONObject("message")
-            .getString("content")
-        
-        val cleaned = FoodAnalysisPrompt.cleanJsonResponse(content)
-        return FoodAnalysisPrompt.parseJsonToResult(cleaned)
-    }
 }

@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="error_field_must_not_be_empty">The field must not be empty</string>
+    <string name="error_url_not_valid">Web Url is not valid</string>
+    <string name="error_mustbe4hexadidits">Must be 4 characters of ABCDEF0123456789</string>
     <!--    General-->
     <string name="treatments">Treatments</string>
     <string name="treatments_desc">View and manage treatment history</string>
@@ -59,7 +62,6 @@
     <string name="preference_range_summary" comment="%1$s=current value, %2$s=unit label, %3$s=minimum, %4$s=maximum. Example: 5.0 U (0.0 – 10.0)">%1$s%2$s (%3$s – %4$s)</string>
     <string name="statuslights">Status lights</string>
     <string name="copy_existing_values">Copy NS settings (if exists)?</string>
-    <string name="do_ns_upload_title">Upload BG data to NS</string>
     <string name="configbuilder_insulin">Insulin</string>
     <string name="configbuilder_bgsource">BG Source</string>
     <string name="configbuilder_smoothing">Smoothing</string>
@@ -778,7 +780,7 @@
     <string name="export_alert">ALERT</string>
 
     <!-- Export dialog strings -->
-    <string name="master_password_missing">Master password is not set!\n\nPlease set your Master password in Preferences (%1$s)</string>
+    <string name="master_password_missing">Master password is not set!\n\nPlease set a master password first, then try again.</string>
     <string name="export_to">Export settings to</string>
     <string name="password_preferences_encrypt_prompt">You will be asked for master password, which will be used to encrypt exported preferences.</string>
     <string name="preferences_export_canceled">Export canceled! Preferences were NOT exported!</string>

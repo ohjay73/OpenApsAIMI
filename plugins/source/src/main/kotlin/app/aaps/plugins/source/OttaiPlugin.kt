@@ -43,7 +43,6 @@ class OttaiPlugin @Inject constructor(
         }
         .pluginIcon(app.aaps.core.objects.R.drawable.ic_ottai)
         .icon(IcGenericCgm)
-        .preferencesId(PluginDescription.PREFERENCE_SCREEN)
         .pluginName(R.string.ottai_app)
         .preferencesVisibleInSimpleMode(false)
         .description(R.string.description_source_patched_ottai_app),

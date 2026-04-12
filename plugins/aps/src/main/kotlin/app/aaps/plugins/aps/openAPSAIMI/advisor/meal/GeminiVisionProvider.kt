@@ -57,11 +57,7 @@ class GeminiVisionProvider(private val context: android.content.Context) : AIVis
         connection.connectTimeout = 30000
         connection.readTimeout = 60000
         
-        val userPrompt = if (userDescription.isNotBlank()) {
-            "User description: \"$userDescription\". Analyze this meal image and return JSON only according to the required schema."
-        } else {
-            "Analyze this meal image and return JSON only according to the required schema."
-        }
+        val userPrompt = MealVisionUserPrompt.buildAnalysisUserPrompt(userDescription)
 
         val jsonBody = JSONObject().apply {
             put("contents", JSONArray().apply {
@@ -99,14 +95,37 @@ class GeminiVisionProvider(private val context: android.content.Context) : AIVis
     
     private fun parseResponse(jsonStr: String): EstimationResult {
         val root = JSONObject(jsonStr)
-        val content = root.getJSONArray("candidates")
-            .getJSONObject(0)
-            .getJSONObject("content")
-            .getJSONArray("parts")
-            .getJSONObject(0)
-            .getString("text")
-        
-        val cleaned = FoodAnalysisPrompt.cleanJsonResponse(content)
-        return FoodAnalysisPrompt.parseJsonToResult(cleaned)
+        if (!root.has("candidates")) {
+            return FoodAnalysisPrompt.emptyErrorResult("Gemini Error", "Missing candidates in response")
+        }
+        val candidates = root.getJSONArray("candidates")
+        if (candidates.length() == 0) {
+            return FoodAnalysisPrompt.emptyErrorResult("Gemini Error", "Empty candidates array")
+        }
+        val candidate = candidates.getJSONObject(0)
+        val finish = candidate.optString("finishReason", "")
+        if (finish.equals("SAFETY", ignoreCase = true) || finish.equals("BLOCKLIST", ignoreCase = true)) {
+            return FoodAnalysisPrompt.emptyErrorResult("Gemini Safety", "Response blocked ($finish)")
+        }
+        val content = candidate.optJSONObject("content")
+            ?: return FoodAnalysisPrompt.emptyErrorResult("Gemini Error", "Missing content object")
+        val parts = content.optJSONArray("parts")
+            ?: return FoodAnalysisPrompt.emptyErrorResult("Gemini Error", "Missing content parts")
+        if (parts.length() == 0) {
+            return FoodAnalysisPrompt.emptyErrorResult("Gemini Error", "Empty content parts")
+        }
+        var text = ""
+        for (i in 0 until parts.length()) {
+            val part = parts.optJSONObject(i) ?: continue
+            val t = part.optString("text", "")
+            if (t.isNotBlank()) {
+                text = t
+                break
+            }
+        }
+        if (text.isBlank()) {
+            return FoodAnalysisPrompt.emptyErrorResult("Gemini Error", "Empty model text")
+        }
+        return MealVisionJsonParser.parseModelContentToEstimation(text)
     }
 }
