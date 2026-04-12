@@ -62,6 +62,8 @@ import dagger.android.support.DaggerFragment
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorStatusLiveData
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorNotificationManager
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorStatusIndicator
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Provider
@@ -118,6 +120,12 @@ class DashboardFragment : DaggerFragment() {
      */
     private var lastGraphBgLagMs: Long? = null
 
+    /**
+     * Coalesces rapid graph refresh triggers (overviewBus + layout posts) so we do not run heavy
+     * [updateGraph] back-to-back on the main thread — that can ANR and freeze the whole shell (menus, maintenance).
+     */
+    private var graphRefreshJob: Job? = null
+
     companion object {
 
         /** If newest BG was at least this old, we consider data “stale” for recovery detection. */
@@ -125,6 +133,8 @@ class DashboardFragment : DaggerFragment() {
 
         /** Lag must improve by at least this much vs last draw to count as “fresh again” (handles gradual catch-up). */
         private const val LAG_IMPROVEMENT_FOR_RECOVERY_MS = 2 * 60 * 1000L
+
+        private const val GRAPH_REFRESH_DEBOUNCE_MS = 120L
     }
     private fun sensor(): Boolean {
         val ctx = context ?: return false
@@ -241,7 +251,7 @@ class DashboardFragment : DaggerFragment() {
         }
         viewModel.graphMessage.observe(viewLifecycleOwner) {
             binding.glucoseGraph.setUpdateMessage(it)
-            updateGraph()
+            scheduleGraphRefresh()
         }
 
         binding.adjustmentStatus.setOnClickListener {
@@ -425,6 +435,8 @@ class DashboardFragment : DaggerFragment() {
             }
         }
         graphViewportLayoutListener = null
+        graphRefreshJob?.cancel()
+        graphRefreshJob = null
         super.onDestroyView()
         auditorIndicator?.stopAnimations()
         auditorIndicator = null
@@ -485,6 +497,17 @@ class DashboardFragment : DaggerFragment() {
         binding.root.post {
             if (_binding != null) {
                 setupDashboardGraphChrome()
+                scheduleGraphRefresh()
+            }
+        }
+    }
+
+    private fun scheduleGraphRefresh() {
+        if (_binding == null || !isAdded) return
+        graphRefreshJob?.cancel()
+        graphRefreshJob = viewLifecycleOwner.lifecycleScope.launch {
+            delay(GRAPH_REFRESH_DEBOUNCE_MS)
+            if (_binding != null && isAdded) {
                 updateGraph()
             }
         }
