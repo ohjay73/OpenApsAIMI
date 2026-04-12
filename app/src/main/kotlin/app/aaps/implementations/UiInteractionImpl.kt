@@ -39,6 +39,7 @@ class UiInteractionImpl @Inject constructor(
 
     /** Launcher + in-app UI use [ComposeMainActivity]; keep classic [MainActivity] reachable via shell FAB. */
     override val mainActivity: Class<*> = ComposeMainActivity::class.java
+    override val preferencesActivity: Class<*> = ComposeMainActivity::class.java
     override val historyBrowseActivity: Class<*> = HistoryBrowseActivity::class.java
     override val errorHelperActivity: Class<*> = ErrorActivity::class.java
     override val singleFragmentActivity: Class<*> = SingleFragmentActivity::class.java

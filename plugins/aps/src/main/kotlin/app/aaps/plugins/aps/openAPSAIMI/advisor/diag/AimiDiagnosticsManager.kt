@@ -2,7 +2,6 @@ package app.aaps.plugins.aps.openAPSAIMI.advisor.diag
 
 import android.content.Context
 import android.content.SharedPreferences
-import androidx.preference.PreferenceManager
 import app.aaps.core.data.configuration.Constants
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
@@ -102,7 +101,7 @@ class AimiDiagnosticsManager(
 
         // 4. AIMI Core Preferences
         sb.append("[AIMI PREFERENCES]\n")
-        val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+        val prefs = context.getSharedPreferences(context.packageName + "_preferences", Context.MODE_PRIVATE)
         val allPrefs = prefs.all
         
         // Liste des clés intéressantes (AIMI, APS, Constraints)

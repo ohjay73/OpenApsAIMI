@@ -54,7 +54,7 @@ class UnifiedActivityProviderMTR @Inject constructor(
          * Static helper to get mode from any component context
          */
         fun getMode(context: android.content.Context): String {
-            val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
+            val prefs = context.getSharedPreferences(context.packageName + "_preferences", android.content.Context.MODE_PRIVATE)
             return prefs.getString(PREF_KEY_SOURCE_MODE, DEFAULT_MODE) ?: DEFAULT_MODE
         }
     }

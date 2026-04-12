@@ -74,6 +74,15 @@ Dernière mise à jour : Phase 3 gouvernance adaptive basal **A0–A3 faits**, *
 | TODO `// TODO eliminate` dans `DetermineBasalAIMI2` (doublons / commentaires morts) | Fait (reste : TODO `tbrMaxMode` / `tbrMaxAutoDrive` si tracking un jour) |
 | Fichiers `.bak` | **Fait** — `*.bak` dans `.gitignore` ; **3 sauvegardes `.bak` retirées du dépôt** (AIMI + Comboctl) |
 
+## Merge `dev` — `preferencesId` (API plugin, pas « nettoyage »)
+
+| Item | Statut |
+|------|--------|
+| Clarification produit | **Note** — Après merge avec `dev`, **`PluginDescription` ne définit plus `preferencesId` / `PREFERENCE_SCREEN`** (API retirée du cœur AAPS). Les appels du type `.preferencesId(PluginDescription.PREFERENCE_SCREEN)` **ne peuvent pas être conservés** : le projet ne compile pas tant qu’ils restent. |
+| Remplacement fonctionnel | **Note** — L’existence d’un écran de réglages pour un plugin repose sur **`getPreferenceScreenContent()`** (non nul) et donc sur **`hasPreferences()`** (menu / navigation Compose). Ce n’est **pas** une suppression de fonctionnalité pour les utilisateurs AIMI si le plugin expose toujours ce contenu. |
+| **OttaiPlugin** | **Note** — Hérite de **`AbstractBgSourcePlugin`**, qui fournit déjà **`getPreferenceScreenContent()`** (écran Compose BG source, ex. upload NS). Retirer `preferencesId` ici = alignement compile sur la nouvelle API, **sans retirer** l’écran prefs tant que cette méthode reste en place. |
+| **ApexPumpPlugin** (`:pump:apex`) | **Note** — Même contrainte compile sur `preferencesId` ; le module n’est **pas** une dépendance de `:app` dans ce fork. Un usage Apex + AIMI exigera une **migration complète** des prefs (Compose / clés) et de l’interface `Pump`, pas seulement de réintroduire l’ancienne ligne supprimée du core. |
+
 ---
 
 ## Fin livraison « refactor v1 » (périmètre produit)

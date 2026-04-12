@@ -382,7 +382,7 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
             (binding.mainPager.adapter as? TabPageAdapter)?.let { tabPageAdapter ->
                 val plugin = tabPageAdapter.getPluginAt(binding.mainPager.currentItem)
                 pluginPrefsItem?.title = rh.gs(R.string.nav_preferences_plugin, plugin.name)
-                pluginPrefsItem?.isEnabled = plugin.preferencesId != PluginDescription.PREFERENCE_NONE
+                pluginPrefsItem?.isEnabled = plugin.hasPreferences()
             }
         }
         if (pluginPrefsItem?.isEnabled == false) {
