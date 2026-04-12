@@ -41,11 +41,7 @@ class ClaudeVisionProvider : AIVisionProvider {
         connection.connectTimeout = 30000
         connection.readTimeout = 45000
         
-        val userPrompt = if (userDescription.isNotBlank()) {
-            "User description: \"$userDescription\". Analyze this meal image and return JSON only according to the required schema."
-        } else {
-            "Analyze this meal image and return JSON only according to the required schema."
-        }
+        val userPrompt = MealVisionUserPrompt.buildAnalysisUserPrompt(userDescription)
 
         val jsonBody = JSONObject().apply {
             put("model", "claude-3-5-sonnet-20240620")
@@ -89,8 +85,6 @@ class ClaudeVisionProvider : AIVisionProvider {
         val content = root.getJSONArray("content")
             .getJSONObject(0)
             .getString("text")
-        
-        val cleaned = FoodAnalysisPrompt.cleanJsonResponse(content)
-        return FoodAnalysisPrompt.parseJsonToResult(cleaned)
+        return MealVisionJsonParser.parseModelContentToEstimation(content)
     }
 }

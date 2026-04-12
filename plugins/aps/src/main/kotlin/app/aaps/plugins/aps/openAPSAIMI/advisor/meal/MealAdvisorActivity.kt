@@ -338,10 +338,16 @@ class MealAdvisorActivity : TranslatedDaggerAppCompatActivity() {
             setColor(color); cornerRadius = 12f
         }
 
-        // Risks
+        // Risks — show whenever manual review is advised or hidden carbs are high
         if (result.hiddenCarbRisk == "HIGH" || result.needsManualConfirmation) {
             riskWarningText.visibility = android.view.View.VISIBLE
-            riskWarningText.text = "⚠️ HIGH RISK: ${result.insulinRelevantNotes.joinToString(", ")}"
+            val notes = result.insulinRelevantNotes.joinToString(", ").ifBlank { "Review estimate before confirming." }
+            val prefix = when {
+                result.hiddenCarbRisk == "HIGH" && result.needsManualConfirmation -> "⚠️ HIGH RISK & MANUAL CHECK"
+                result.hiddenCarbRisk == "HIGH" -> "⚠️ HIGH HIDDEN CARB RISK"
+                else -> "⚠️ MANUAL CONFIRMATION ADVISED"
+            }
+            riskWarningText.text = "$prefix: $notes"
         } else {
             riskWarningText.visibility = android.view.View.GONE
         }
