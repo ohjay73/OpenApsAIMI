@@ -2,6 +2,7 @@ package app.aaps.plugins.aps.openAPSAIMI.advisor.auditor
 
 import app.aaps.core.interfaces.aps.GlucoseStatusAIMI
 import app.aaps.core.interfaces.aps.IobTotal
+import app.aaps.plugins.aps.openAPSAIMI.model.DecisionResult
 
 /**
  * Helper functions for Dual-Brain Auditor
@@ -79,7 +80,7 @@ object DualBrainHelpers {
                 appliedExternal = false,
                 reason = "Sentinel: ${sentinel.reason}",
                 sentinelScore = sentinel.score,
-                sentinelTier = sentinel.tier.name,
+                sentinelTier = sentinel.tier.javaClass.simpleName,
                 externalConfidence = null,
                 externalRecommendation = null
             )
@@ -103,9 +104,9 @@ object DualBrainHelpers {
             appliedExternal = true,
             reason = "Sentinel(${sentinel.reason}) + External(${external.verdict})",
             sentinelScore = sentinel.score,
-            sentinelTier = sentinel.tier.name,
+            sentinelTier = sentinel.tier.javaClass.simpleName,
             externalConfidence = external.confidence,
-            externalRecommendation = external.verdict.name
+            externalRecommendation = external.verdict.javaClass.simpleName
         )
     }
 }
@@ -126,22 +127,25 @@ data class CombinedAdvice(
     val externalRecommendation: String? // For logging (null if not applied)
 ) {
     /**
-     * Convert to ModulatedDecision for backward compatibility
+     * Convert to DecisionResult
      */
-    fun toModulatedDecision(
+    fun toDecisionResult(
         originalSmb: Double,
         originalTbrRate: Double?,
         originalTbrMin: Int?,
         originalIntervalMin: Double
-    ): DecisionModulator.ModulatedDecision {
-        return DecisionModulator.ModulatedDecision(
-            smbU = originalSmb * smbFactor,
-            tbrRate = originalTbrRate,
+    ): DecisionResult {
+        val finalSmb = originalSmb * smbFactor
+        val finalInterval = originalIntervalMin + extraIntervalMin
+        
+        return DecisionResult.Applied(
+            source = "AuditorOrchestrator:DualBrain",
+            bolusU = finalSmb,
+            tbrUph = originalTbrRate,
             tbrMin = originalTbrMin,
-            intervalMin = originalIntervalMin + extraIntervalMin,
-            preferTbr = preferBasal,
-            appliedModulation = smbFactor < 1.0 || extraIntervalMin > 0 || preferBasal,
-            modulationReason = reason
+            reason = reason,
+            originalBasalRate = originalTbrRate,
+            originalBasalDuration = originalTbrMin
         )
     }
     

@@ -442,25 +442,10 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             if (modernCard != null) {
                 modernCard.findViewById<View>(R.id.aimi_context_indicator)?.visibility = hasContext.toVisibility()
             }
-            
-            // 🔄 EXPERT FIX: Switch Dashboard based on AIMI status
-            val aimiEnabled = try {
-                 androidx.preference.PreferenceManager.getDefaultSharedPreferences(requireContext())
-                    .getBoolean("AimiPhysioAssistantEnable", false)
-            } catch (e: Exception) { false }
 
-            val infoCard = _binding?.root?.findViewById<View>(R.id.infoCard)
+            // Ne pas lier infoCard vs modernCircleCard au switch Physio : ce sont deux mises en page distinctes.
+            // Les visibilités par défaut viennent du layout (overview_fragment.xml : info visible, modern gone).
 
-            if (aimiEnabled) {
-                // Show AIMI Dashboard, Hide Standard
-                if (modernCard?.visibility != View.VISIBLE) modernCard?.visibility = View.VISIBLE
-                if (infoCard?.visibility != View.GONE) infoCard?.visibility = View.GONE
-            } else {
-                // Show Standard Dashboard, Hide AIMI
-                if (modernCard?.visibility != View.GONE) modernCard?.visibility = View.GONE
-                if (infoCard?.visibility != View.VISIBLE) infoCard?.visibility = View.VISIBLE
-            }
-            
         } catch (e: Exception) {
             aapsLogger.error(LTag.CORE, "Failed to update context indicator/dashboard: ${e.message}")
         }

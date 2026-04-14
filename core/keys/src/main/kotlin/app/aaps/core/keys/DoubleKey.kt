@@ -65,26 +65,32 @@ enum class DoubleKey(
     OApsAIMIHighBGMaxSMB("key_openapsaimi_high_bg_max_smb", 1.0, 0.05, 15.0),
 
     OApsAIMIweight("key_aimiweight", 50.0, 1.0, 200.0),
+    /** MPC: max insulin (U) per kg body weight per 5-minute dose search; combined with Max SMB / High BG SMB caps. */
+    OApsAIMIMpcInsulinUPerKgPerStep("aimi_mpc_insulin_u_per_kg_per_5min", 0.065, 0.03, 0.12),
     OApsAIMICHO("key_cho", 50.0, 1.0, 150.0),
     OApsAIMITDD7("key_tdd7", 40.0, 1.0, 150.0),
 
-    OApsAIMIPkpdInitialDiaH("aimi_pkpd_initial_dia_h", 6.0, 4.0, 24.0),
-    OApsAIMIPkpdInitialPeakMin("aimi_pkpd_initial_peak_min", 40.0, 40.0, 300.0),
-    OApsAIMIPkpdBoundsDiaMinH("aimi_pkpd_bounds_dia_min_h", 6.0, 4.0, 24.0),
-    OApsAIMIPkpdBoundsDiaMaxH("aimi_pkpd_bounds_dia_max_h", 12.0, 6.0, 36.0),
+    OApsAIMIPkpdInitialDiaH("aimi_pkpd_initial_dia_h", 20.0, 6.0, 24.0),
+    OApsAIMIPkpdInitialPeakMin("aimi_pkpd_initial_peak_min", 40.0, 35.0, 300.0),
+    OApsAIMIPkpdBoundsDiaMinH("aimi_pkpd_bounds_dia_min_h", 4.0, 4.0, 24.0),
+    OApsAIMIPkpdBoundsDiaMaxH("aimi_pkpd_bounds_dia_max_h", 24.0, 6.0, 36.0),
     OApsAIMIPkpdBoundsPeakMinMin("aimi_pkpd_bounds_peak_min_min", 30.0, 20.0, 240.0),
-    OApsAIMIPkpdBoundsPeakMinMax("aimi_pkpd_bounds_peak_min_max", 120.0, 60.0, 480.0),
-    OApsAIMIPkpdMaxDiaChangePerDayH("aimi_pkpd_max_dia_change_per_day_h", 1.0, 0.1, 6.0),
-    OApsAIMIPkpdMaxPeakChangePerDayMin("aimi_pkpd_max_peak_change_per_day_min", 10.0, 1.0, 60.0),
+    OApsAIMIPkpdBoundsPeakMinMax("aimi_pkpd_bounds_peak_min_max", 240.0, 60.0, 480.0),
+    OApsAIMIPkpdMaxDiaChangePerDayH("aimi_pkpd_max_dia_change_per_day_h", 3.0, 0.1, 6.0),
+    OApsAIMIPkpdMaxPeakChangePerDayMin("aimi_pkpd_max_peak_change_per_day_min", 20.0, 1.0, 60.0),
     OApsAIMIPkpdStateDiaH("aimi_pkpd_state_dia_h", 20.0, 6.0, 24.0),
     OApsAIMIPkpdStatePeakMin("aimi_pkpd_state_peak_min", 180.0, 40.0, 300.0),
-    OApsAIMIIsfFusionMinFactor("aimi_isf_fusion_min_factor", 0.7, 0.3, 1.0),
+    OApsAIMIIsfFusionMinFactor("aimi_isf_fusion_min_factor", 0.75, 0.3, 1.0),
     OApsAIMIIsfFusionMaxFactor("aimi_isf_fusion_max_factor", 2.0, 1.0, 2.0),
-    OApsAIMIIsfFusionMaxChangePerTick("aimi_isf_fusion_max_change_per_tick", 0.5, 0.0, 0.5),
-    OApsAIMISmbTailThreshold("aimi_smb_tail_threshold", 0.35, 0.0, 1.0),
-    OApsAIMISmbTailDamping("aimi_smb_tail_damping", 0.6, 0.0, 1.0),
-    OApsAIMISmbExerciseDamping("aimi_smb_exercise_damping", 0.5, 0.0, 1.0),
-    OApsAIMISmbLateFatDamping("aimi_smb_late_fat_damping", 0.5, 0.0, 1.0),
+    OApsAIMIIsfFusionMaxChangePerTick("aimi_isf_fusion_max_change_per_tick", 0.4, 0.0, 0.5),
+    OApsAIMISmbTailThreshold("aimi_smb_tail_threshold", 0.25, 0.0, 1.0),
+    OApsAIMISmbTailDamping("aimi_smb_tail_damping", 0.5, 0.0, 1.0),
+    OApsAIMISmbExerciseDamping("aimi_smb_exercise_damping", 0.6, 0.0, 1.0),
+    OApsAIMISmbLateFatDamping("aimi_smb_late_fat_damping", 0.7, 0.0, 1.0),
+    OApsAIMIPkpdPragmaticReliefMinFactor("aimi_pkpd_pragmatic_relief_min_factor", 0.75, 0.50, 1.0),
+    OApsAIMIRedCarpetRestoreThreshold("aimi_red_carpet_restore_threshold", 0.75, 0.50, 0.95),
+    OApsAIMIPriorityMaxIobFactor("aimi_priority_max_iob_factor", 1.20, 1.0, 1.6),
+    OApsAIMIPriorityMaxIobExtraU("aimi_priority_max_iob_extra_u", 2.0, 0.0, 5.0),
     // ❌ TIME-BASED REACTIVITY REMOVED - replaced by UnifiedReactivityLearner.globalFactor
     // Previously: OApsAIMIMorningFactor, OApsAIMIAfternoonFactor, OApsAIMIEveningFactor
     
@@ -158,4 +164,8 @@ enum class DoubleKey(
     AimiCosineGateMinSensitivity("aimi_cosine_gate_min_sens", 0.7, 0.5, 1.0),
     AimiCosineGateMaxSensitivity("aimi_cosine_gate_max_sens", 1.3, 1.0, 2.0),
 
+    // --- T3C Enhancements ---
+    OApsAIMIT3cActivationThreshold("key_aimi_t3c_activation_threshold", 130.0, 100.0, 250.0),
+    OApsAIMIT3cAggressiveness("key_aimi_t3c_aggressiveness", 1.0, 0.5, 3.0),
+    OApsAIMIAdaptiveBasalMaxScaling("key_aimi_adaptive_basal_max_scaling", 1.0, 0.5, 2.0),
 }

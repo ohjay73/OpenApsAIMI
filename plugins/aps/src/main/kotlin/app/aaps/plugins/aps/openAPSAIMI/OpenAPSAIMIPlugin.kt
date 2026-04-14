@@ -47,6 +47,7 @@ import app.aaps.core.interfaces.profiling.Profiler
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventAPSCalculationFinished
+import app.aaps.core.interfaces.rx.events.EventPreferenceChange
 import app.aaps.core.interfaces.stats.TddCalculator
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.DateUtil
@@ -88,6 +89,7 @@ import dagger.android.HasAndroidInjector
 import org.json.JSONObject
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
+import io.reactivex.rxjava3.disposables.Disposable
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
@@ -101,6 +103,7 @@ import androidx.core.util.size
 import androidx.core.net.toUri
 import kotlin.math.abs
 import kotlin.math.exp
+import app.aaps.plugins.aps.openAPSAIMI.utils.AimiBackupManager
 
 @Singleton
 open class OpenAPSAIMIPlugin  @Inject constructor(
@@ -134,7 +137,8 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
     // 🏥 Physiological Decision Adapter (The Safety Gate)
     private val physioAdapter: app.aaps.plugins.aps.openAPSAIMI.physio.AIMIInsulinDecisionAdapterMTR,
     private val auditorOrchestrator: app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.AuditorOrchestrator, // 🧠 AI Auditor MTR
-    private val contextManager: app.aaps.plugins.aps.openAPSAIMI.context.ContextManager // 🎯 Context Manager
+    private val contextManager: app.aaps.plugins.aps.openAPSAIMI.context.ContextManager, // 🎯 Context Manager
+    private val aimiBackupManager: AimiBackupManager // ☁️ Cloud Backup Manager (Force Init)
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -170,6 +174,44 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "❌ Failed to start AIMI Physiological Manager", e)
         }
+
+        physioPreferenceDisposable?.dispose()
+        physioPreferenceDisposable = rxBus.toObservable(EventPreferenceChange::class.java).subscribe(
+            { event ->
+                if (!event.isChanged(BooleanKey.AimiPhysioAssistantEnable.key)) return@subscribe
+                try {
+                    if (preferences.get(BooleanKey.AimiPhysioAssistantEnable)) {
+                        physioManager.start()
+                    } else {
+                        physioManager.stop()
+                    }
+                } catch (e: Exception) {
+                    aapsLogger.error(LTag.APS, "Physio preference toggle handling failed", e)
+                }
+            },
+            { t -> aapsLogger.error(LTag.APS, "Physio preference Rx error", t) }
+        )
+        
+        // 🧠 Start AIMI Neural Trainer
+        try {
+            val constraints = androidx.work.Constraints.Builder()
+                .setRequiresCharging(true)
+                .setRequiresDeviceIdle(true)
+                .build()
+                
+            val workRequest = androidx.work.PeriodicWorkRequestBuilder<app.aaps.plugins.aps.openAPSAIMI.autodrive.learning.AutodriveNeuralTrainerWorker>(
+                6, java.util.concurrent.TimeUnit.HOURS
+            ).setConstraints(constraints).build()
+
+            androidx.work.WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                "AIMINeuralTrainer",
+                androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+                workRequest
+            )
+            aapsLogger.info(LTag.APS, "✅ AIMI Neural Trainer scheduled successfully")
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "❌ Failed to schedule AIMI Neural Trainer", e)
+        }
         
         AimiUamHandler.clearCache(context)
         AimiUamHandler.installConfidenceSupplier {
@@ -187,11 +229,23 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
             count++
         }
         aapsLogger.debug(LTag.APS, "Loaded $count variable sensitivity values from database")
+
+        // 🧠 Pre-load ML model into memory for O(1) SMB inference on hot path
+        try {
+            val externalDir = java.io.File(android.os.Environment.getExternalStorageDirectory().absolutePath + "/Documents/AAPS")
+            app.aaps.plugins.aps.openAPSAIMI.ml.AimiSmbTrainer.loadModel(externalDir)
+            aapsLogger.info(LTag.APS, "✅ AimiSmbTrainer: model load requested (async)")
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "❌ AimiSmbTrainer: failed to request model load", e)
+        }
     }
     override fun getGlucoseStatusData(allowOldData: Boolean): GlucoseStatus? =
         glucoseStatusCalculatorAimi.getGlucoseStatusData(allowOldData)
     override fun onStop() {
         super.onStop()
+
+        physioPreferenceDisposable?.dispose()
+        physioPreferenceDisposable = null
         
         // 🏃 Stop AIMI Steps Manager
         try {
@@ -209,6 +263,13 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
             aapsLogger.error(LTag.APS, "Error stopping AIMI Physiological Manager", e)
         }
 
+        try {
+            androidx.work.WorkManager.getInstance(context).cancelUniqueWork("AIMINeuralTrainer")
+            aapsLogger.info(LTag.APS, "🛑 AIMI Neural Trainer stopped")
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "Error stopping AIMI Neural Trainer", e)
+        }
+
         AimiUamHandler.close(context)
     }
     // last values
@@ -224,6 +285,9 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
     private val isfBlender = IsfBlender()
     // top-level (à côté de isfBlender / pkpdIntegration)
     private val isfAdjEngine = IsfAdjustmentEngine()
+
+    /** Réagit au switch Physio sans redémarrer l’app (planifie / annule WorkManager). */
+    private var physioPreferenceDisposable: Disposable? = null
 
     // état EMA persistant (clé Prefs à créer si tu veux le garder entre runs)
     private var tddEma: Double? = null
@@ -310,6 +374,9 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         preferenceFragment.findPreference<SwitchPreference>(BooleanKey.ApsResistanceLowersTarget.key)?.isVisible = autoSensOrDynIsfSensEnabled
         preferenceFragment.findPreference<SwitchPreference>(BooleanKey.ApsSensitivityRaisesTarget.key)?.isVisible = autoSensOrDynIsfSensEnabled
         preferenceFragment.findPreference<AdaptiveIntPreference>(IntKey.ApsUamMaxMinutesOfBasalToLimitSmb.key)?.isVisible = smbEnabled && uamEnabled
+        
+        // 🧠 Autodrive System
+        preferenceFragment.findPreference<SwitchPreference>(BooleanKey.OApsAIMIautoDrive.key)?.isVisible = true
     }
 
     private val dynIsfCache = LongSparseArray<Double>()
@@ -457,15 +524,15 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         // 🏥 PHYSIO MODULATION (ISF)
         // We fetching multipliers for the specific timestamp is tricky, so we use current context
         // This affects the "Displayed ISF" in AAPS.
-
+        
         // Calculate IOB/COB for Cosine Gate
         val profile = profileFunction.getProfile()
         if (profile != null) {
             val iobCalc = iobCobCalculator.calculateFromTreatmentsAndTemps(timestamp, profile)
             val mealData = iobCobCalculator.getMealDataWithWaitingForCalculationFinish()
-
+            
             val physioMults = physioAdapter.getMultipliers(
-                currentBG = glucose,
+                currentBG = glucose, 
                 currentDelta = currentDelta ?: 0.0,
                 iob = iobCalc.iob,
                 cob = mealData.carbs
@@ -535,19 +602,19 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         // 🏥 PHYSIO INTEGRATION: Retrieve Context & Multipliers
         val glucoseForPhysio = glucoseStatusProvider.glucoseStatusData?.glucose ?: 100.0
         val deltaForPhysio = glucoseStatusProvider.glucoseStatusData?.delta ?: 0.0
-
+        
         // Calculate IOB/COB early for Physio Adapter
         val nowMs = dateUtil.now()
         val iobCalc = iobCobCalculator.calculateFromTreatmentsAndTemps(nowMs, profile) // Uses 'profile' from enabled check above
         val mealDataForPhysio = iobCobCalculator.getMealDataWithWaitingForCalculationFinish()
-
+        
         val physioMults = physioAdapter.getMultipliers(
-            currentBG = glucoseForPhysio,
+            currentBG = glucoseForPhysio, 
             currentDelta = deltaForPhysio,
             iob = iobCalc.iob,
             cob = mealDataForPhysio.carbs
         )
-
+        
         if (!physioMults.isNeutral()) {
             aapsLogger.info(LTag.APS, "🏥 LOOP: Applying Physio Factors: ISF x${physioMults.isfFactor}, Basal x${physioMults.basalFactor}, SMB x${physioMults.smbFactor}")
         }
@@ -626,12 +693,13 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
             val tdd = (tddWeightedFromLast8H * 0.20) + (tdd2Days * 0.50) + (tddDaily * 0.30)
 
             // On récupère la glycémie et le delta actuel
-            val currentBG = glucoseStatusProvider.glucoseStatusData?.glucose
+            val gsData = glucoseStatusProvider.glucoseStatusData
+            val currentBG = gsData?.glucose
             if (currentBG == null) {
                 aapsLogger.error(LTag.APS, "Données de glycémie indisponibles, impossibilité de calculer l'ISF adaptatif.")
                 return
             }
-            val currentDelta = glucoseStatusProvider.glucoseStatusData?.delta
+            val currentDelta = gsData?.delta
             val recentDeltas = getRecentDeltas()
             val predictedDelta = predictedDelta(recentDeltas)
 
@@ -655,48 +723,58 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
             
             aapsLogger.debug(LTag.APS, "Final adaptive ISF after clamping: $variableSensitivity")
 
-// 🔹 Création du résultat final
+// 🔹 Création du résultat final (Convention: Ratio < 1 = Résistant)
             autosensResult = AutosensResult(
-                ratio = tdd24Hrs / tdd2Days,
-                ratioFromTdd = tdd24Hrs / tdd2Days,
-                ratioFromCarbs = 1.0 // Peut être ajusté si nécessaire
+                ratio = tdd2Days / tdd24Hrs,
+                ratioFromTdd = tdd2Days / tdd24Hrs,
+                ratioFromCarbs = 1.0 
             )
 
             // 🧠 AIMI BRAIN INTEGRATION (UnifiedReactivityLearner)
             // "The Cognitive Bridge": Adjusts BOTH Sensitivity (ISF) and Resistance (Autosens Ratio)
             try {
-                unifiedReactivityLearner.processIfNeeded()
+                // 🚀 TRIPLE-SIGNAL CONFIRMATION for Confirmed Rise
+                val gsAimi = gsData as? GlucoseStatusAIMI
+                val accel = gsAimi?.bgAcceleration ?: 0.0
+                val combDelta = ((gsData?.delta ?: 0.0) + predictedDelta) / 2.0
+                val isConfirmedHighRise = (gsData?.glucose ?: 0.0) > 150.0 && combDelta > 1.5 && accel > 0.4
+
+                unifiedReactivityLearner.processIfNeeded(isConfirmedHighRise)
                 var brainFactor = unifiedReactivityLearner.getCombinedFactor()
                 
                 // 🚨 SAFETY OVERRIDE (FCL 10.3) - Refined for "Blind Spot" Removal:
                 // If we are in Hyper (>150) AND Rising/Stable, we MUST NOT be protective (<1.0).
-                // FIX: "Rising" defined strictly as Delta > -0.5 (Stable or Up). 
-                // Previously > -2.0 allowed drops, which was risky to un-protect.
-                val isHyper = glucoseStatus.glucose > 150
-                val isRising = glucoseStatus.delta > -0.5
+                // ANTI-LAG: Lower threshold to 110 if rising fast (delta > 3.0)
+                val isFastRise = (gsData?.delta ?: 0.0) > 3.0
+                val overrideThreshold = if (isFastRise) 110.0 else 150.0
+                val isHyper = (gsData?.glucose ?: 0.0) > overrideThreshold
+                val isRising = (gsData?.delta ?: 0.0) > -0.5
                 
                 if (isHyper && isRising && brainFactor < 1.0) {
-                    aapsLogger.debug(LTag.APS, "🧠 Brain Override: IGNORING protective factor ${"%.2f".format(brainFactor)} because BG ${glucoseStatus.glucose} is high & stable/rising.")
+                    aapsLogger.debug(LTag.APS, "🧠 Brain Override: IGNORING protective factor ${"%.2f".format(brainFactor)} because BG ${gsData?.glucose ?: 0.0} is > $overrideThreshold & stable/rising.")
                     brainFactor = 1.0
+                }
+
+                // 🚀 EXPLOSIVE RISE BOOST: If delta is very high, force a slight aggressive factor
+                if (glucoseStatus.delta > 6.0 && brainFactor < 1.1) {
+                    aapsLogger.debug(LTag.APS, "🚀 Brain Boost: Forcing factor 1.1 due to explosive rise (delta=${glucoseStatus.delta})")
+                    brainFactor = 1.1
                 }
 
                 if (brainFactor != 1.0) {
                     val originalRatio = autosensResult.ratio
                     val originalISF = variableSensitivity
                     
-                    // 1. Modulate Autosens Ratio (Basal/Targets)
-                    // Factor > 1 (Aggressive) -> Ratio Increases (Higher Basal)
-                    // Factor < 1 (Protective) -> Ratio Decreases (Lower Basal)
-                    autosensResult.ratio = originalRatio * brainFactor
+                    // 1. Modulate Autosens Ratio (Basal/Targets/ISF)
+                    // High Brain Factor (Aggressive) -> Ratio decreases (e.g. 0.8 / 1.5 = 0.53) -> More Resistant
+                    autosensResult.ratio = originalRatio / brainFactor
                     
-                    // 2. Modulate Dynamic ISF (SMB)
-                    // Factor > 1 (Aggressive) -> ISF Decreases (Larger Bolus) -> ISF / Factor
-                    // Factor < 1 (Protective) -> ISF Increases (Smaller Bolus) -> ISF / Factor
-                    variableSensitivity /= brainFactor
+                    // 🚨 IMPORTANT: variableSensitivity (Dynamic ISF) is NO LONGER modulated here.
+                    // It will be modulated by autosensResult.ratio in DetermineBasalAIMI2.kt 
+                    // to ensure a single, consistent point of application for the "Resistance" multiplier.
                     
                     aapsLogger.debug(LTag.APS, "🧠 AIMI Brain Override: " +
-                        "Autosens ${"%.2f".format(originalRatio)}->${"%.2f".format(autosensResult.ratio)} | " +
-                        "ISF ${"%.0f".format(originalISF)}->${"%.0f".format(variableSensitivity)} " +
+                        "Autosens ${"%.2f".format(originalRatio)}->${"%.2f".format(autosensResult.ratio)} " +
                         "(Factor ${"%.2f".format(brainFactor)})")
                 }
             } catch (e: Exception) {
@@ -711,12 +789,12 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                 currentActivity += iob.activity
             }
             var futureActivity = 0.0
-
+            
             // 🌀 Cosine Gate: Apply Peak Shift
             val activityPredTimePK = insulin.peak + physioMults.peakShiftMinutes
             // Ensure peak time remains reasonable (min 35m)
             val safepk = activityPredTimePK.coerceAtLeast(35)
-
+            
             for (i in -4..0) { //MP: calculate 5-minute-insulin activity centering around peakTime
                 val iob = iobCobCalculator.calculateFromTreatmentsAndTemps(System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(safepk.toLong() - i), profile)
                 futureActivity += iob.activity
@@ -796,7 +874,9 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                 windowMin = 240,             // fenêtre standard (4h) – ajuste si besoin
                 exerciseFlag = false,        // remplace par ton flag 'sportTime' si dispo ICI
                 profileIsf = profileIsfRaw,  // ← **PROFIL BRUT, PAS getIsfMgdl()**
-                tdd24h = tdd24ForPk
+                tdd24h = tdd24ForPk,
+                combinedDelta = deltaNow,    // Fallback simple car combinedDelta non dispo ici
+                uamConfidence = AimiUamHandler.confidenceOrZero()
             )
 
             lastPkpdScale = pkpdRuntimeNow?.pkpdScale ?: 1.0
@@ -980,13 +1060,13 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
 
         val hour = Calendar.getInstance()[Calendar.HOUR_OF_DAY]
         val night = hour <= 7
-        val isAutodriveEnabled = preferences.get(BooleanKey.OApsAIMIautoDrive)
+        val isAutodriveEnabled = preferences.get(BooleanKey.OApsAIMIautoDrive) || preferences.get(BooleanKey.OApsAIMIautoDriveActive)
         val smb = glucoseStatusCalculatorAimi.getGlucoseStatusData(false) ?: return absoluteRate
 
         val isEarlyAutodrive = !night && !isMealMode && !isSportMode && isAutodriveEnabled &&
             determineBasalaimiSMB2.isAutodriveEngaged()
 
-        val isSpecialMode = isMealMode || isEarlyAutodrive
+        val isSpecialMode = isMealMode || isEarlyAutodrive || preferences.get(BooleanKey.OApsAIMIT3cBrittleMode)
 
         // ────────────────────────────────────────────────────
         // 2️⃣ On choisit la bonne pref en fonction du mode
@@ -1328,7 +1408,8 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                     )
                 })
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.OApsAIMIMLtraining, title = R.string.oaps_aimi_enableMlTraining_title))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIMaxSMB, dialogMessage = R.string.openapsaimi_maxsmb_summary, title = R.string.openapsaimi_maxsmb_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIMaxSMB, dialogMessage = R.string.openapsaimi_maxsmb_summary, title = R.string.openapsaimi_maxsmb_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIHighBGMaxSMB, dialogMessage = R.string.openapsaimi_highBG_maxsmb_summary, title = R.string.openapsaimi_highBG_maxsmb_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIweight, dialogMessage = R.string.oaps_aimi_weight_summary, title = R.string.oaps_aimi_weight_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMICHO, dialogMessage = R.string.oaps_aimi_cho_summary, title = R.string.oaps_aimi_cho_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMITDD7, dialogMessage = R.string.oaps_aimi_tdd7_summary, title = R.string.oaps_aimi_tdd7_title))
@@ -1408,14 +1489,6 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                         )
                     )
                     addPreference(
-                        AdaptiveSwitchPreference(
-                            ctx = context,
-                            booleanKey = BooleanKey.OApsAIMIT3cBrittleMode,
-                            title = R.string.aimi_t3c_brittle_mode_title,
-                            summary = R.string.aimi_t3c_brittle_mode_summary
-                        )
-                    )
-                    addPreference(
                         AdaptiveDoublePreference(
                             ctx = context,
                             doubleKey = DoubleKey.OApsAIMIIsfFusionMinFactor,
@@ -1456,6 +1529,46 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                         )
                     )
                     addPreference(
+                        AdaptiveSwitchPreference(
+                            ctx = context,
+                            booleanKey = BooleanKey.OApsAIMIPkpdPragmaticReliefEnabled,
+                            summary = R.string.oaps_aimi_pkpd_relief_enabled_summary,
+                            title = R.string.oaps_aimi_pkpd_relief_enabled_title
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIPkpdPragmaticReliefMinFactor,
+                            dialogMessage = R.string.oaps_aimi_pkpd_relief_factor_summary,
+                            title = R.string.oaps_aimi_pkpd_relief_factor_title
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIRedCarpetRestoreThreshold,
+                            dialogMessage = R.string.oaps_aimi_redcarpet_restore_summary,
+                            title = R.string.oaps_aimi_redcarpet_restore_title
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIPriorityMaxIobFactor,
+                            dialogMessage = R.string.oaps_aimi_priority_max_iob_factor_summary,
+                            title = R.string.oaps_aimi_priority_max_iob_factor_title
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIPriorityMaxIobExtraU,
+                            dialogMessage = R.string.oaps_aimi_priority_max_iob_extra_summary,
+                            title = R.string.oaps_aimi_priority_max_iob_extra_title
+                        )
+                    )
+                    addPreference(
                         AdaptiveDoublePreference(
                             ctx = context,
                             doubleKey = DoubleKey.OApsAIMISmbExerciseDamping,
@@ -1472,7 +1585,65 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                         )
                     )
                 })
-                
+
+                // 🛡️ Universal Adaptive Basal Section
+                addPreference(preferenceManager.createPreferenceScreen(context).apply {
+                    key = "AIMI_ADAPTIVE_BASAL"
+                    title = rh.gs(R.string.oaps_aimi_adaptive_basal_title)
+                    addPreference(PreferenceCategory(context).apply {
+                        title = rh.gs(R.string.oaps_aimi_adaptive_basal_title)
+                    })
+                    addPreference(
+                        AdaptiveSwitchPreference(
+                            ctx = context,
+                            booleanKey = BooleanKey.OApsAIMIT3cAdaptiveBasalEnabled,
+                            title = R.string.oaps_aimi_adaptive_basal_title,
+                            summary = R.string.oaps_aimi_adaptive_basal_summary
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIAdaptiveBasalMaxScaling,
+                            dialogMessage = R.string.oaps_aimi_adaptive_basal_max_scaling_summary,
+                            title = R.string.oaps_aimi_adaptive_basal_max_scaling_title
+                        )
+                    )
+                })
+
+                // 🏥 T3c / Brittle Diabetes Section
+                addPreference(preferenceManager.createPreferenceScreen(context).apply {
+                    key = "AIMI_T3C"
+                    title = rh.gs(R.string.aimi_t3c_settings_title)
+                    addPreference(PreferenceCategory(context).apply {
+                        title = rh.gs(R.string.aimi_t3c_brittle_mode_title)
+                    })
+                    addPreference(
+                        AdaptiveSwitchPreference(
+                            ctx = context,
+                            booleanKey = BooleanKey.OApsAIMIT3cBrittleMode,
+                            title = R.string.aimi_t3c_brittle_mode_title,
+                            summary = R.string.aimi_t3c_brittle_mode_summary
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIT3cActivationThreshold,
+                            title = R.string.aimi_t3c_activation_threshold_title,
+                            dialogMessage = R.string.aimi_t3c_activation_threshold_summary
+                        )
+                    )
+                    addPreference(
+                        AdaptiveDoublePreference(
+                            ctx = context,
+                            doubleKey = DoubleKey.OApsAIMIT3cAggressiveness,
+                            title = R.string.aimi_t3c_aggressiveness_title,
+                            dialogMessage = R.string.aimi_t3c_aggressiveness_summary
+                        )
+                    )
+                })
+
                 // 🌀 Phase-Space Trajectory Control
                 addPreference(preferenceManager.createPreferenceScreen(context).apply {
                     key = "AIMI_Trajectory"
@@ -1944,18 +2115,6 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
             //     })
             //
             // })
-                addPreference(preferenceManager.createPreferenceScreen(context).apply {
-                key = "high_BG_settings"
-                //title = "High BG Preferences (BG > 120)"
-                title = rh.gs(R.string.high_BG_preferences)
-                addPreference(PreferenceCategory(context).apply {
-                       title = rh.gs(R.string.bg_over_120_preferences_title_menu)
-                })
-                // ❌ HYPER FACTOR REMOVED (replaced by UnifiedReactivityLearner)
-                // addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIHyperFactor...))
-                addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.OApsAIMIHighBGinterval, dialogMessage = R.string.oaps_aimi_HIGHBG_interval_summary, title = R.string.oaps_aimi_HIGHBG_interval_title))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIHighBGMaxSMB, dialogMessage = R.string.openapsaimi_highBG_maxsmb_summary, title = R.string.openapsaimi_highBG_maxsmb_title))
-            })
 
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key = "Training_ML_Modes"
@@ -2057,7 +2216,9 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                     title = rh.gs(R.string.autodrive_preferences_title_menu)
                 })
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.OApsAIMIautoDrive, title = R.string.oaps_aimi_enableMlautoDrive_title))
+                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.OApsAIMIautoDriveActive, title = R.string.oaps_aimi_enableMlautoDriveActive_title))
                 addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.autodriveMaxBasal, dialogMessage = R.string.autodrive_max_basal_summary, title = R.string.autodrive_max_basal_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIMpcInsulinUPerKgPerStep, dialogMessage = R.string.aimi_mpc_u_per_kg_summary, title = R.string.aimi_mpc_u_per_kg_title))
                 addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIautodrivesmallPrebolus, dialogMessage = R.string.prebolussmall_autodrive_mode_summary, title = R.string.prebolussmall_autodrive_mode_title))
                 addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.OApsAIMIautodrivePrebolus, dialogMessage = R.string.prebolus_autodrive_mode_summary, title = R.string.prebolus_autodrive_mode_title))
                 addPreference(preferenceManager.createPreferenceScreen(context).apply {

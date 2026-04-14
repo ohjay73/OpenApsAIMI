@@ -72,15 +72,65 @@ enum class ActionKind {
 }
 
 sealed class DecisionResult {
+    abstract val reason: String
+    /** Decision confirmed and applied to the pump. Includes rollback context. */
     data class Applied(
         val source: String,
         val bolusU: Double? = null,
         val tbrUph: Double? = null,
         val tbrMin: Int? = null,
-        val reason: String
+        override val reason: String,
+        val originalBasalRate: Double? = null,
+        val originalBasalDuration: Int? = null,
+        val timestampMs: Long = System.currentTimeMillis()
+    ) : DecisionResult() {
+        fun undo(undoReason: String = "Undo Applied Action"): Applied = copy(
+            tbrUph = originalBasalRate,
+            tbrMin = originalBasalDuration,
+            reason = "ROLLBACK ($source): $undoReason"
+        )
+    }
+
+    /** Decision rejected by the Auditor or safety shield. Triggers optional rollback. */
+    data class Rejected(
+        val source: String,
+        override val reason: String,
+        val severity: AdvisorSeverity,
+        val timestampMs: Long = System.currentTimeMillis()
     ) : DecisionResult()
 
-    data class Fallthrough(
-        val reason: String
+    /** Decision skipped as unnecessary or redundant (e.g., small correction below threshold). */
+    data class Skipped(
+        val source: String,
+        override val reason: String,
+        val timestampMs: Long = System.currentTimeMillis()
     ) : DecisionResult()
+
+    /** Legacy or internal signal to continue without AIMI intervention. */
+    data class Fallthrough(override val reason: String) : DecisionResult()
+}
+
+/**
+ * Global processor for exhaustive DecisionResult handling.
+ * Used at the end of the AI loop to translate internal verdicts into system actions.
+ */
+fun processDecision(result: DecisionResult) {
+    when (result) {
+        is DecisionResult.Applied -> {
+            // Logic for applying bolus and TBR (delegated to pump controller)
+            android.util.Log.i("AIMI_LOG", "✅ Decision APPLIED (${result.source}): ${result.reason}")
+        }
+        is DecisionResult.Rejected -> {
+            // Logic for rolling back or stopping active actions
+            android.util.Log.w("AIMI_LOG", "🛑 Decision REJECTED (${result.source}): ${result.reason}")
+        }
+        is DecisionResult.Skipped -> {
+            // Log skipping (no action needed)
+            android.util.Log.d("AIMI_LOG", "⏸ Decision SKIPPED (${result.source}): ${result.reason}")
+        }
+        is DecisionResult.Fallthrough -> {
+            // Continue as-is
+            android.util.Log.d("AIMI_LOG", "💨 Decision FALLTHROUGH: ${result.reason}")
+        }
+    }
 }

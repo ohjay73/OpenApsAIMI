@@ -15,6 +15,9 @@ import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.AapsSchedulers
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventTherapyEventChange
+import app.aaps.core.interfaces.rx.events.EventAdaptiveSmoothingQuality
+import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualitySnapshot
+import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualityTier
 import app.aaps.core.interfaces.smoothing.Smoothing
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.interfaces.Preferences
@@ -22,6 +25,7 @@ import app.aaps.core.interfaces.sharedPreferences.SP
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
 import java.util.ArrayDeque
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -71,6 +75,8 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     aapsLogger, rh
 ), Smoothing {
 
+    override fun lastAdaptiveSmoothingQualitySnapshot(): AdaptiveSmoothingQualitySnapshot? = lastQualitySnapshot
+
     // ============================================================
     // UKF CONFIGURATION & PARAMETERS
     // ============================================================
@@ -111,6 +117,14 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     private var lastProcessedTimestamp: Long = 0
     private var lastSensorChangeTimestamp: Long = 0
     private var sensorSessionId: Int = 0
+
+    // UI-facing informational quality (sent over RxBus, throttled to avoid spam)
+    private var lastAdaptiveSmoothingQualityTier: AdaptiveSmoothingQualityTier? = null
+    private var lastAdaptiveSmoothingQualityEventAt: Long = 0L
+
+    /** Read by dashboard on each status refresh; always updated synchronously in [smooth] / segment processing. */
+    @Volatile
+    private var lastQualitySnapshot: AdaptiveSmoothingQualitySnapshot? = null
 
     // Events
     private val resetRequested = AtomicBoolean(false)
@@ -161,7 +175,13 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     // ============================================================
 
     override fun smooth(data: MutableList<InMemoryGlucoseValue>): MutableList<InMemoryGlucoseValue> {
-        if (data.size < 2) return data // Need at least 2 points to start
+        if (data.size < 2) {
+            // Always provide a valid smoothed payload for downstream workers.
+            copyRawToSmoothed(data)
+            sanitizeOutput(data)
+            refreshSnapshotAfterShortOrRawPass()
+            return data
+        }
 
         try {
             // 1. Check for Reset Conditions (Sensor Change, Gaps, Time Travel)
@@ -182,14 +202,37 @@ class AdaptiveSmoothingPlugin @Inject constructor(
             if (newDataProcessed) {
                 savePersistedParameters()
             }
-        
+
+            sanitizeOutput(data)
             return data
 
         } catch (e: Exception) {
             aapsLogger.error(LTag.GLUCOSE, "HybridSmoothing: Error, falling back to raw", e)
             copyRawToSmoothed(data)
+            sanitizeOutput(data)
+            val now = System.currentTimeMillis()
+            lastQualitySnapshot = AdaptiveSmoothingQualitySnapshot(
+                tier = AdaptiveSmoothingQualityTier.BAD,
+                learnedR = learnedR,
+                outlierRate = 1.0,
+                compressionRate = 0.0,
+                updatedAtMillis = now
+            )
             return data
         }
+    }
+
+    /** When fewer than 2 points are smoothed, keep UI in sync using last tier / current learned R. */
+    private fun refreshSnapshotAfterShortOrRawPass() {
+        val now = System.currentTimeMillis()
+        val tier = lastAdaptiveSmoothingQualityTier ?: AdaptiveSmoothingQualityTier.OK
+        lastQualitySnapshot = AdaptiveSmoothingQualitySnapshot(
+            tier = tier,
+            learnedR = learnedR,
+            outlierRate = 0.0,
+            compressionRate = 0.0,
+            updatedAtMillis = now
+        )
     }
 
     private fun processHybridSegment(
@@ -205,6 +248,11 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         val x = doubleArrayOf(data[startIdx].value, 0.0) // Initial state [G, 0]
         val P = doubleArrayOf(16.0, 0.0, 0.0, 1.0)       // Initial Covariance
         var R = learnedR
+
+        // Quality counters for UI badge (informational only).
+        var processedPoints = 0
+        var compressionPoints = 0
+        var outlierPoints = 0
         
         // Prepare storage for RTS Smoother
         val forwardStates = ArrayList<FilterState>(data.size)
@@ -214,6 +262,8 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         for (i in startIdx downTo 0) {
             val z = data[i].value
             val timestamp = data[i].timestamp
+
+            processedPoints++
             
             // Calculate dt (Time since last step)
             // If i == startIdx (oldest), dt is 0 or estimated.
@@ -231,6 +281,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
             
             // Check for Blocking Artifacts (Compression Lows)
             val isCompression = isCompressionArtifactCandidate(ctx, data, i)
+            if (isCompression) compressionPoints++
             
             // Check for Hypo Safety Bypass
             val isHypoCritical = ctx.currentBg < 70.0
@@ -295,6 +346,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
                 
                 // Outlier Check (Statistical)
                 val isStatisticalOutlier = isOutlier(innovation, innovationVariance, P)
+                if (isStatisticalOutlier) outlierPoints++
                 
                 // Adapt R (Noise)
                 R = adaptMeasurementNoise(R, innovations, rawInnovationVariance)
@@ -357,6 +409,36 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         
         // Update learned R globally
         learnedR = R
+
+        // Send a lightweight, informational quality estimate to the dashboard.
+        // (Phase 1: no control logic changes, only UI.)
+        val compressionRate = if (processedPoints > 0) compressionPoints.toDouble() / processedPoints.toDouble() else 0.0
+        val outlierRate = if (processedPoints > 0) outlierPoints.toDouble() / processedPoints.toDouble() else 0.0
+
+        val tier = when {
+            compressionRate >= 0.15 || outlierRate >= 0.25 || learnedR >= 70.0 -> AdaptiveSmoothingQualityTier.BAD
+            learnedR >= 45.0 || outlierRate >= 0.10 || compressionRate >= 0.07 -> AdaptiveSmoothingQualityTier.UNCERTAIN
+            else -> AdaptiveSmoothingQualityTier.OK
+        }
+
+        val now = System.currentTimeMillis()
+        // Dashboard reads this synchronously — must update every pass (do not tie to Rx throttle).
+        lastQualitySnapshot = AdaptiveSmoothingQualitySnapshot(
+            tier = tier,
+            learnedR = learnedR,
+            outlierRate = outlierRate,
+            compressionRate = compressionRate,
+            updatedAtMillis = now
+        )
+
+        val shouldSend = lastAdaptiveSmoothingQualityTier != tier ||
+            (now - lastAdaptiveSmoothingQualityEventAt) >= QUALITY_EVENT_THROTTLE_MS
+
+        if (shouldSend) {
+            lastAdaptiveSmoothingQualityTier = tier
+            lastAdaptiveSmoothingQualityEventAt = now
+            rxBus.send(EventAdaptiveSmoothingQuality(tier, learnedR, outlierRate, compressionRate))
+        }
 
         // --- BACKWARD PASS (RTS SMOOTHER) ---
         // Retrospectively improves history. Important for loop learning.
@@ -618,6 +700,19 @@ class AdaptiveSmoothingPlugin @Inject constructor(
        }
     }
 
+    private fun sanitizeOutput(data: MutableList<InMemoryGlucoseValue>) {
+        data.forEach { gv ->
+            val smoothed = gv.smoothed
+            if (smoothed == null || !smoothed.isFinite()) {
+                gv.smoothed = gv.value.coerceIn(MIN_VALID_BG, MAX_VALID_BG)
+                if (gv.trendArrow == null) gv.trendArrow = TrendArrow.FLAT
+                return@forEach
+            }
+            gv.smoothed = smoothed.coerceIn(MIN_VALID_BG, MAX_VALID_BG)
+            if (gv.trendArrow == null) gv.trendArrow = TrendArrow.FLAT
+        }
+    }
+
     // ============================================================
     // PERSISTENCE & SENSOR MANAGEMENT
     // ============================================================
@@ -652,6 +747,8 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         innovations.clear()
         rawInnovationVariance.clear()
         sensorSessionId++
+        lastAdaptiveSmoothingQualityTier = null
+        lastQualitySnapshot = null
         aapsLogger.info(LTag.GLUCOSE, "HybridSmoothing: Learning Reset. R=$R_INIT")
         savePersistedParameters()
     }
@@ -659,23 +756,47 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     private fun subscribeToSensorChanges() {
         disposable += rxBus.toObservable(EventTherapyEventChange::class.java)
             .observeOn(aapsSchedulers.io)
-            .subscribe({ checkForSensorChange() }, {})
+            // Debounce because EventTherapyEventChange can be fired for many TE types.
+            .throttleFirst(SENSOR_CHANGE_DEBOUNCE_SECONDS, TimeUnit.SECONDS)
+            .subscribe(
+                { checkForSensorChange() },
+                { t ->
+                    aapsLogger.error(LTag.GLUCOSE, "AdaptiveSmoothing: sensor subscription error", t)
+                }
+            )
     }
 
     private fun loadLastSensorChange() {
+        // Ensure we don't stack multiple DB queries/subscriptions on frequent triggers.
+        sensorChangeDisposables.clear()
         sensorChangeDisposables += persistenceLayer.getTherapyEventDataFromTime(System.currentTimeMillis() - 30L*24*3600*1000, false)
             .observeOn(aapsSchedulers.io)
             .subscribe({ events ->
-                events.filter { it.type == TE.Type.SENSOR_CHANGE }.maxByOrNull { it.timestamp }?.let {
-                    lastSensorChangeTimestamp = it.timestamp
+                val latest = events
+                    .asSequence()
+                    .filter { it.type == TE.Type.SENSOR_CHANGE }
+                    .maxByOrNull { it.timestamp }
+
+                if (latest != null && latest.timestamp > lastSensorChangeTimestamp) {
+                    lastSensorChangeTimestamp = latest.timestamp
+                    resetRequested.set(true)
                 }
-            }, {})
+            }, { t ->
+                aapsLogger.error(LTag.GLUCOSE, "AdaptiveSmoothing: loadLastSensorChange error", t)
+            })
     }
     
     private fun checkForSensorChange() {
-        // Simple reliable check
         loadLastSensorChange()
-        // If changed, reset will trigger on next smooth call via timestamp check or forced flag
-        resetRequested.set(true)
+    }
+
+    private companion object {
+        // Keeps high performance while preventing DB-query storms from noisy TE change events.
+        const val SENSOR_CHANGE_DEBOUNCE_SECONDS: Long = 10L
+        const val MIN_VALID_BG: Double = 39.0
+        const val MAX_VALID_BG: Double = 500.0
+
+        // Throttle UI events to keep the dashboard responsive.
+        const val QUALITY_EVENT_THROTTLE_MS: Long = 30_000L
     }
 }

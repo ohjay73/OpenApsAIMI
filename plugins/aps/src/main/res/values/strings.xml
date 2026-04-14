@@ -324,6 +324,25 @@
     <string name="oaps_aimi_smb_tail_threshold_summary">Fraction of remaining IOB that triggers SMB damping.</string>
     <string name="oaps_aimi_smb_tail_damping_title">Tail damping factor</string>
     <string name="oaps_aimi_smb_tail_damping_summary">Multiplier applied to SMB when tail IOB is high.</string>
+    <string name="oaps_aimi_pkpd_relief_enabled_title">Enable PKPD pragmatic relief</string>
+    <string name="oaps_aimi_pkpd_relief_enabled_summary">ON by default. Keep ON if SMB intent is often over-reduced in explicit meal/high-rise contexts. Turn OFF only if you observe recurrent over-corrections despite hard caps.</string>
+    <string name="oaps_aimi_pkpd_relief_factor_title">PKPD relief minimum factor</string>
+    <string name="oaps_aimi_pkpd_relief_factor_summary">Range 0.50-1.00 (default 0.75). Increase (0.80-0.90) if SMB is still too damped in explicit meal/high-rise contexts. Decrease (0.65-0.70) if post-meal drops are too fast.</string>
+    <string name="oaps_aimi_redcarpet_restore_title">Red Carpet restore threshold</string>
+    <string name="oaps_aimi_redcarpet_restore_summary">Range 0.50-0.95 (default 0.75). Increase to restore SMB earlier (more correction). Decrease to stay more conservative. Suggested tuning step: +/-0.05, then observe 24-48h.</string>
+    <string name="oaps_aimi_priority_max_iob_factor_title">Priority MaxIOB factor</string>
+    <string name="oaps_aimi_priority_max_iob_factor_summary">Range 1.00-1.60 (default 1.20). Increase if final SMB is repeatedly clipped by MaxIOB in explicit high-rise/meal contexts. Decrease if you see insulin stacking risk or late hypoglycemia.</string>
+    <string name="oaps_aimi_priority_max_iob_extra_title">Priority MaxIOB extra (U)</string>
+    <string name="oaps_aimi_priority_max_iob_extra_summary">Range 0.0-5.0U (default 2.0U). Increase when correction remains insufficient after raising factor; decrease if lows appear in the 1-3h post-correction window.</string>
+
+    <string name="aimi_adv_rec_pkpd_relief_enable_title">Enable PKPD pragmatic relief</string>
+    <string name="aimi_adv_rec_pkpd_relief_enable_desc">Hyper pattern with low hypo pressure detected. Enabling pragmatic relief helps preserve SMB intent in explicit meal/high-rise contexts.</string>
+    <string name="aimi_adv_rec_pkpd_relief_factor_title">Increase PKPD relief minimum factor</string>
+    <string name="aimi_adv_rec_pkpd_relief_factor_desc">Current minimum PKPD factor is %1$s. Consider ~0.75 to reduce excessive SMB damping in priority contexts.</string>
+    <string name="aimi_adv_rec_redcarpet_restore_title">Increase Red Carpet restore threshold</string>
+    <string name="aimi_adv_rec_redcarpet_restore_desc">Current restore threshold is %1$s. Consider ~0.75 so explicit contexts recover proposed SMB before hard caps.</string>
+    <string name="aimi_adv_rec_priority_maxiob_title">Increase priority MaxIOB headroom</string>
+    <string name="aimi_adv_rec_priority_maxiob_desc">Current priority MaxIOB settings are factor=%1$s and extra=%2$sU. Consider ~1.20 and +2.0U in explicit aggressive contexts.</string>
     <string name="pkpd_runtime_log">PK/PD: DIA %1$.1fh, peak %2$.0fmin, fused ISF %3$.0f mg/dL/U (scale ×%4$.2f, tail %5$.0f%%)\n</string>
     <string name="pkpd_runtime_fallback">PK/PD disabled → profile DIA %1$.1fh, peak %2$.0fmin\n</string>
     <string name="oaps_aimi_smb_exercise_damping_title">Exercise damping factor</string>
@@ -520,6 +539,7 @@
     <string name="oaps_aimi_logsize_title">Number of AIMI plugin/Loop table lines</string>
     <string name="Enable_xdripOM_title">Libre3 1-minute readings</string>
     <string name="oaps_aimi_enableMlautoDrive_title">Enable Auto Drive – automatic meal detection – EXPERIMENTAL</string>
+    <string name="oaps_aimi_enableMlautoDriveActive_title">Enable Auto Drive V3 – Continuous MPC Engine (DANGER - EXPERIMENTAL)</string>
     <string name="autodrive_prebolus_variables">Prebolus limits and conditions</string>
     <string name="autodrive_prebolus_title_menu">Autodrive – Prebolus Settings</string>
     <string name="autodrive_prebolus_variablesMorning">Meal 00:00&#8211;11:00</string>
@@ -550,6 +570,8 @@
     <string name="oaps_aimi_AutodriveDeviation_title">Minimum BG deviation for pre-bolus delivery</string>
     <string name="oaps_aimi_AutodriveAcceleration_summary">BG acceleration: if it is above this value, the condition for autodrive pre-bolus is true</string>
     <string name="oaps_aimi_AutodriveAcceleration_title">Minimum BG acceleration for pre-bolus delivery</string>
+    <string name="aimi_mpc_u_per_kg_title">Autodrive MPC: insulin per kg (5 min)</string>
+    <string name="aimi_mpc_u_per_kg_summary">Upper bound for each 5-minute MPC dose search: this value × AIMI body weight (kg). Still limited by Max SMB / High BG Max SMB. Default 0.065 U/kg (previously hardcoded 0.05). Increase carefully — hypo risk.</string>
 
     <string name="prebolussmall_autodrive_mode_summaryMorning"><![CDATA[Used for early meal detection: BG > 100, predicted BG > 180. The idea is that when early detection occurs, a small SMB is sent to avoid negative IOB or late correction. This can be a good approach for a small snack.]]></string>
     <string name="prebolussmall_autodrive_mode_titleMorning">Light snack pre-bolus</string>
@@ -1364,5 +1386,14 @@
     <!-- T3c Brittle Mode -->
     <string name="aimi_t3c_brittle_mode_title">T3c / Brittle Diabetes Mode</string>
     <string name="aimi_t3c_brittle_mode_summary">Prioritize TBR over SMB. Disables SMB boost from ISF Fusion, and imposes strict Basal-First behavior on persistent rises.</string>
+    <string name="aimi_t3c_activation_threshold_title">T3C Activation Threshold (mg/dL)</string>
+    <string name="aimi_t3c_activation_threshold_summary">Corrections will engage above this level (Default: 130)</string>
+    <string name="aimi_t3c_aggressiveness_title">T3C Correction Aggressiveness</string>
+    <string name="aimi_t3c_aggressiveness_summary">Scales the intensity of basal adjustments (Default: 1.0)</string>
+    <string name="aimi_t3c_settings_title">T3C Brittle Mode Settings</string>
 
+    <string name="oaps_aimi_adaptive_basal_title">Universal Adaptive Basal</string>
+    <string name="oaps_aimi_adaptive_basal_summary">Automatically scale standard basal rates based on neural insights (for all users).</string>
+    <string name="oaps_aimi_adaptive_basal_max_scaling_title">Max Adaptive Scaling</string>
+    <string name="oaps_aimi_adaptive_basal_max_scaling_summary">Maximum multiplier allowed for adaptive basal scaling (e.g. 1.5x).</string>
 </resources>

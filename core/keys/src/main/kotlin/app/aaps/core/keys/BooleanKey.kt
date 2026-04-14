@@ -121,6 +121,15 @@ enum class BooleanKey(
     SiteRotationManagePump("site_rotation_manage_pump", defaultValue = false),
     SiteRotationManageCgm("site_rotation_manage_cgm", defaultValue = false),
 
+    // Export destination settings
+    ExportAllCloudEnabled("export_all_cloud_enabled", defaultValue = false),
+    ExportLogEmailEnabled("export_log_email_enabled", defaultValue = true),
+    ExportLogCloudEnabled("export_log_cloud_enabled", defaultValue = false),
+    ExportSettingsLocalEnabled("export_settings_local_enabled", defaultValue = true),
+    ExportSettingsCloudEnabled("export_settings_cloud_enabled", defaultValue = false),
+    ExportCsvLocalEnabled("export_csv_local_enabled", defaultValue = true),
+    ExportCsvCloudEnabled("export_csv_cloud_enabled", defaultValue = false),
+
     OApsAIMIMLtraining("key_enable_ML_training", false),
     OApsAIMIEnableBasal("key_enable_basal", false),
     OApsAIMIEnableStepsFromWatch("count_steps_watch", false),
@@ -130,11 +139,15 @@ enum class BooleanKey(
     OApsAIMIhoneymoon("key_use_Aimi_honeymoon",false),
     OApsxdriponeminute(key = "key_use_Aimi_xdripOM",defaultValue = false),
     OApsAIMIautoDrive(key = "key_use_Aimi_autoDrive",defaultValue = false),
+    OApsAIMIT3cAdaptiveBasalEnabled("key_use_aimi_t3c_adaptive_basal", false),
+    OApsAIMIAutodriveV3EnhancedGater("key_use_aimi_autodrive_v3_enhanced_gater", false),
+    OApsAIMIautoDriveActive(key = "key_use_aimi_autodrive_active", defaultValue = false),
     OApsAIMIwcycle(key = "key_use_Aimi_wcycle",defaultValue = false),
     OApsAIMIWCycleShadow("key_use_Aimi_wcycle_shadow", false),
     OApsAIMIWCycleRequireConfirm("key_use_Aimi_wcycle_require_confirm", false),
     OApsAIMINightGrowthEnabled("key_oaps_aimi_ngr_enabled", true),
     OApsAIMIPkpdEnabled("key_aimi_pkpd_enabled", false),
+    OApsAIMIPkpdPragmaticReliefEnabled("key_aimi_pkpd_pragmatic_relief_enabled", true),
     OApsAIMIUnifiedReactivityEnabled("key_use_unified_reactivity", true),  // 🎯 NEW: Enable UnifiedReactivityLearner
     AimiAuditorEnabled("aimi_auditor_enabled", false),  // 🧠 AI Decision Auditor
     OApsAIMITrajectoryGuardEnabled("key_aimi_trajectory_guard_enabled", false),  // 🌀 Phase-Space Trajectory Control
@@ -142,27 +155,27 @@ enum class BooleanKey(
     OApsAIMIContextLLMEnabled("key_aimi_context_llm_enabled", false),  // 🤖 LLM-powered context parsing
     OApsAIMIT3cBrittleMode("key_aimi_t3c_brittle_mode", false),
 
-    
+
     // 🦋 Thyroid / Basedow Module (MTR)
     OApsAIMIThyroidEnabled("key_aimi_thyroid_enabled", false),
     OApsAIMIThyroidLogVerbosity("key_aimi_thyroid_debug", false),
-    
+
     // 🏥 AIMI Physiological Assistant (MTR)
     AimiPhysioAssistantEnable("aimi_physio_assistant_enable", false),
     AimiPhysioSleepDataEnable("aimi_physio_sleep_enable", true),
     AimiPhysioHRVDataEnable("aimi_physio_hrv_enable", true),
     AimiPhysioLLMAnalysisEnable("aimi_physio_llm_enable", false),
     AimiPhysioDebugLogs("aimi_physio_debug_logs", false),
-    
+
     // 🌸 Endometriosis & Cycle Management (MTR)
     AimiEndometriosisEnable("aimi_endo_enable", false),
     AimiEndometriosisHormonalSuppression("aimi_endo_suppression", false),
     AimiEndometriosisPainFlare("aimi_endo_flare", false),
     OApsAIMIMealAdvisorTrigger("aimi_meal_advisor_trigger", false), // Trigger for one-shot MAX-SMB bypass
-    
+
     // 🌀 Adaptive Kernel Bank (Cosine Gate)
     AimiCosineGateEnabled("aimi_cosine_gate_enabled", true),
-    
+
     // 🚨 Emergency SOS (Hypo)
     AimiEmergencySosEnable("aimi_emergency_sos_enable", false),
 }

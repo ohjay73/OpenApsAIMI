@@ -6,9 +6,9 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="@drawable/dashboard_card_surface"
+        android:background="@android:color/transparent"
         android:orientation="vertical"
-        android:padding="10dp">
+        android:padding="@dimen/dashboard_card_inner_padding">
 
         <!-- ═══════════════════════════════════════════════════ -->
         <!-- TOP SECTION: Circle + Badges + Trend               -->
@@ -22,10 +22,10 @@
             <!-- GlucoseRingView (Center) -->
             <app.aaps.core.ui.views.GlucoseRingView
                 android:id="@+id/glucose_ring"
-                android:layout_width="149dp"
-                android:layout_height="149dp"
+                android:layout_width="132dp"
+                android:layout_height="132dp"
                 android:elevation="3dp"
-                app:ringStrokeWidth="5dp"
+                app:ringStrokeWidth="4dp"
                 app:glucoseRingUseSteppedColors="true"
                 app:glucoseRingStep1MaxMgdl="100"
                 app:glucoseRingStep2MaxMgdl="160"
@@ -107,8 +107,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginTop="-75dp"
-            android:layout_marginBottom="4dp">
+            android:layout_marginTop="-58dp"
+            android:layout_marginBottom="@dimen/dashboard_row_spacing_small">
 
             <!-- LEFT COLUMN -->
             <LinearLayout
@@ -117,7 +117,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:orientation="vertical"
-                android:layout_marginEnd="8dp">
+                android:layout_marginEnd="6dp">
 
                 <!-- STEPS (First Item) -->
                 <LinearLayout
@@ -125,21 +125,21 @@
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:layout_marginBottom="6dp">
+                    android:layout_marginBottom="4dp">
 
                     <ImageView
                         android:layout_width="18dp"
                         android:layout_height="18dp"
                         android:layout_marginEnd="6dp"
                         app:srcCompat="@drawable/ic_dashboard_shoe"
-                        app:tint="#AAFFFFFF" />
+                        app:tint="@color/dashboard_on_surface_muted" />
 
                     <TextView
                         android:id="@+id/steps_text"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="--"
-                        android:textColor="#AAFFFFFF"
+                        android:textColor="@color/dashboard_on_surface"
                         android:textSize="14sp"
                         android:textStyle="bold" />
                 </LinearLayout>
@@ -150,7 +150,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:layout_marginBottom="6dp">
+                    android:layout_marginBottom="4dp">
 
                     <ImageView
                         android:layout_width="18dp"
@@ -174,23 +174,22 @@
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:layout_marginBottom="6dp">
+                    android:layout_marginBottom="4dp">
 
                     <ImageView
                         android:layout_width="18dp"
                         android:layout_height="18dp"
                         android:layout_marginEnd="6dp"
                         app:srcCompat="@drawable/ic_cp_bolus_carbs"
-                        app:tint="#FFC107" />
+                        app:tint="@color/dashboard_metric_attention" />
 
                     <TextView
                         android:id="@+id/cob_text"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="0g"
-                        android:textAppearance="@style/TextAppearance.MaterialComponents.Caption"
-                        android:textColor="#FFC107"
-                        android:textStyle="bold" />
+                        android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetricValue"
+                        android:textColor="@color/dashboard_metric_attention" />
                 </LinearLayout>
 
                 <!-- CV (Coefficient of Variation) -->
@@ -199,7 +198,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:layout_marginBottom="6dp">
+                    android:layout_marginBottom="4dp">
 
                     <ImageView
                         android:layout_width="18dp"
@@ -217,8 +216,9 @@
                         android:textColor="@color/dashboard_on_surface" />
                 </LinearLayout>
                 
-                <!-- Activity % -->
+                <!-- Pump Battery -->
                 <LinearLayout
+                    android:id="@+id/pump_battery_container"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
@@ -228,14 +228,14 @@
                         android:layout_width="18dp"
                         android:layout_height="18dp"
                         android:layout_marginEnd="6dp"
-                        app:srcCompat="@drawable/ic_dashboard_wave"
+                        app:srcCompat="@drawable/ic_cp_age_battery"
                         app:tint="@color/dashboard_on_surface" />
 
                     <TextView
-                        android:id="@+id/activity_text"
+                        android:id="@+id/pump_battery_text"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="0%"
+                        android:text="--"
                         android:textAppearance="@style/TextAppearance.MaterialComponents.Caption"
                         android:textColor="@color/dashboard_on_surface" />
                 </LinearLayout>
@@ -249,7 +249,7 @@
                 android:layout_weight="1"
                 android:orientation="vertical"
                 android:gravity="end"
-                android:layout_marginStart="8dp">
+                android:layout_marginStart="6dp">
 
                 <!-- HEART RATE (First Item) -->
                 <LinearLayout
@@ -257,21 +257,21 @@
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:layout_marginBottom="6dp">
+                    android:layout_marginBottom="4dp">
 
                     <ImageView
                         android:layout_width="18dp"
                         android:layout_height="18dp"
                         android:layout_marginEnd="6dp"
                         app:srcCompat="@drawable/ic_cp_heart_rate"
-                        app:tint="#AAFFFFFF" />
+                        app:tint="@color/dashboard_on_surface_muted" />
 
                     <TextView
                         android:id="@+id/hr_text"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="--"
-                        android:textColor="#AAFFFFFF"
+                        android:textColor="@color/dashboard_on_surface"
                         android:textSize="14sp"
                         android:textStyle="bold" />
                 </LinearLayout>
@@ -282,23 +282,43 @@
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:layout_marginBottom="6dp">
+                    android:layout_marginBottom="4dp">
 
                     <ImageView
                         android:layout_width="18dp"
                         android:layout_height="18dp"
                         android:layout_marginEnd="6dp"
                         app:srcCompat="@drawable/ic_dashboard_droplet"
-                        app:tint="#42A5F5" />
+                        app:tint="@color/dashboard_metric_info" />
 
                     <TextView
                         android:id="@+id/last_sensor_value_text"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="--"
-                        android:textAppearance="@style/TextAppearance.MaterialComponents.Caption"
-                        android:textColor="#42A5F5"
-                        android:textStyle="bold" />
+                        android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetricValue"
+                        android:textColor="@color/dashboard_metric_info" />
+
+                    <FrameLayout
+                        android:id="@+id/adaptive_smoothing_quality_badge"
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:layout_marginStart="6dp"
+                        android:layout_gravity="center_vertical"
+                        android:background="@drawable/dashboard_chip_background_quality_ok"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:visibility="gone"
+                        android:contentDescription="@string/adaptive_smoothing_quality_badge_a11y">
+
+                        <ImageView
+                            android:id="@+id/adaptive_smoothing_quality_icon"
+                            android:layout_width="14dp"
+                            android:layout_height="14dp"
+                            android:layout_gravity="center"
+                            app:srcCompat="@drawable/ic_dashboard_wave"
+                            app:tint="@color/dashboard_on_surface_muted" />
+                    </FrameLayout>
                 </LinearLayout>
 
                 <!-- TBR Rate & % -->
@@ -307,23 +327,22 @@
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:layout_marginBottom="6dp">
+                    android:layout_marginBottom="4dp">
 
                     <ImageView
                         android:layout_width="18dp"
                         android:layout_height="18dp"
                         android:layout_marginEnd="6dp"
                         app:srcCompat="@drawable/ic_sensor_reading"
-                        app:tint="#AB47BC" />
+                        app:tint="@color/dashboard_metric_warning" />
 
                     <TextView
                         android:id="@+id/tbr_rate_text"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="0.00 U/h"
-                        android:textAppearance="@style/TextAppearance.MaterialComponents.Caption"
-                        android:textColor="#AB47BC"
-                        android:textStyle="bold" />
+                        android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetricValue"
+                        android:textColor="@color/dashboard_metric_warning" />
                 </LinearLayout>
 
                 <!-- Basal Profile -->
@@ -348,7 +367,148 @@
                         android:textAppearance="@style/TextAppearance.MaterialComponents.Caption"
                         android:textColor="@color/dashboard_on_surface" />
                 </LinearLayout>
+
+                <!-- Activity % (Relative to Basal) -->
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="3dp">
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_marginEnd="6dp"
+                        app:srcCompat="@drawable/ic_cp_basal"
+                        app:tint="@color/dashboard_on_surface" />
+
+                    <TextView
+                        android:id="@+id/activity_text"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0%"
+                        android:textAppearance="@style/TextAppearance.MaterialComponents.Caption"
+                        android:textColor="@color/dashboard_on_surface" />
+                </LinearLayout>
             </LinearLayout>
+        </LinearLayout>
+
+        <!-- ═══════════════════════════════════════════════════ -->
+        <!-- AIMI PULSE — last APS reason + facts (tap → details) -->
+        <!-- ═══════════════════════════════════════════════════ -->
+        <LinearLayout
+            android:id="@+id/aimi_pulse_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="@dimen/dashboard_section_spacing"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:background="@drawable/dashboard_chip_background"
+            android:foreground="?attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true"
+            android:focusableInTouchMode="true">
+
+            <TextView
+                android:id="@+id/aimi_pulse_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/TextAppearance.AAPS.Dashboard.SectionTitle"
+                android:textSize="12sp"
+                android:text="@string/dashboard_aimi_pulse_title" />
+
+            <TextView
+                android:id="@+id/aimi_pulse_summary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textAppearance="@style/TextAppearance.AAPS.Dashboard.PrimaryLine"
+                android:textSize="13sp"
+                android:lineSpacingMultiplier="1.02"
+                android:maxLines="4"
+                android:ellipsize="end"
+                tools:text="OpenAPS reason excerpt…" />
+
+            <TextView
+                android:id="@+id/aimi_pulse_meta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel"
+                android:textColor="@color/dashboard_on_surface_muted"
+                tools:text="SMB 0.1 U · basal 0.9 U/h · AutoSens 100%" />
+
+            <TextView
+                android:id="@+id/aimi_pulse_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="@string/dashboard_aimi_pulse_hint"
+                android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel"
+                android:textSize="9sp"
+                android:alpha="0.75" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/dashboard_row_spacing_small"
+            android:text="@string/dashboard_aimi_telemetry_label"
+            android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel"
+            android:textAllCaps="true"
+            android:letterSpacing="0.08" />
+
+        <!-- ═══════════════════════════════════════════════════ -->
+        <!-- AIMI INSIGHTS (T3c, Manoeuvre, AI Factor)           -->
+        <!-- ═══════════════════════════════════════════════════ -->
+        <LinearLayout
+            android:id="@+id/aimi_insights_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layout_marginTop="2dp"
+            android:layout_marginBottom="@dimen/dashboard_row_spacing_small"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
+            android:paddingTop="5dp"
+            android:paddingBottom="5dp"
+            android:background="@drawable/dashboard_chip_background"
+            android:alpha="0.92">
+
+            <!-- T3c (Time to Control) -->
+            <TextView
+                android:id="@+id/insight_t3c"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🎯 --"
+                android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel"
+                android:textColor="@color/dashboard_on_surface"
+                android:layout_marginEnd="8dp" />
+
+            <!-- Manoeuvre (Trajectory Type) -->
+            <TextView
+                android:id="@+id/insight_manoeuvre"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🌀 --"
+                android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel"
+                android:textColor="@color/dashboard_on_surface"
+                android:layout_marginEnd="8dp" />
+
+            <!-- Cosinus Factor (IA Attention) -->
+            <TextView
+                android:id="@+id/insight_factor"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="⚡ x1.0"
+                android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel"
+                android:textColor="@color/dashboard_on_surface" />
+
         </LinearLayout>
 
         <!-- ═══════════════════════════════════════════════════ -->
@@ -358,67 +518,67 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:layout_marginTop="8dp"
-            android:layout_marginBottom="12dp">
+            android:layout_marginTop="@dimen/dashboard_section_spacing"
+            android:layout_marginBottom="6dp">
             
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:layout_marginBottom="4dp">
+                android:layout_marginBottom="2dp">
                 <TextView
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="TIME IN RANGE — 24H"
-                    android:textSize="10sp"
+                    android:text="@string/dashboard_tir_today"
+                    android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel"
                     android:textAllCaps="true"
                     android:letterSpacing="0.1"
-                    android:textColor="#88FFFFFF" />
+                    android:textColor="@color/dashboard_on_surface_muted" />
                 <TextView
                     android:id="@+id/tir_stats_text"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Avg -- • A1C --"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF" />
+                    android:text="@string/dashboard_tir_stats_placeholder"
+                    android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel"
+                    android:textColor="@color/dashboard_on_surface" />
             </LinearLayout>
 
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="8dp"
+                android:layout_height="6dp"
                 android:orientation="horizontal"
-                android:background="#22FFFFFF">
+                android:background="@color/dashboard_tir_track">
                 <View
                     android:id="@+id/tir_very_low_bar"
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
                     android:layout_weight="0.01"
-                    android:background="#D50000" />
+                    android:background="@color/dashboard_tir_very_low" />
                 <View
                     android:id="@+id/tir_low_bar"
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
                     android:layout_weight="0.04"
-                    android:background="#FF6D00" />
+                    android:background="@color/dashboard_tir_low" />
                 <View
                     android:id="@+id/tir_in_range_bar"
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
                     android:layout_weight="0.75"
-                    android:background="#00C853" />
+                    android:background="@color/dashboard_tir_in_range" />
                 <View
                     android:id="@+id/tir_high_bar"
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
                     android:layout_weight="0.15"
-                    android:background="#FFD600" />
+                    android:background="@color/dashboard_tir_high" />
                 <View
                     android:id="@+id/tir_very_high_bar"
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
                     android:layout_weight="0.05"
-                    android:background="#D50000" />
+                    android:background="@color/dashboard_tir_very_low" />
             </LinearLayout>
             
             <LinearLayout
@@ -428,11 +588,11 @@
                 android:layout_marginTop="2dp"
                 android:baselineAligned="false">
                 <!-- Percentage Labels -->
-                <TextView android:id="@+id/tir_very_low_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="0.05" android:text="" android:textSize="9sp" android:textColor="#D50000" android:gravity="start"/>
-                <TextView android:id="@+id/tir_low_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="0.2" android:text="" android:textSize="9sp" android:textColor="#FF6D00" android:gravity="start"/>
-                <TextView android:id="@+id/tir_in_range_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="0.5" android:text="" android:textSize="9sp" android:textColor="#00C853" android:gravity="center"/>
-                <TextView android:id="@+id/tir_high_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="0.2" android:text="" android:textSize="9sp" android:textColor="#FFD600" android:gravity="end"/>
-                <TextView android:id="@+id/tir_very_high_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="0.05" android:text="" android:textSize="9sp" android:textColor="#D50000" android:gravity="end"/>
+                <TextView android:id="@+id/tir_very_low_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="0.05" android:text="" android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel" android:textColor="@color/dashboard_tir_very_low" android:gravity="start"/>
+                <TextView android:id="@+id/tir_low_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="0.2" android:text="" android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel" android:textColor="@color/dashboard_tir_low" android:gravity="start"/>
+                <TextView android:id="@+id/tir_in_range_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="0.5" android:text="" android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel" android:textColor="@color/dashboard_tir_in_range" android:gravity="center"/>
+                <TextView android:id="@+id/tir_high_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="0.2" android:text="" android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel" android:textColor="@color/dashboard_tir_high" android:gravity="end"/>
+                <TextView android:id="@+id/tir_very_high_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="0.05" android:text="" android:textAppearance="@style/TextAppearance.AAPS.Dashboard.MetaLabel" android:textColor="@color/dashboard_tir_very_low" android:gravity="end"/>
             </LinearLayout>
         </LinearLayout>
 
@@ -449,34 +609,52 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_gravity="center"
+                app:chipSpacingHorizontal="@dimen/dashboard_chip_spacing"
+                app:chipSpacingVertical="@dimen/dashboard_row_spacing_small"
                 app:singleSelection="false">
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chip_aimi_advisor"
-                    style="@style/Widget.MaterialComponents.Chip.Action"
+                    style="@style/Widget.AAPS.Dashboard.ActionChip"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:contentDescription="@string/dashboard_cd_chip_aimi_advisor"
+                    android:focusable="true"
+                    android:focusableInTouchMode="true"
+                    android:importantForAccessibility="yes"
                     android:text="@string/advisor_button" />
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chip_adjust"
-                    style="@style/Widget.MaterialComponents.Chip.Action"
+                    style="@style/Widget.AAPS.Dashboard.ActionChip"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:contentDescription="@string/dashboard_cd_chip_adjust"
+                    android:focusable="true"
+                    android:focusableInTouchMode="true"
+                    android:importantForAccessibility="yes"
                     android:text="@string/adjust_button" />
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chip_aimi_pref"
-                    style="@style/Widget.MaterialComponents.Chip.Action"
+                    style="@style/Widget.AAPS.Dashboard.ActionChip"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:contentDescription="@string/dashboard_cd_chip_meal_mode"
+                    android:focusable="true"
+                    android:focusableInTouchMode="true"
+                    android:importantForAccessibility="yes"
                     android:text="@string/dashboard_mode_meal" />
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chip_stat"
-                    style="@style/Widget.MaterialComponents.Chip.Action"
+                    style="@style/Widget.AAPS.Dashboard.ActionChip"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:contentDescription="@string/dashboard_cd_chip_aimi_context"
+                    android:focusable="true"
+                    android:focusableInTouchMode="true"
+                    android:importantForAccessibility="yes"
                     android:text="@string/aimi_context" />
             </com.google.android.material.chip.ChipGroup>
         </HorizontalScrollView>

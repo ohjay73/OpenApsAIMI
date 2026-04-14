@@ -1,5 +1,6 @@
 package app.aaps.shared.tests
 
+import android.content.SharedPreferences
 import android.content.res.Resources
 import android.content.res.TypedArray
 import androidx.preference.PreferenceManager
@@ -14,6 +15,7 @@ import app.aaps.core.interfaces.constraints.ConstraintsChecker
 import app.aaps.core.interfaces.db.ProcessedTbrEbData
 import app.aaps.core.interfaces.iob.GlucoseStatusProvider
 import app.aaps.core.interfaces.iob.IobCobCalculator
+import app.aaps.core.interfaces.insulin.ConcentrationHelper
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileStore
@@ -50,11 +52,14 @@ import dagger.android.AndroidInjector
 import dagger.android.DaggerApplication
 import dagger.android.HasAndroidInjector
 import org.json.JSONObject
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.mockito.ArgumentMatchers.anyDouble
 import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mock
+import org.mockito.MockedStatic
+import org.mockito.Mockito
 import org.mockito.invocation.InvocationOnMock
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
@@ -78,6 +83,9 @@ open class TestBaseWithProfile : TestBase() {
     @Mock lateinit var constraintsChecker: ConstraintsChecker
     @Mock lateinit var theme: Resources.Theme
     @Mock lateinit var typedArray: TypedArray
+    @Mock lateinit var sharedPreferences: SharedPreferences
+    @Mock lateinit var sharedPreferencesEditor: SharedPreferences.Editor
+    @Mock lateinit var ch: ConcentrationHelper
 
     lateinit var dateUtil: DateUtil
     lateinit var profileUtil: ProfileUtil
@@ -148,6 +156,8 @@ open class TestBaseWithProfile : TestBase() {
     lateinit var profileSwitch: PS
     lateinit var testPumpPlugin: TestPumpPlugin
 
+    private lateinit var mockedPreferenceManager: MockedStatic<android.preference.PreferenceManager>
+
     var now = 1656358822000L
 
     @Suppress("PropertyName") val TESTPROFILENAME = "someProfile"
@@ -160,11 +170,26 @@ open class TestBaseWithProfile : TestBase() {
         invalidProfileJSON = "{\"dia\":\"1\",\"carbratio\":[{\"time\":\"00:00\",\"value\":\"30\"}],\"carbs_hr\":\"20\",\"delay\":\"20\",\"sens\":[{\"time\":\"00:00\",\"value\":\"3\"}," +
             "{\"time\":\"2:00\",\"value\":\"3.4\"}],\"timezone\":\"UTC\",\"basal\":[{\"time\":\"00:00\",\"value\":\"1\"}],\"target_low\":[{\"time\":\"00:00\",\"value\":\"4.5\"}]," +
             "\"target_high\":[{\"time\":\"00:00\",\"value\":\"7\"}],\"startDate\":\"1970-01-01T00:00:00.000Z\",\"units\":\"mmol\"}"
+
+        // Mock SharedPreferences for AdaptiveListIntPreference
+        whenever(sharedPreferences.getInt(any(), any())).thenReturn(-1)
+        whenever(sharedPreferences.edit()).thenReturn(sharedPreferencesEditor)
+        whenever(sharedPreferencesEditor.remove(any())).thenReturn(sharedPreferencesEditor)
+        whenever(sharedPreferencesEditor.putString(any(), any())).thenReturn(sharedPreferencesEditor)
+
+        // Mock static PreferenceManager.getDefaultSharedPreferences
+        mockedPreferenceManager = Mockito.mockStatic(android.preference.PreferenceManager::class.java)
+        mockedPreferenceManager.`when`<SharedPreferences> {
+            android.preference.PreferenceManager.getDefaultSharedPreferences(any())
+        }.thenReturn(sharedPreferences)
+
         preferenceManager = PreferenceManager(context)
         dateUtil = spy(DateUtilImpl(context))
         decimalFormatter = DecimalFormatterImpl(rh)
         profileUtil = ProfileUtilImpl(preferences, decimalFormatter)
-        testPumpPlugin = TestPumpPlugin(rh)
+        testPumpPlugin = TestPumpPlugin(rh, ch)
+        whenever(ch.fromPump(anyDouble())).doAnswer { it.getArgument(0) }
+        whenever(ch.toPump(anyDouble())).doAnswer { it.getArgument(0) }
         whenever(context.applicationContext).thenReturn(context)
         whenever(context.androidInjector()).thenReturn(injector.androidInjector())
         whenever(context.theme).thenReturn(theme)
@@ -173,7 +198,7 @@ open class TestBaseWithProfile : TestBase() {
         whenever(activePlugin.activePump).thenReturn(testPumpPlugin)
         whenever(preferences.get(StringKey.GeneralUnits)).thenReturn(GlucoseUnit.MGDL.asText)
         deltaCalculator = DeltaCalculator(aapsLogger)
-        apsResultProvider = Provider { DetermineBasalResult(aapsLogger, constraintsChecker, preferences, activePlugin, processedTbrEbData, profileFunction, rh, decimalFormatter, dateUtil, apsResultProvider) }
+        apsResultProvider = Provider { DetermineBasalResult(aapsLogger, constraintsChecker, preferences, activePlugin, processedTbrEbData, profileFunction, rh, decimalFormatter, dateUtil, apsResultProvider, ch) }
         hardLimits = HardLimitsMock(preferences, rh)
         validProfile = ProfileSealed.Pure(pureProfileFromJson(JSONObject(validProfileJSON), dateUtil)!!, activePlugin)
         effectiveProfileSwitch = EPS(
@@ -305,9 +330,14 @@ open class TestBaseWithProfile : TestBase() {
             val arg3 = invocation.getArgument<String?>(3)
             String.format(rh.gs(string), arg1, arg2, arg3)
         }.whenever(rh).gs(anyInt(), anyString(), anyInt(), anyString())
-        pumpEnactResultProvider = Provider { PumpEnactResultObject(rh) }
+        pumpEnactResultProvider = Provider { PumpEnactResultObject(rh, ch) }
         profileStoreProvider = Provider { ProfileStoreObject(aapsLogger, activePlugin, config, rh, rxBus, hardLimits, dateUtil) }
         glucoseStatusCalculatorSMB = GlucoseStatusCalculatorSMB(aapsLogger, iobCobCalculator, dateUtil, decimalFormatter, DeltaCalculator(aapsLogger))
+    }
+
+    @AfterEach
+    fun cleanupMock() {
+        mockedPreferenceManager.close()
     }
 
     fun getValidProfileStore(): ProfileStore {

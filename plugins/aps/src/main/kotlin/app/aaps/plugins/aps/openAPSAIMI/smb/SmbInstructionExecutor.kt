@@ -71,6 +71,8 @@ object SmbInstructionExecutor {
         val mealData: MealData,
         val pkpdRuntime: PkPdRuntime?,
         val sportTime: Boolean,
+        /** Sport thérapie ou activité AIMI : pas de HighBgOverride ni SMB forcé par override. */
+        val exerciseInsulinLockout: Boolean = false,
         val lateFatRiseFlag: Boolean,
         val highCarbRunTime: Long?,
         val threshold: Double?,
@@ -82,7 +84,8 @@ object SmbInstructionExecutor {
         val highBgOverrideUsed: Boolean,
         val profileCurrentBasal: Double,
         val cob: Float,
-        val globalReactivityFactor: Double  // 🎯 NEW: From UnifiedReactivityLearner
+        val globalReactivityFactor: Double,  // 🎯 NEW: From UnifiedReactivityLearner
+        val isConfirmedHighRise: Boolean = false // 🚀 NEW: For meal confirmation
     )
 
     data class Hooks(
@@ -90,7 +93,7 @@ object SmbInstructionExecutor {
         // ❌ adjustFactors REMOVED: UnifiedReactivityLearner replaces time-based factors
         val calculateAdjustedDia: (Float, Int, Int, Float, Float, Float, Double) -> Double,
         val costFunction: (Double, Double, Double, Int, Double, Double) -> Double,
-        val applySafety: (MealData, Float, Double?, StringBuilder?, PkPdRuntime?, Boolean, Boolean) -> Float,
+        val applySafety: (MealData, Float, Double?, StringBuilder?, PkPdRuntime?, Boolean, Boolean, Boolean) -> Float,
         val runtimeToMinutes: (Long?) -> Int,
         val computeHypoThreshold: (Double, Int?) -> Double,
         val isBelowHypo: (Double, Double, Double, Double, Double) -> Boolean,
@@ -113,53 +116,52 @@ object SmbInstructionExecutor {
         var basal = input.initialBasal
 
         val trainingEnabled = input.preferences.get(BooleanKey.OApsAIMIMLtraining)
-        if (trainingEnabled && input.csvFile.exists()) {
-            val allLines = input.csvFile.readLines()
-            val minutesToConsider = 1000.0
-            val linesToConsider = (minutesToConsider / 5).toInt()
-            if (allLines.size > linesToConsider) {
-                val refined = hooks.refineSmb(
-                    input.combinedDelta.toFloat(),
-                    input.shortAvgDelta,
-                    input.longAvgDelta,
-                    predictedSmb,
-                    input.profile
+        if (trainingEnabled) {
+            // 🧠 ML Refinement (O(1) — no disk IO, model is pre-loaded in memory)
+            // AimiSmbTrainer returns predictedSmb unchanged if model is null/circuit open/throws.
+            val refined = hooks.refineSmb(
+                input.combinedDelta.toFloat(),
+                input.shortAvgDelta,
+                input.longAvgDelta,
+                predictedSmb,
+                input.profile
+            )
+            val isModelActive = refined != predictedSmb
+            input.rT.reason.appendLine(
+                input.context.getString(
+                    R.string.reason_ai_file,
+                    if (isModelActive) "✔" else "⏳",
+                    "%.2f".format(refined.takeIf { it.isFinite() } ?: predictedSmb)
                 )
+            )
+            predictedSmb = refined
+
+            val maxIobPref = input.preferences.get(DoubleKey.ApsSmbMaxIob)
+            if (input.bg > 170 && input.delta > 4 && input.iob < maxIobPref) {
                 input.rT.reason.appendLine(
                     input.context.getString(
-                        R.string.reason_ai_file,
-                        if (input.csvFile.exists()) "✔" else "✘",
-                        "%.2f".format(refined.takeIf { it.isFinite() } ?: 0f)
+                        R.string.reason_boost_hyper,
+                        input.bg.toInt(),
+                        input.delta
                     )
                 )
-                predictedSmb = refined
-                val maxIobPref = input.preferences.get(DoubleKey.ApsSmbMaxIob)
-                if (input.bg > 170 && input.delta > 4 && input.iob < maxIobPref) {
-                    input.rT.reason.appendLine(
-                        input.context.getString(
-                            R.string.reason_boost_hyper,
-                            input.bg.toInt(),
-                            input.delta
-                        )
+                predictedSmb *= 1.7f
+            } else if (input.bg > 150 && input.delta > 3 && input.iob < maxIobPref) {
+                input.rT.reason.appendLine(
+                    input.context.getString(
+                        R.string.reason_boost_hyper_2,
+                        input.bg.toInt(),
+                        input.delta
                     )
-                    predictedSmb *= 1.7f
-                } else if (input.bg > 150 && input.delta > 3 && input.iob < maxIobPref) {
-                    input.rT.reason.appendLine(
-                        input.context.getString(
-                            R.string.reason_boost_hyper_2,
-                            input.bg.toInt(),
-                            input.delta
-                        )
-                    )
-                    predictedSmb *= 1.5f
-                }
-
-                basal = when {
-                    input.honeymoon && input.bg < 170 -> input.basalaimi * 1.0
-                    else -> input.basalaimi.toDouble()
-                }
-                basal = hooks.roundBasal(basal)
+                )
+                predictedSmb *= 1.5f
             }
+
+            basal = when {
+                input.honeymoon && input.bg < 170 -> input.basalaimi * 1.0
+                else -> input.basalaimi.toDouble()
+            }
+            basal = hooks.roundBasal(basal)
         } else {
             input.rT.reason.appendLine(input.context.getString(R.string.reason_ml_training))
         }
@@ -194,6 +196,13 @@ object SmbInstructionExecutor {
         fun resolveFactor(manualFactor: Double, learnerFactor: Double, modeName: String): Double {
             // 1. If Manual Mode is Neutral (1.0), fully trust Learner
             if (kotlin.math.abs(manualFactor - 1.0) < 0.01) {
+                input.consoleLog.add(
+                    String.format(
+                        java.util.Locale.US,
+                        "🧠 React: mode=%s manual=%.2f learner=%.2f => resolved=%.2f (neutral-manual)",
+                        modeName, manualFactor, learnerFactor, learnerFactor
+                    )
+                )
                 return learnerFactor
             }
 
@@ -248,7 +257,37 @@ object SmbInstructionExecutor {
             input.snackTime -> snackfactor
             input.sleepTime -> sleepfactor
             else -> defaultFactor
+        }.coerceIn(0.60, 1.60)
+
+        val manualSelected = when {
+            input.highCarbTime -> hcfRaw
+            input.mealTime -> mealRaw
+            input.bfastTime -> bfRaw
+            input.lunchTime -> lunchRaw
+            input.dinnerTime -> dinRaw
+            input.snackTime -> snackRaw
+            input.sleepTime -> sleepRaw
+            else -> 1.0
         }
+        input.consoleLog.add(
+            String.format(
+                java.util.Locale.US,
+                "🧠 ReactTrace: mode=%s manual=%.2f learner=%.2f resolved=%.2f",
+                when {
+                    input.highCarbTime -> "HighCarb"
+                    input.mealTime -> "Meal"
+                    input.bfastTime -> "Breakfast"
+                    input.lunchTime -> "Lunch"
+                    input.dinnerTime -> "Dinner"
+                    input.snackTime -> "Snack"
+                    input.sleepTime -> "Sleep"
+                    else -> "Default"
+                },
+                manualSelected,
+                input.globalReactivityFactor,
+                factors
+            )
+        )
 
         fun Float.atLeast(min: Float) = if (this < min) min else this
 
@@ -301,7 +340,9 @@ object SmbInstructionExecutor {
             (input.glucoseStatus.delta + actCurr * input.sens).coerceIn(0.0, 35.0),
             1
         )
-        val actTarget = deltaGross / input.sens * factors.toFloat()  // ✅ Now includes reactivity!
+        // Avoid over-amplifying by applying a softened factor in act-target path.
+        val actTargetFactor = (1.0 + (factors - 1.0) * 0.5).coerceIn(0.80, 1.30)
+        val actTarget = deltaGross / input.sens * actTargetFactor.toFloat()
         var actMissing: Double
         var deltaScore = 0.5
 
@@ -392,7 +433,8 @@ object SmbInstructionExecutor {
             input.rT.reason,
             input.pkpdRuntime,
             input.sportTime,
-            suspectedLateFatMeal
+            suspectedLateFatMeal,
+            input.isConfirmedHighRise
         )
         input.rT.reason.appendLine(
             input.context.getString(R.string.smb_final, "%.2f".format(smbDecision))
@@ -463,7 +505,8 @@ object SmbInstructionExecutor {
             iob = input.iob.toDouble(),
             maxSmb = input.maxSmb,
             currentDose = smbAfterDamping,
-            pumpStep = input.insulinStep.toDouble()
+            pumpStep = input.insulinStep.toDouble(),
+            exerciseInsulinLockout = input.exerciseInsulinLockout
         ).also { res ->
             smbAfterDamping = res.dose
             if (res.overrideUsed) {
