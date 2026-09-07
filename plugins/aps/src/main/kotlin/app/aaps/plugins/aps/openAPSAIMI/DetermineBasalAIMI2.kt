@@ -521,6 +521,17 @@ internal data class AimiDecisionContext(
         /** Profile ISF the barrier was handed, so the two above are interpretable. */
         var cbf_profile_isf_mgdl: Double? = null,
         /**
+         * Whether the Autodrive gate let the MPC run this tick.
+         *
+         * Everything the barrier exports only exists on engaged ticks. Without this the disengaged
+         * ticks are a blank, and a blank reads as "nothing happened" rather than "the gate was shut".
+         */
+        var autodrive_gate_engaged: Boolean? = null,
+        /** Stable token for why the gate opened or stayed shut, for counting. */
+        var autodrive_gate_kind: String? = null,
+        /** The same reason with its live numbers, for reading. */
+        var autodrive_gate_reason: String? = null,
+        /**
          * Effort SMB reduction, as actually applied at the universal SMB exit.
          *
          * `_requested` is what the effort belief asked for, `_applied` is what was used after the
@@ -877,6 +888,9 @@ internal data class AimiDecisionContext(
             base.put("cbf_permitted_u", baseline_state.cbf_permitted_u ?: org.json.JSONObject.NULL)
             base.put("cbf_permitted_unfloored_u", baseline_state.cbf_permitted_unfloored_u ?: org.json.JSONObject.NULL)
             base.put("cbf_profile_isf_mgdl", baseline_state.cbf_profile_isf_mgdl ?: org.json.JSONObject.NULL)
+            base.put("autodrive_gate_engaged", baseline_state.autodrive_gate_engaged ?: org.json.JSONObject.NULL)
+            base.put("autodrive_gate_kind", baseline_state.autodrive_gate_kind ?: org.json.JSONObject.NULL)
+            base.put("autodrive_gate_reason", baseline_state.autodrive_gate_reason ?: org.json.JSONObject.NULL)
             base.put("effort_smb_factor_requested", baseline_state.effort_smb_factor_requested ?: org.json.JSONObject.NULL)
             base.put("effort_smb_factor_applied", baseline_state.effort_smb_factor_applied ?: org.json.JSONObject.NULL)
             base.put("effort_smb_before_u", baseline_state.effort_smb_before_u ?: org.json.JSONObject.NULL)
@@ -5388,6 +5402,15 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             estimatedRa = continuousStateEstimator.getLastRa(),
             mealChannelHint = lastRbtAppliedHints?.mealChannel,
         )
+
+        // Observation only — recorded for both outcomes, before the branch. The engaged path already
+        // logged its reason to the console; the disengaged path threw it away, so two thirds of a day
+        // had no explanation at all.
+        pendingDecisionCtxForExport?.baseline_state?.let { baseline ->
+            baseline.autodrive_gate_engaged = gate.engage
+            baseline.autodrive_gate_kind = gate.kind.name
+            baseline.autodrive_gate_reason = gate.reason
+        }
 
         if (!gate.engage) {
             // Estimation is unconditional; actuation is gated. Nothing inside the engaged branch
