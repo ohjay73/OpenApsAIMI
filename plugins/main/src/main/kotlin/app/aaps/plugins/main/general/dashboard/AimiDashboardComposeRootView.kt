@@ -22,6 +22,7 @@ import app.aaps.core.ui.compose.LocalPreferences
 import app.aaps.plugins.main.general.dashboard.compose.LocalDashboardHeroCommands
 import app.aaps.plugins.main.general.dashboard.compose.NoopDashboardHeroCommands
 import app.aaps.plugins.main.general.dashboard.viewmodel.OverviewViewModel
+import app.aaps.plugins.main.skins.DashboardHomeVariant
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.CoroutineScope
@@ -32,6 +33,7 @@ import kotlinx.coroutines.CoroutineScope
 class AimiDashboardComposeRootView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
+    private val dashboardHomeVariant: DashboardHomeVariant = DashboardHomeVariant.DASHBOARD_V1,
 ) : FrameLayout(context, attrs),
     LifecycleOwner {
 
@@ -86,27 +88,40 @@ class AimiDashboardComposeRootView @JvmOverloads constructor(
                     LocalPreferences provides deps.preferences,
                     LocalDashboardHeroCommands provides heroCommands,
                 ) {
-                    AimiDashboardComposeEmbedded(
-                        shellPostRoot = this@AimiDashboardComposeRootView,
-                        embeddedState = embeddedComposeState,
-                        preferences = deps.preferences,
-                        viewModel = viewModel,
-                        graphViewModel = graphViewModel,
-                        onShellBindingReady = { shellBinding ->
-                            if (shellCtrl == null) {
-                                val controller = DashboardShellController(
-                                    host = shellHost,
-                                    deps = deps,
-                                    viewModel = viewModel,
-                                    eventSourcePrefix = EVENT_SOURCE_PREFIX,
-                                )
-                                shellCtrl = controller
-                                shellController = controller
-                                controller.attachShell(shellBinding)
-                                installActivityLifecycleObserver(act)
-                            }
-                        },
-                    )
+                    val onShellBindingReady: (DashboardShellBinding) -> Unit = { shellBinding ->
+                        if (shellCtrl == null) {
+                            val controller = DashboardShellController(
+                                host = shellHost,
+                                deps = deps,
+                                viewModel = viewModel,
+                                eventSourcePrefix = EVENT_SOURCE_PREFIX,
+                            )
+                            shellCtrl = controller
+                            shellController = controller
+                            controller.attachShell(shellBinding)
+                            installActivityLifecycleObserver(act)
+                        }
+                    }
+                    when (dashboardHomeVariant) {
+                        DashboardHomeVariant.DASHBOARD_V2 -> DashboardV2ComposeEmbedded(
+                            shellPostRoot = this@AimiDashboardComposeRootView,
+                            embeddedState = embeddedComposeState,
+                            viewModel = viewModel,
+                            graphViewModel = graphViewModel,
+                            onShellBindingReady = onShellBindingReady,
+                        )
+
+                        DashboardHomeVariant.DASHBOARD_V1,
+                        DashboardHomeVariant.OVERVIEW,
+                        -> AimiDashboardComposeEmbedded(
+                            shellPostRoot = this@AimiDashboardComposeRootView,
+                            embeddedState = embeddedComposeState,
+                            preferences = deps.preferences,
+                            viewModel = viewModel,
+                            graphViewModel = graphViewModel,
+                            onShellBindingReady = onShellBindingReady,
+                        )
+                    }
                 }
             }
         }

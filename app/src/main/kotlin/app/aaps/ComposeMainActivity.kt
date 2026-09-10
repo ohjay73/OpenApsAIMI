@@ -144,6 +144,8 @@ import app.aaps.implementation.protection.BiometricCheck
 import app.aaps.plugins.automation.AutomationRuntime
 import app.aaps.plugins.configuration.setupwizard.SWDefinition
 import app.aaps.plugins.main.general.manual.UserManualActivity
+import app.aaps.plugins.main.skins.DashboardHomeVariant
+import app.aaps.plugins.main.skins.DashboardHomeVariantResolver
 import app.aaps.plugins.main.skins.SkinDashboardPreferenceSync
 import app.aaps.plugins.main.skins.SkinProvider
 import app.aaps.plugins.source.DexcomPlugin
@@ -653,7 +655,12 @@ class ComposeMainActivity : AppCompatActivity() {
         // Keep skin collector alive for the whole shell (not only when Main is composed),
         // so changes made from Preferences still update flows before returning home.
         val generalSkin by preferences.observe(StringKey.GeneralSkin).collectAsStateWithLifecycle()
-        val showHybridDashboard = storedSkinPrefersDashboardHome(generalSkin)
+        val dashboardHomeVariant = DashboardHomeVariantResolver.resolve(
+            storedSkinName = generalSkin,
+            availableSkins = skinProvider.list,
+            fallbackSkin = skinProvider.activeSkin(),
+        )
+        val showDashboardHome = dashboardHomeVariant != DashboardHomeVariant.OVERVIEW
 
         NavHost(
             navController = navController,
@@ -721,7 +728,7 @@ class ComposeMainActivity : AppCompatActivity() {
                 }
 
 
-                key(showHybridDashboard, generalSkin) {
+                key(dashboardHomeVariant, generalSkin) {
                     MainScreen(
                     mainViewModel = mainViewModel,
                     uiState = state,
@@ -833,11 +840,12 @@ class ComposeMainActivity : AppCompatActivity() {
                         }
                     },
                     useRingHeroHome = false,
-                    dashboardOverview = if (showHybridDashboard) {
+                    dashboardOverview = if (showDashboardHome) {
                         { pad, fab ->
                             DashboardOverviewHost(
                                 paddingValues = pad,
                                 fabBottomOffset = fab,
+                                dashboardHomeVariant = dashboardHomeVariant,
                             )
                         }
                     } else {
@@ -993,21 +1001,18 @@ class ComposeMainActivity : AppCompatActivity() {
         val deferMs = AimiLoopRuntimeGuard.overviewRefreshDeferMs()
         window.decorView.postDelayed({
             if (isDestroyed) return@postDelayed
-            if (storedSkinPrefersDashboardHome(preferences.get(StringKey.GeneralSkin))) {
+            val dashboardHomeVariant = DashboardHomeVariantResolver.resolve(
+                storedSkinName = preferences.get(StringKey.GeneralSkin),
+                availableSkins = skinProvider.list,
+                fallbackSkin = skinProvider.activeSkin(),
+            )
+            if (dashboardHomeVariant != DashboardHomeVariant.OVERVIEW) {
                 rxBus.send(EventRefreshOverview("ComposeMainActivity.afterChildFragmentsResume", now = true))
                 activePlugin.activeOverview.overviewBus.send(
                     EventUpdateOverviewIobCob("ComposeMainActivity.afterChildFragmentsResume"),
                 )
             }
         }, deferMs)
-    }
-
-    private fun storedSkinPrefersDashboardHome(storedGeneralSkin: String): Boolean {
-        val skins = skinProvider.list
-        val skin = skins.firstOrNull { it.javaClass.name == storedGeneralSkin }
-            ?: skins.firstOrNull { it.javaClass.simpleName == storedGeneralSkin }
-            ?: skinProvider.activeSkin()
-        return skin.prefersDashboardHome
     }
 
     override fun onStart() {
@@ -1308,4 +1313,3 @@ class ComposeMainActivity : AppCompatActivity() {
         }
     }
 }
-

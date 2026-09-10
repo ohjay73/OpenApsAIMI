@@ -9,6 +9,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.fragment.app.FragmentActivity
 import app.aaps.plugins.main.general.dashboard.AimiDashboardComposeRootView
+import app.aaps.plugins.main.skins.DashboardHomeVariant
 
 /**
  * AIMI dashboard home in Compose: embeds [AimiDashboardComposeRootView] (Compose column + shared
@@ -18,6 +19,7 @@ import app.aaps.plugins.main.general.dashboard.AimiDashboardComposeRootView
 fun DashboardOverviewHost(
     paddingValues: PaddingValues,
     fabBottomOffset: Dp,
+    dashboardHomeVariant: DashboardHomeVariant,
     modifier: Modifier = Modifier,
 ) {
     AndroidView(
@@ -27,7 +29,10 @@ fun DashboardOverviewHost(
             .padding(bottom = fabBottomOffset),
         factory = { ctx ->
             require(ctx is FragmentActivity) { "DashboardOverviewHost requires FragmentActivity context" }
-            AimiDashboardComposeRootView(ctx)
+            AimiDashboardComposeRootView(
+                context = ctx,
+                dashboardHomeVariant = dashboardHomeVariant,
+            )
         },
         update = { },
     )

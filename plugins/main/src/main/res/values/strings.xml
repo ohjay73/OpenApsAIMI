@@ -203,6 +203,21 @@
     <string name="buttonson_description">Buttons are always displayed on bottom of screen</string>
     <string name="largedisplay_description">Large display</string>
     <string name="minimal_skin_description">New skin dashboard</string>
+    <string name="dashboard_v2_skin_description">DASHBOARD_V2</string>
+    <string name="dashboard_v2_current_status">Current status</string>
+    <string name="dashboard_v2_glucose_unavailable">No data</string>
+    <string name="dashboard_v2_glucose_unavailable_a11y">Glucose data is not available</string>
+    <string name="dashboard_v2_value_unavailable">Not available</string>
+    <string name="dashboard_v2_open_loop">Open loop controls</string>
+    <string name="dashboard_v2_loop_a11y">Loop status: %1$s</string>
+    <string name="dashboard_v2_reservoir">Reservoir</string>
+    <string name="dashboard_v2_battery">Battery</string>
+    <string name="dashboard_v2_sensor">Sensor</string>
+    <string name="dashboard_v2_site">Site</string>
+    <string name="dashboard_v2_iob">IOB</string>
+    <string name="dashboard_v2_target">Target</string>
+    <string name="dashboard_v2_basal">Basal</string>
+    <string name="dashboard_v2_metric_a11y">%1$s: %2$s</string>
     <string name="notification_iob_short">%1$.1fU</string>
 
     <string name="suspendloopfor1h">Suspend loop for 1h</string>
@@ -432,4 +447,3 @@
     <string name="aimi_adaptation_metric_value_units" comment="%1$.2f=insulin units. Example: 0.50 U">%1$.2f U</string>
     <string name="aimi_adaptation_metric_value_mgdl" comment="%1$.1f=a glucose prediction error in mg/dL. Example: 12.5 mg/dL">%1$.1f mg/dL</string>
 </resources>
-

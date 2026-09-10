@@ -118,4 +118,19 @@
     <string name="adaptive_smoothing_quality_dialog_bad">Confiance du lissage adaptatif : faible (R=%1$.0f, outliers=%2$d%%, compression=%3$d%%)</string>
 
     <string name="notification_iob_short">%1$.1f U</string>
+    <string name="dashboard_v2_skin_description">DASHBOARD_V2</string>
+    <string name="dashboard_v2_current_status">Statut actuel</string>
+    <string name="dashboard_v2_glucose_unavailable">Aucune donnée</string>
+    <string name="dashboard_v2_glucose_unavailable_a11y">Les données de glycémie ne sont pas disponibles</string>
+    <string name="dashboard_v2_value_unavailable">Indisponible</string>
+    <string name="dashboard_v2_open_loop">Ouvrir les contrôles de la boucle</string>
+    <string name="dashboard_v2_loop_a11y">Statut de la boucle : %1$s</string>
+    <string name="dashboard_v2_reservoir">Réservoir</string>
+    <string name="dashboard_v2_battery">Batterie</string>
+    <string name="dashboard_v2_sensor">Capteur</string>
+    <string name="dashboard_v2_site">Site</string>
+    <string name="dashboard_v2_iob">IOB</string>
+    <string name="dashboard_v2_target">Cible</string>
+    <string name="dashboard_v2_basal">Basale</string>
+    <string name="dashboard_v2_metric_a11y">%1$s : %2$s</string>
 </resources>

@@ -573,6 +573,20 @@ class OverviewViewModel(
         val displayMgdl = DashboardCoherentGlucose.displayMgdl(lastBg, gs, smoothing, now)
         val displayTs = DashboardCoherentGlucose.displayTimestamp(lastBg, gs, smoothing, now)
         val glucoseText = profileUtil.fromMgdlToStringInUnits(displayMgdl)
+        val activeTemporaryTarget = persistenceLayer.getTemporaryTargetActiveAt(now)
+        val targetRange = DashboardV2StatusValueResolver.resolveTargetRangeMgdl(
+            temporaryLow = activeTemporaryTarget?.lowTarget,
+            temporaryHigh = activeTemporaryTarget?.highTarget,
+            profileLow = profile?.getTargetLowMgdl(now),
+            profileHigh = profile?.getTargetHighMgdl(now),
+        )
+        val targetText = targetRange?.let { range ->
+            profileUtil.toTargetRangeString(
+                low = range.low,
+                high = range.high,
+                sourceUnits = GlucoseUnit.MGDL,
+            )
+        }
         val trendArrow = trendCalculator.getTrendArrow(iobCobCalculator.ads)?.directionToLegacyDrawable()
         val trendDescription = trendCalculator.getTrendDescription(iobCobCalculator.ads) ?: ""
         val deltaMgdlForDisplay = when {
@@ -644,12 +658,24 @@ class OverviewViewModel(
         }
         
         // 5. Basal (current profile basal rate)
-        val basalText = profile?.let { p ->
-            val currentBasal = p.getBasal(now)
-            decimalFormatter.to2Decimal(currentBasal) + " IE"
+        val scheduledBasalRateUh = profile?.getBasal(now)
+        val basalText = scheduledBasalRateUh?.let { rate ->
+            decimalFormatter.to2Decimal(rate) + " IE"
         }
         
-        val activeTempBasal = processedTbrEbData.getTempBasalIncludingConvertedExtended(dateUtil.now())?.takeIf { it.isInProgress }
+        val activeTempBasal = processedTbrEbData.getTempBasalIncludingConvertedExtended(now)?.takeIf { it.isInProgress }
+        val effectiveBasalRateUh = DashboardV2StatusValueResolver.resolveEffectiveBasalRateUh(
+            temporaryBasal = activeTempBasal?.let { tbr ->
+                DashboardV2StatusValueResolver.TemporaryBasal(
+                    rate = tbr.rate,
+                    isAbsolute = tbr.isAbsolute,
+                )
+            },
+            scheduledBasalRateUh = scheduledBasalRateUh,
+        )
+        val effectiveBasalText = effectiveBasalRateUh?.let { rate ->
+            resourceHelper.gs(app.aaps.core.ui.R.string.pump_base_basal_rate, rate)
+        }
 
         // 6. Activity % — delta vs scheduled basal during an active TBR (not the same framing as the "% of profile" on the TBR line).
         val activityPctText = activeTempBasal?.let { tbr ->
@@ -864,6 +890,7 @@ class OverviewViewModel(
             glucoseValue = displayMgdl,
             targetLow = profile?.getTargetLowMgdl(),
             targetHigh = profile?.getTargetHighMgdl(),
+            targetText = targetText,
             
             // Circle-Top Hybrid Dashboard fields
             glucoseMgdl = displayMgdl?.toInt(),
@@ -877,6 +904,7 @@ class OverviewViewModel(
             tbrRateText = tbrRateText,
             tbrRateCompactText = tbrRateCompactText,
             basalText = basalText,
+            effectiveBasalText = effectiveBasalText,
             stepsText = stepsText,
             hrText = hrText,
             cvText = cvText,
@@ -1493,6 +1521,8 @@ data class StatusCardState(
     val glucoseValue: Double? = null,
     val targetLow: Double? = null,
     val targetHigh: Double? = null,
+    /** Active temporary target when present, otherwise profile target, in the user's glucose units. */
+    val targetText: String? = null,
     
     // Circle-Top Hybrid Dashboard fields
     val glucoseMgdl: Int? = null,
@@ -1507,6 +1537,8 @@ data class StatusCardState(
     /** TBR rate only (no % of profile) for the horizontal compact chip row. */
     val tbrRateCompactText: String? = null,
     val basalText: String? = null,
+    /** Active TBR rate when present, otherwise scheduled profile basal; always formatted in U/h. */
+    val effectiveBasalText: String? = null,
     val stepsText: String? = null,
     val hrText: String? = null,
     val cvText: String? = null,
