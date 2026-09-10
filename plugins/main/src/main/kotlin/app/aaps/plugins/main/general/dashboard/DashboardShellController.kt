@@ -9,11 +9,13 @@ import android.view.ViewConfiguration
 import androidx.annotation.RequiresApi
 import androidx.appcompat.widget.PopupMenu
 import androidx.core.widget.NestedScrollView
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import app.aaps.core.data.configuration.Constants
 import app.aaps.core.data.model.BS
 import app.aaps.core.data.model.TB
+import app.aaps.core.ui.compose.ScreenMode
 import app.aaps.core.data.time.T
 import app.aaps.core.graph.data.BolusDataPoint
 import app.aaps.core.graph.data.DataPointWithLabelInterface
@@ -786,6 +788,16 @@ internal class DashboardShellController(
         }
     }
 
+    /** Runs [action] only after a Protection.BOLUS check passes — same gate ElementType.CARBS /
+     *  BOLUS_WIZARD / QUICK_WIZARD_MANAGEMENT / TEMP_TARGET_MANAGEMENT require everywhere else. */
+    private fun withBolusProtection(action: (FragmentActivity) -> Unit) {
+        host.activity?.let { activity ->
+            protectionCheck.requestProtection(ProtectionCheck.Protection.BOLUS) { result ->
+                if (result == ProtectionResult.GRANTED) action(activity)
+            }
+        }
+    }
+
     @RequiresApi(Build.VERSION_CODES.CUPCAKE)
     private fun openSensorApp(): Boolean {
         if (xDripSource.isEnabled()) return openCgmApp("com.eveningoutpost.dexdrip")
@@ -1422,6 +1434,39 @@ internal class DashboardShellController(
 
             override fun onAimiPulseClicked() {
                 openAdjustmentDetails()
+            }
+
+            // Route strings must match AppRoute.Stats.route / AppRoute.Treatments.route in the
+            // :app module (app/src/main/kotlin/app/aaps/compose/navigation/AppRoute.kt) — plugins:main
+            // cannot depend on :app, so these are inlined literals, not a shared constant.
+            // Note: AppRoute.TreatmentDialog ("treatment_dialog") is a single bolus-entry dialog, NOT
+            // this screen — the tabbed treatments history/log browser is AppRoute.Treatments ("treatments").
+            override fun openStatsScreen() =
+                uiInteraction.openComposeMainAtRoute(host.context, "stats")
+
+            override fun openTreatmentsScreen() =
+                uiInteraction.openComposeMainAtRoute(host.context, "treatments")
+
+            // Same inlining rule as above. Defaults match each screen's own AppRoute.createRoute()
+            // default (ScreenMode.EDIT), and the no-arg forms of CarbsDialog/WizardDialog.
+            // ElementType.CARBS / BOLUS_WIZARD / QUICK_WIZARD_MANAGEMENT / TEMP_TARGET_MANAGEMENT
+            // all require Protection.BOLUS everywhere else they're reached (QuickLaunchToolbar,
+            // search, NavigationRequest.Element) — gate these the same way so a PIN/biometric lock
+            // configured for bolus-level actions isn't silently skipped from the dashboard.
+            override fun openCarbsEntry() = withBolusProtection {
+                uiInteraction.openComposeMainAtRoute(host.context, "carbs_dialog")
+            }
+
+            override fun openBolusWizard() = withBolusProtection {
+                uiInteraction.openComposeMainAtRoute(host.context, "wizard_dialog")
+            }
+
+            override fun openQuickWizardManagement() = withBolusProtection {
+                uiInteraction.openComposeMainAtRoute(host.context, "quick_wizard_management?mode=${ScreenMode.EDIT.name}")
+            }
+
+            override fun openTempTargetManagement() = withBolusProtection { activity ->
+                uiInteraction.openTempTargetManagementScreen(activity)
             }
         }
 

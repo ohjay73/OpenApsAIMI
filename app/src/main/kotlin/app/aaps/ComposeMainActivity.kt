@@ -133,6 +133,10 @@ import app.aaps.core.ui.compose.preference.LocalHashPassword
 import app.aaps.core.ui.compose.preference.LocalVisibilityContext
 import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
 import app.aaps.plugins.aps.openAPSAIMI.orchestration.AimiLoopRuntimeGuard
+import app.aaps.plugins.aps.openAPSAIMI.advisor.AimiProfileAdvisorActivity
+import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorReportActivity
+import app.aaps.plugins.aps.openAPSAIMI.advisor.meal.MealAdvisorActivity
+import app.aaps.plugins.aps.openAPSAIMI.context.ui.ContextActivity
 import app.aaps.core.ui.compose.pump.PumpActivityDialog
 import app.aaps.core.ui.compose.pump.PumpCommunicationStatus
 import app.aaps.core.ui.locale.LocaleHelper
@@ -144,6 +148,9 @@ import app.aaps.implementation.protection.BiometricCheck
 import app.aaps.plugins.automation.AutomationRuntime
 import app.aaps.plugins.configuration.setupwizard.SWDefinition
 import app.aaps.plugins.main.general.manual.UserManualActivity
+import app.aaps.plugins.main.general.dashboard.DashboardV2ToolAction
+import app.aaps.plugins.main.general.dashboard.DashboardV2ToolDestination
+import app.aaps.plugins.main.general.dashboard.DashboardV2ToolsScreen
 import app.aaps.plugins.main.skins.DashboardHomeVariant
 import app.aaps.plugins.main.skins.DashboardHomeVariantResolver
 import app.aaps.plugins.main.skins.SkinDashboardPreferenceSync
@@ -671,6 +678,15 @@ class ComposeMainActivity : AppCompatActivity() {
                 val calcProgress by mainViewModel.calcProgressFlow.collectAsStateWithLifecycle()
                 val notifications by notificationManager.notifications.collectAsStateWithLifecycle()
                 val quickLaunchItems by mainViewModel.quickLaunchItems.collectAsStateWithLifecycle()
+                val dashboardV2PluginClassNames = if (dashboardHomeVariant == DashboardHomeVariant.DASHBOARD_V2) {
+                    activePlugin.getPluginsList()
+                        .asSequence()
+                        .filter(PluginBase::hasComposeContent)
+                        .map { it.javaClass.simpleName }
+                        .toSet()
+                } else {
+                    emptySet()
+                }
 
                 // Pump setup button in bottom bar
                 val pumpPlugin = activePlugin.activePumpInternal as PluginBase
@@ -846,6 +862,33 @@ class ComposeMainActivity : AppCompatActivity() {
                                 paddingValues = pad,
                                 fabBottomOffset = fab,
                                 dashboardHomeVariant = dashboardHomeVariant,
+                            )
+                        }
+                    } else {
+                        null
+                    },
+                    dashboardTools = if (dashboardHomeVariant == DashboardHomeVariant.DASHBOARD_V2) {
+                        { pad, fab ->
+                            DashboardV2ToolsScreen(
+                                paddingValues = pad,
+                                fabBottomOffset = fab,
+                                availablePluginClassNames = dashboardV2PluginClassNames,
+                                onAction = { action ->
+                                    when (val destination = action.destination) {
+                                        DashboardV2ToolDestination.Actions -> manageSheetState.show()
+                                        is DashboardV2ToolDestination.Element -> handleNavigationRequest(
+                                            NavigationRequest.Element(destination.type),
+                                            navController,
+                                        )
+
+                                        is DashboardV2ToolDestination.Plugin -> handleNavigationRequest(
+                                            NavigationRequest.Plugin(destination.className),
+                                            navController,
+                                        )
+
+                                        is DashboardV2ToolDestination.AimiActivity -> launchDashboardV2Aimi(action)
+                                    }
+                                },
                             )
                         }
                     } else {
@@ -1310,6 +1353,24 @@ class ComposeMainActivity : AppCompatActivity() {
         val pluginIndex = activePlugin.getPluginsList().indexOf(plugin)
         if (plugin.hasComposeContent()) {
             navController?.navigate(AppRoute.PluginContent.createRoute(pluginIndex))
+        }
+    }
+
+    private fun launchDashboardV2Aimi(action: DashboardV2ToolAction) {
+        val destination = action.destination as? DashboardV2ToolDestination.AimiActivity ?: return
+        withProtection(destination.protection) {
+            try {
+                val activityClass = when (action) {
+                    DashboardV2ToolAction.ADVISOR        -> AimiProfileAdvisorActivity::class.java
+                    DashboardV2ToolAction.MEAL_ADVISOR   -> MealAdvisorActivity::class.java
+                    DashboardV2ToolAction.AIMI_CONTEXT   -> ContextActivity::class.java
+                    DashboardV2ToolAction.AUDITOR_REPORT -> AuditorReportActivity::class.java
+                    else                                 -> return@withProtection
+                }
+                startActivity(Intent(this, activityClass))
+            } catch (error: Exception) {
+                aapsLogger.error(LTag.CORE, "Failed to launch DASHBOARD_V2 ${action.name}: ${error.message}")
+            }
         }
     }
 }

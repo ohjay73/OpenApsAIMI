@@ -31,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -155,8 +156,10 @@ fun MainScreen(
     onDismissSearchHardwarePump: () -> Unit,
     /** When true, overview uses the ring glucose hero instead of the flat BG circle (Compose overview only). */
     useRingHeroHome: Boolean = false,
-    /** When non-null, replaces [OverviewScreen] with the embedded AIMI hybrid [app.aaps.plugins.main.general.dashboard.DashboardFragment]. */
+    /** When non-null, replaces [OverviewScreen] with an embedded dashboard supplied by the app module. */
     dashboardOverview: (@Composable (PaddingValues, Dp) -> Unit)? = null,
+    /** Optional DASHBOARD_V2 Tools content. Its presence also enables the fixed five-tab navigation. */
+    dashboardTools: (@Composable (PaddingValues, Dp) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     LocalDateUtil.current
@@ -165,6 +168,7 @@ fun MainScreen(
     var showTreatmentSheet by remember { mutableStateOf(false) }
     var showAutomationSheet by remember { mutableStateOf(false) }
     var showLoopActionSheet by remember { mutableStateOf(false) }
+    var dashboardV2SelectedTab by rememberSaveable { mutableStateOf(DashboardV2NavigationTab.MAIN) }
     val automationState by scenesViewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val isDashboardEmbedded = dashboardOverview != null
@@ -264,8 +268,11 @@ fun MainScreen(
                     Box(modifier = Modifier.fillMaxSize()) {
                         val fabBottomOffset = if (hasToolbar && showChrome) 56.dp else 0.dp
 
-                        // Main content
-                        if (dashboardOverview != null) {
+                        // DASHBOARD_V2 keeps Main and Tools inside the same shell so all overlays,
+                        // padding and quick-launch behavior remain shared.
+                        if (dashboardTools != null && dashboardV2SelectedTab == DashboardV2NavigationTab.TOOLS) {
+                            dashboardTools(contentPadding, fabBottomOffset)
+                        } else if (dashboardOverview != null) {
                             dashboardOverview(contentPadding, fabBottomOffset)
                         } else {
                             OverviewScreen(
@@ -425,7 +432,29 @@ fun MainScreen(
                                 .padding(bottom = scaffoldPadding.calculateBottomPadding())
                         ) {
                             val loopActionState = loopActionViewModel.uiState.collectAsStateWithLifecycle().value
-                            MainNavigationBar(
+                            if (dashboardTools != null) {
+                                DashboardV2NavigationBar(
+                                    selectedTab = dashboardV2SelectedTab,
+                                    masterOrPairedClient = masterOrPairedClient,
+                                    onTabClick = { tab ->
+                                        when (tab) {
+                                            DashboardV2NavigationTab.MAIN,
+                                            DashboardV2NavigationTab.TOOLS -> dashboardV2SelectedTab = tab
+
+                                            DashboardV2NavigationTab.BOLUS,
+                                            DashboardV2NavigationTab.CONFIGURATION,
+                                            DashboardV2NavigationTab.PREFERENCES -> {
+                                                tab.elementType?.let { type ->
+                                                    onNavigate(NavigationRequest.Element(type))
+                                                }
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.onSizeChanged {
+                                        if (it.height > 0 && it.height != bottomBarHeightPx) bottomBarHeightPx = it.height
+                                    },
+                                )
+                            } else MainNavigationBar(
                                 onManageClick = { manageSheetState.show() },
                                 onTreatmentClick = {
                                     treatmentViewModel.refreshState()

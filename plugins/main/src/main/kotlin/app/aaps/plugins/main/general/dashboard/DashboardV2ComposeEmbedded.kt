@@ -4,6 +4,7 @@ import android.content.res.Configuration
 import android.view.View
 import android.widget.FrameLayout
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,8 +19,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -43,15 +46,26 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.dashboard.GlucoseHeroRing
+import app.aaps.core.ui.compose.icons.IcBolus
+import app.aaps.core.ui.compose.icons.IcCarbs
+import app.aaps.core.ui.compose.icons.IcQuickwizard
+import app.aaps.core.ui.compose.icons.IcTtManual
+import app.aaps.core.ui.dialogs.OKDialog
+import app.aaps.core.ui.R as CoreUiR
 import app.aaps.plugins.main.R
 import app.aaps.plugins.main.general.dashboard.compose.DashboardComposeHeroUiMapper
 import app.aaps.plugins.main.general.dashboard.compose.DashboardGraphComposeCard
 import app.aaps.plugins.main.general.dashboard.compose.DashboardNotificationsComposeList
+import app.aaps.plugins.main.general.dashboard.compose.HeroCgmCompactBadge
 import app.aaps.plugins.main.general.dashboard.compose.LocalDashboardHeroCommands
+import app.aaps.plugins.main.general.dashboard.compose.buildReadingLineOnly
 import app.aaps.plugins.main.general.dashboard.viewmodel.OverviewViewModel
 import app.aaps.plugins.main.general.dashboard.viewmodel.StatusCardState
+import app.aaps.ui.compose.overview.aapsClient.AapsClientStatusCard
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
 import kotlinx.coroutines.delay
 
@@ -62,6 +76,7 @@ internal fun DashboardV2ComposeEmbedded(
     embeddedState: DashboardEmbeddedComposeState,
     viewModel: OverviewViewModel,
     graphViewModel: GraphViewModel,
+    config: Config,
     onShellBindingReady: (DashboardShellBinding) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -105,6 +120,30 @@ internal fun DashboardV2ComposeEmbedded(
                 modifier = statusModifier,
             )
         }
+        val aapsClientCard: @Composable (Modifier) -> Unit = { clientModifier ->
+            if (config.AAPSCLIENT) {
+                val nsClientStatus by graphViewModel.nsClientStatusFlow.collectAsStateWithLifecycle()
+                val flavorTint = when {
+                    config.AAPSCLIENT3 -> AapsTheme.generalColors.flavorClient3Tint
+                    config.AAPSCLIENT2 -> AapsTheme.generalColors.flavorClient2Tint
+                    else               -> AapsTheme.generalColors.flavorClient1Tint
+                }
+                AapsClientStatusCard(
+                    statusData = nsClientStatus,
+                    flavorTint = flavorTint,
+                    modifier = clientModifier,
+                )
+            }
+        }
+        val quickActionsRow: @Composable (Modifier) -> Unit = { quickActionsModifier ->
+            DashboardV2QuickActionsRow(
+                onCarbsClick = commands::openCarbsEntry,
+                onBolusWizardClick = commands::openBolusWizard,
+                onQuickWizardClick = commands::openQuickWizardManagement,
+                onTempTargetClick = commands::openTempTargetManagement,
+                modifier = quickActionsModifier,
+            )
+        }
 
         if (isLandscape) {
             Row(
@@ -121,6 +160,8 @@ internal fun DashboardV2ComposeEmbedded(
                     verticalArrangement = Arrangement.spacedBy(sectionSpacing),
                 ) {
                     statusCard(Modifier.fillMaxWidth())
+                    quickActionsRow(Modifier.fillMaxWidth())
+                    aapsClientCard(Modifier.fillMaxWidth())
                     DashboardNotificationsComposeList(
                         composeState = embeddedState,
                         compact = true,
@@ -141,6 +182,8 @@ internal fun DashboardV2ComposeEmbedded(
                 verticalArrangement = Arrangement.spacedBy(sectionSpacing),
             ) {
                 statusCard(Modifier.fillMaxWidth())
+                quickActionsRow(Modifier.fillMaxWidth())
+                aapsClientCard(Modifier.fillMaxWidth())
                 DashboardNotificationsComposeList(
                     composeState = embeddedState,
                     compact = true,
@@ -153,6 +196,42 @@ internal fun DashboardV2ComposeEmbedded(
                 )
             }
         }
+    }
+}
+
+/** Small pill row of dashboard-level shortcuts: carbs entry, bolus wizard, quick wizard, temp target. */
+@Composable
+private fun DashboardV2QuickActionsRow(
+    onCarbsClick: () -> Unit,
+    onBolusWizardClick: () -> Unit,
+    onQuickWizardClick: () -> Unit,
+    onTempTargetClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        AssistChip(
+            onClick = onCarbsClick,
+            label = { Text(text = stringResource(CoreUiR.string.carbs)) },
+            leadingIcon = { Icon(imageVector = IcCarbs, contentDescription = null) },
+        )
+        AssistChip(
+            onClick = onBolusWizardClick,
+            label = { Text(text = stringResource(CoreUiR.string.boluswizard)) },
+            leadingIcon = { Icon(imageVector = IcBolus, contentDescription = null) },
+        )
+        AssistChip(
+            onClick = onQuickWizardClick,
+            label = { Text(text = stringResource(CoreUiR.string.quickwizard)) },
+            leadingIcon = { Icon(imageVector = IcQuickwizard, contentDescription = null) },
+        )
+        AssistChip(
+            onClick = onTempTargetClick,
+            label = { Text(text = stringResource(CoreUiR.string.temp_target_management)) },
+            leadingIcon = { Icon(imageVector = IcTtManual, contentDescription = null) },
+        )
     }
 }
 
@@ -184,6 +263,12 @@ private fun DashboardV2StatusCard(
         state?.let { DashboardComposeHeroUiMapper.buildHeroState(context, it) }
     }
     val loopText = state?.loopStatusText.dashboardV2ValueOr(unavailable)
+    val heartRateValue = state?.hrText.dashboardV2ValueOr(unavailable)
+    val heartRateText = if (heartRateValue == unavailable) {
+        unavailable
+    } else {
+        stringResource(R.string.dashboard_v2_heart_rate_value, heartRateValue)
+    }
     val loopDescription = stringResource(R.string.dashboard_v2_loop_a11y, loopText)
     val openLoopLabel = stringResource(R.string.dashboard_v2_open_loop)
     val heroDescription = state?.contentDescription.dashboardV2ValueOr(
@@ -238,6 +323,22 @@ private fun DashboardV2StatusCard(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                DashboardV2Badge(
+                    label = stringResource(R.string.dashboard_v2_steps),
+                    value = state?.stepsText.dashboardV2ValueOr(unavailable),
+                    modifier = Modifier.weight(1f),
+                )
+                DashboardV2Badge(
+                    label = stringResource(R.string.dashboard_v2_heart_rate),
+                    value = heartRateText,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
@@ -287,15 +388,21 @@ private fun DashboardV2StatusCard(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val reservoirLabel = stringResource(R.string.dashboard_v2_reservoir)
+                        val reservoirValue = state?.reservoirText.dashboardV2ValueOr(unavailable)
                         DashboardV2Badge(
-                            label = stringResource(R.string.dashboard_v2_reservoir),
-                            value = state?.reservoirText.dashboardV2ValueOr(unavailable),
+                            label = reservoirLabel,
+                            value = reservoirValue,
                             modifier = Modifier.weight(1f),
+                            onClick = { OKDialog.show(context, reservoirLabel, reservoirValue) },
                         )
+                        val batteryLabel = stringResource(R.string.dashboard_v2_battery)
+                        val batteryValue = state?.pumpBatteryText.dashboardV2ValueOr(unavailable)
                         DashboardV2Badge(
-                            label = stringResource(R.string.dashboard_v2_battery),
-                            value = state?.pumpBatteryText.dashboardV2ValueOr(unavailable),
+                            label = batteryLabel,
+                            value = batteryValue,
                             modifier = Modifier.weight(1f),
+                            onClick = { OKDialog.show(context, batteryLabel, batteryValue) },
                         )
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -309,6 +416,21 @@ private fun DashboardV2StatusCard(
                             value = state?.infusionAgeText.dashboardV2ValueOr(unavailable),
                             modifier = Modifier.weight(1f),
                         )
+                    }
+                    if (state != null && (state.sensorAgeText?.isNotBlank() == true || state.adaptiveSmoothingQualityTier != null)) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.padding(top = 6.dp),
+                        ) {
+                            HeroCgmCompactBadge(
+                                context = context,
+                                state = state,
+                                readingLine = buildReadingLineOnly(context, state),
+                                sensorAge = state.sensorAgeText?.trim().orEmpty(),
+                                smoothingLabel = state.adaptiveSmoothingQualityBadgeText.trim(),
+                                compact = compact,
+                            )
+                        }
                     }
                 }
             }
@@ -342,12 +464,14 @@ private fun DashboardV2Badge(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
 ) {
     DashboardV2LabelValue(
         label = label,
         value = value,
         modifier = modifier,
         containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+        onClick = onClick,
     )
 }
 
@@ -371,10 +495,16 @@ private fun DashboardV2LabelValue(
     value: String,
     containerColor: androidx.compose.ui.graphics.Color,
     modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
 ) {
     val description = stringResource(R.string.dashboard_v2_metric_a11y, label, value)
+    val clickableModifier = if (onClick != null) {
+        modifier.clickable(onClickLabel = label, role = Role.Button, onClick = onClick)
+    } else {
+        modifier
+    }
     Surface(
-        modifier = modifier.semantics { contentDescription = description },
+        modifier = clickableModifier.semantics { contentDescription = description },
         shape = RoundedCornerShape(10.dp),
         color = containerColor,
     ) {
@@ -403,4 +533,4 @@ private fun DashboardV2LabelValue(
 }
 
 private fun String?.dashboardV2ValueOr(fallback: String): String =
-    this?.trim()?.takeIf { it.isNotEmpty() } ?: fallback
+    this?.trim()?.takeIf { it.isNotEmpty() && it != "--" && it != "—" } ?: fallback

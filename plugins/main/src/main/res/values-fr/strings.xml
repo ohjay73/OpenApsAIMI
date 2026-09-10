@@ -38,5 +38,24 @@
     <string name="dashboard_v2_iob">IOB</string>
     <string name="dashboard_v2_target">Cible</string>
     <string name="dashboard_v2_basal">Basale</string>
+    <string name="dashboard_v2_steps">Pas</string>
+    <string name="dashboard_v2_heart_rate">Fréquence cardiaque</string>
+    <string name="dashboard_v2_heart_rate_value">%1$s bpm</string>
     <string name="dashboard_v2_metric_a11y">%1$s : %2$s</string>
+    <string name="dashboard_v2_tools_title">Outils</string>
+    <string name="dashboard_v2_tools_aimi_section">AIMI</string>
+    <string name="dashboard_v2_tools_unavailable">Indisponible dans cette version</string>
+    <string name="dashboard_v2_tool_actions">Actions</string>
+    <string name="dashboard_v2_tool_rapid_acting">Insuline rapide Oref</string>
+    <string name="dashboard_v2_tool_profile">Profil</string>
+    <string name="dashboard_v2_tool_automation">Automatisation</string>
+    <string name="dashboard_v2_tool_nsclient">NSClient</string>
+    <string name="dashboard_v2_tool_tidepool">Tidepool</string>
+    <string name="dashboard_v2_tool_xdrip">xDrip+</string>
+    <string name="dashboard_v2_tool_maintenance">Maintenance</string>
+    <string name="dashboard_v2_tool_xdrip_bg">Glycémie xDrip+</string>
+    <string name="dashboard_v2_tool_advisor">Advisor</string>
+    <string name="dashboard_v2_tool_meal_advisor">Advisor repas</string>
+    <string name="dashboard_v2_tool_aimi_context">Contexte AIMI</string>
+    <string name="dashboard_v2_tool_auditor_report">Rapport Auditor</string>
 </resources>

@@ -108,6 +108,7 @@ class AimiDashboardComposeRootView @JvmOverloads constructor(
                             embeddedState = embeddedComposeState,
                             viewModel = viewModel,
                             graphViewModel = graphViewModel,
+                            config = deps.config,
                             onShellBindingReady = onShellBindingReady,
                         )
 

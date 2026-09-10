@@ -217,7 +217,26 @@
     <string name="dashboard_v2_iob">IOB</string>
     <string name="dashboard_v2_target">Target</string>
     <string name="dashboard_v2_basal">Basal</string>
+    <string name="dashboard_v2_steps">Steps</string>
+    <string name="dashboard_v2_heart_rate">Heart rate</string>
+    <string name="dashboard_v2_heart_rate_value">%1$s bpm</string>
     <string name="dashboard_v2_metric_a11y">%1$s: %2$s</string>
+    <string name="dashboard_v2_tools_title">Tools</string>
+    <string name="dashboard_v2_tools_aimi_section">AIMI</string>
+    <string name="dashboard_v2_tools_unavailable">Unavailable in this build</string>
+    <string name="dashboard_v2_tool_actions">Actions</string>
+    <string name="dashboard_v2_tool_rapid_acting">Rapid-Acting Oref</string>
+    <string name="dashboard_v2_tool_profile">Profile</string>
+    <string name="dashboard_v2_tool_automation">Automation</string>
+    <string name="dashboard_v2_tool_nsclient">NSClient</string>
+    <string name="dashboard_v2_tool_tidepool">Tidepool</string>
+    <string name="dashboard_v2_tool_xdrip">xDrip+</string>
+    <string name="dashboard_v2_tool_maintenance">Maintenance</string>
+    <string name="dashboard_v2_tool_xdrip_bg">xDrip+ BG</string>
+    <string name="dashboard_v2_tool_advisor">Advisor</string>
+    <string name="dashboard_v2_tool_meal_advisor">Meal Advisor</string>
+    <string name="dashboard_v2_tool_aimi_context">AIMI Context</string>
+    <string name="dashboard_v2_tool_auditor_report">Auditor report</string>
     <string name="notification_iob_short">%1$.1fU</string>
 
     <string name="suspendloopfor1h">Suspend loop for 1h</string>
