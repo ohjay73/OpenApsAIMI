@@ -891,7 +891,9 @@ class OverviewViewModel(
             targetLow = profile?.getTargetLowMgdl(),
             targetHigh = profile?.getTargetHighMgdl(),
             targetText = targetText,
-            
+            isTempTargetActive = activeTemporaryTarget != null,
+            unitText = profileFunction.getUnits().displayLabel,
+
             // Circle-Top Hybrid Dashboard fields
             glucoseMgdl = displayMgdl?.toInt(),
             noseAngleDeg = noseAngleDeg,
@@ -1523,7 +1525,11 @@ data class StatusCardState(
     val targetHigh: Double? = null,
     /** Active temporary target when present, otherwise profile target, in the user's glucose units. */
     val targetText: String? = null,
-    
+    /** True when a temporary target is currently active (not just when [targetText] is non-blank). */
+    val isTempTargetActive: Boolean = false,
+    /** Display label of the user's glucose unit preference ("mg/dL" or "mmol/L"). */
+    val unitText: String = "mg/dL",
+
     // Circle-Top Hybrid Dashboard fields
     val glucoseMgdl: Int? = null,
     val noseAngleDeg: Float? = null,

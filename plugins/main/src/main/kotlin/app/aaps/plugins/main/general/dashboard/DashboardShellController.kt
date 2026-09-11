@@ -42,6 +42,7 @@ import app.aaps.core.interfaces.rx.events.EventUpdateOverviewIobCob
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
+import app.aaps.core.ui.dialogs.OKDialog
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.BooleanNonKey
 import app.aaps.core.keys.IntKey
@@ -57,13 +58,16 @@ import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorStatusLiveData
 import app.aaps.plugins.main.R
 import app.aaps.plugins.main.databinding.FragmentDashboardBinding
 import app.aaps.plugins.main.general.dashboard.compose.DashboardHeroCommands
+import app.aaps.plugins.main.general.dashboard.glass.GlassHeroCommands
 import app.aaps.plugins.main.general.dashboard.viewmodel.AdjustmentCardState
 import app.aaps.plugins.main.general.dashboard.viewmodel.OverviewViewModel
+import app.aaps.plugins.main.general.dashboard.viewmodel.StatusCardState
 import app.aaps.plugins.main.general.manual.UserManualActivity
 import app.aaps.plugins.main.general.overview.OverviewDataImpl
 import app.aaps.plugins.main.general.overview.graphData.GraphData
 import app.aaps.plugins.main.general.overview.graphData.viewportShouldFollowLiveRange
 import app.aaps.plugins.main.general.overview.notifications.NotificationUiBinder
+import app.aaps.ui.compose.careDialog.CareportalEventType
 import com.jjoe64.graphview.series.LineGraphSeries
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
@@ -138,6 +142,7 @@ internal class DashboardShellController(
     private var lastNonEmptyComposeGraphInput: DashboardEmbeddedComposeState.GraphRenderInput? = null
 
     private val heroCommands: DashboardHeroCommands by lazy { createHeroCommands() }
+    private val glassHeroCommands: GlassHeroCommands by lazy { createGlassHeroCommands() }
 
     /**
      * Compose shell: [runDashboardUiAttachedSide] was invoked in bursts (activity lifecycle + replay),
@@ -175,6 +180,8 @@ internal class DashboardShellController(
     }
 
     internal fun heroCommandsForCompose(): DashboardHeroCommands = heroCommands
+
+    internal fun glassHeroCommandsForCompose(): GlassHeroCommands = glassHeroCommands
 
     fun attachShell(binding: DashboardShellBinding) {
         shellBinding = binding
@@ -795,6 +802,14 @@ internal class DashboardShellController(
             protectionCheck.requestProtection(ProtectionCheck.Protection.BOLUS) { result ->
                 if (result == ProtectionResult.GRANTED) action(activity)
             }
+        }
+    }
+
+    /** Runs [action] only after a Protection.PREFERENCES check passes — matches how the classic
+     *  Preferences entry point is gated elsewhere. */
+    private fun withPreferencesProtection(action: () -> Unit) {
+        protectionCheck.requestProtection(ProtectionCheck.Protection.PREFERENCES) { result ->
+            if (result == ProtectionResult.GRANTED) action()
         }
     }
 
@@ -1469,6 +1484,66 @@ internal class DashboardShellController(
                 uiInteraction.openTempTargetManagementScreen(activity)
             }
         }
+
+    private fun createGlassHeroCommands(): GlassHeroCommands =
+        object : GlassHeroCommands {
+            override fun openLoop() = openLoopDialog()
+
+            override fun openLoopDashboard() =
+                uiInteraction.openComposeMainAtRoute(host.context, "glass_loop_dashboard")
+
+            override fun openInsulin() {
+                openBolus()
+            }
+
+            override fun openTarget() = withBolusProtection { activity ->
+                uiInteraction.openTempTargetManagementScreen(activity)
+            }
+
+            override fun openBasal() = withBolusProtection {
+                uiInteraction.openComposeMainAtRoute(host.context, "temp_basal_dialog")
+            }
+
+            override fun openCannula() = withBolusProtection {
+                uiInteraction.openComposeMainAtRoute(host.context, "fill_dialog/0")
+            }
+
+            override fun openPump() {
+                // Reservoir detail — same OKDialog pattern as DASHBOARD_V2's Reservoir badge.
+                OKDialog.show(
+                    host.context,
+                    resourceHelper.gs(R.string.dashboard_v2_reservoir),
+                    statusCardStateSnapshot()?.reservoirText ?: "--"
+                )
+            }
+
+            override fun openBattery() {
+                OKDialog.show(
+                    host.context,
+                    resourceHelper.gs(R.string.dashboard_v2_battery),
+                    statusCardStateSnapshot()?.pumpBatteryText ?: "--"
+                )
+            }
+
+            override fun openSensorInsert() = withBolusProtection {
+                uiInteraction.openComposeMainAtRoute(
+                    host.context,
+                    "care_dialog/${CareportalEventType.SENSOR_INSERT.ordinal}",
+                )
+            }
+
+            override fun openPreferences() = withPreferencesProtection {
+                uiInteraction.openComposeMainAtRoute(host.context, "preferences")
+            }
+
+            override fun openStatsScreen() =
+                uiInteraction.openComposeMainAtRoute(host.context, "stats")
+
+            override fun openTreatmentsScreen() =
+                uiInteraction.openComposeMainAtRoute(host.context, "treatments")
+        }
+
+    private fun statusCardStateSnapshot(): StatusCardState? = viewModel.statusCardState.value
 
     private fun launchAimiAdaptationStatusActivity() {
         try {

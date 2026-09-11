@@ -5,4 +5,5 @@ enum class DashboardHomeVariant {
     OVERVIEW,
     DASHBOARD_V1,
     DASHBOARD_V2,
+    GLASS,
 }

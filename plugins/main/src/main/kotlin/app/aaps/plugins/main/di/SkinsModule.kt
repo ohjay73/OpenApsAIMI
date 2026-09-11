@@ -4,6 +4,7 @@ import app.aaps.core.interfaces.skin.SkinDescriptionProvider
 import app.aaps.plugins.main.skins.SkinButtonsOn
 import app.aaps.plugins.main.skins.SkinClassic
 import app.aaps.plugins.main.skins.SkinDashboardV2
+import app.aaps.plugins.main.skins.SkinGlass
 import app.aaps.plugins.main.skins.SkinInterface
 import app.aaps.plugins.main.skins.SkinLargeDisplay
 import app.aaps.plugins.main.skins.SkinLowRes
@@ -48,6 +49,12 @@ open class SkinsModule {
     @IntoMap
     @IntKey(5)
     fun bindsSkinDashboardV2(skinDashboardV2: SkinDashboardV2): SkinInterface = skinDashboardV2
+
+    @Provides
+    @Skin
+    @IntoMap
+    @IntKey(6)
+    fun bindsSkinGlass(skinGlass: SkinGlass): SkinInterface = skinGlass
 
     @Provides
     @Skin

@@ -204,6 +204,7 @@
     <string name="largedisplay_description">Large display</string>
     <string name="minimal_skin_description">New skin dashboard</string>
     <string name="dashboard_v2_skin_description">DASHBOARD_V2</string>
+    <string name="glass_skin_description">GLASS</string>
     <string name="dashboard_v2_current_status">Current status</string>
     <string name="dashboard_v2_glucose_unavailable">No data</string>
     <string name="dashboard_v2_glucose_unavailable_a11y">Glucose data is not available</string>
@@ -221,6 +222,38 @@
     <string name="dashboard_v2_heart_rate">Heart rate</string>
     <string name="dashboard_v2_heart_rate_value">%1$s bpm</string>
     <string name="dashboard_v2_metric_a11y">%1$s: %2$s</string>
+    <string name="dashboard_glass_loop_label">Loop</string>
+    <string name="dashboard_glass_iob_label">IOB</string>
+    <string name="dashboard_glass_target_label">Target</string>
+    <string name="dashboard_glass_basal_t_label">Basal T</string>
+    <string name="dashboard_glass_loop_dashboard_title">Loop Dashboard</string>
+    <string name="dashboard_glass_loop_dashboard_last_run" comment="%1$s=time, e.g. 14:32">Last run: %1$s</string>
+    <string name="dashboard_glass_loop_dashboard_pump_label">PUMP</string>
+    <string name="dashboard_glass_loop_dashboard_requested" comment="%1$s=insulin amount with unit, e.g. 0.50 U">%1$s requested</string>
+    <string name="dashboard_glass_loop_dynamics_title">Glucose &amp; Insulin Dynamics</string>
+    <string name="dashboard_glass_loop_glucose_label">GLUCOSE</string>
+    <string name="dashboard_glass_loop_delta_5m_label" comment="e.g. -1.20 5m delta">5m delta</string>
+    <string name="dashboard_glass_loop_delta_avg_label">DELTA (SHORT / LONG)</string>
+    <string name="dashboard_glass_loop_delta_avg_hint">5m / 15m avg</string>
+    <string name="dashboard_glass_loop_iob_label">IOB</string>
+    <string name="dashboard_glass_loop_iob_hint">Active Insulin</string>
+    <string name="dashboard_glass_loop_target_label">TARGET</string>
+    <string name="dashboard_glass_loop_tdd_label">TDD 7 Days</string>
+    <string name="dashboard_glass_loop_key_factors_title">Key Factors</string>
+    <string name="dashboard_glass_loop_max_iob_label">MAX IOB</string>
+    <string name="dashboard_glass_loop_max_smb_label">MAX SMB</string>
+    <string name="dashboard_glass_loop_isf_label">ISF SENSITIVITY</string>
+    <string name="dashboard_glass_loop_isf_value" comment="%1$s=ISF value with one decimal e.g. 42.3, %2$s=unit e.g. mg/dL/U">%1$.1f %2$s</string>
+    <string name="dashboard_glass_loop_stable_bg_label">BG STABLE</string>
+    <string name="dashboard_glass_loop_weekday">Weekday</string>
+    <string name="dashboard_glass_loop_weekend">Weekend</string>
+    <string name="dashboard_glass_loop_hour_badge" comment="%1$s=2-digit hour e.g. 14, %2$s=Weekday or Weekend">%1$sh • %2$s</string>
+    <string name="dashboard_glass_loop_safety_title">Safety &amp; Alarms</string>
+    <string name="dashboard_glass_loop_tir_low_label">Low TIR (1h / Today)</string>
+    <string name="dashboard_glass_loop_tir_low_value" comment="%1$s=percent e.g. 5%%, %2$s=percent e.g. 8%%">%1$s / %2$s</string>
+    <string name="dashboard_glass_loop_steps_label">Recent Activity / Steps</string>
+    <string name="dashboard_glass_loop_steps_5m" comment="%1$d=step count">%1$d steps (5m)</string>
+    <string name="dashboard_glass_loop_footer" comment="%1$s=insulin amount with unit e.g. 0.50 U, %2$s=app version e.g. 3.5.0">Requested %1$s to pump • %2$s</string>
     <string name="dashboard_v2_tools_title">Tools</string>
     <string name="dashboard_v2_tools_aimi_section">AIMI</string>
     <string name="dashboard_v2_tools_unavailable">Unavailable in this build</string>

@@ -151,6 +151,7 @@ import app.aaps.plugins.main.general.manual.UserManualActivity
 import app.aaps.plugins.main.general.dashboard.DashboardV2ToolAction
 import app.aaps.plugins.main.general.dashboard.DashboardV2ToolDestination
 import app.aaps.plugins.main.general.dashboard.DashboardV2ToolsScreen
+import app.aaps.plugins.main.general.dashboard.glass.GlassLoopDashboardViewModel
 import app.aaps.plugins.main.skins.DashboardHomeVariant
 import app.aaps.plugins.main.skins.DashboardHomeVariantResolver
 import app.aaps.plugins.main.skins.SkinDashboardPreferenceSync
@@ -258,6 +259,7 @@ class ComposeMainActivity : AppCompatActivity() {
         viewModelFactory { initializer { chipsViewModelFactory.create(overviewDataCache) } }
     }
     private val treatmentsViewModel: TreatmentsViewModel by viewModels()
+    private val glassLoopDashboardViewModel: GlassLoopDashboardViewModel by viewModels()
     private val insulinManagementViewModel: InsulinManagementViewModel by viewModels()
     private val tempTargetManagementViewModel: TempTargetManagementViewModel by viewModels()
     private val quickWizardManagementViewModel: QuickWizardManagementViewModel by viewModels()
@@ -911,6 +913,7 @@ class ComposeMainActivity : AppCompatActivity() {
                 configurationViewModel = configurationViewModel,
                 treatmentsViewModel = treatmentsViewModel,
                 statsViewModel = statsViewModel,
+                glassLoopDashboardViewModel = glassLoopDashboardViewModel,
                 siteRotationManagementViewModel = siteRotationManagementViewModel,
                 graphViewModel = graphViewModel,
                 chipsViewModel = chipsViewModel,

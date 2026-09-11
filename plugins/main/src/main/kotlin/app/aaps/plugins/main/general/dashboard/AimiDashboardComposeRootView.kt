@@ -5,6 +5,7 @@ import android.util.AttributeSet
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -21,9 +22,13 @@ import androidx.lifecycle.lifecycleScope
 import app.aaps.core.ui.compose.LocalPreferences
 import app.aaps.plugins.main.general.dashboard.compose.LocalDashboardHeroCommands
 import app.aaps.plugins.main.general.dashboard.compose.NoopDashboardHeroCommands
+import app.aaps.plugins.main.general.dashboard.glass.GlassOverviewComposeEmbedded
+import app.aaps.plugins.main.general.dashboard.glass.LocalGlassHeroCommands
+import app.aaps.plugins.main.general.dashboard.glass.NoopGlassHeroCommands
 import app.aaps.plugins.main.general.dashboard.viewmodel.OverviewViewModel
 import app.aaps.plugins.main.skins.DashboardHomeVariant
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
+import app.aaps.ui.compose.overview.statusLights.StatusViewModel
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.CoroutineScope
 
@@ -74,6 +79,7 @@ class AimiDashboardComposeRootView @JvmOverloads constructor(
             OverviewViewModel::class.java,
         )
         val graphViewModel = ViewModelProvider(act)[GraphViewModel::class.java]
+        val statusViewModel = ViewModelProvider(act)[StatusViewModel::class.java]
         val cv = ComposeView(context).apply {
             // Dispose with our LifecycleRegistry (not DetachedFromWindow): manual removeAllViews()
             // while nested AndroidView interop is recomposing can race with accessibility teardown
@@ -84,9 +90,11 @@ class AimiDashboardComposeRootView @JvmOverloads constructor(
             setContent {
                 var shellCtrl by remember { mutableStateOf<DashboardShellController?>(null) }
                 val heroCommands = shellCtrl?.heroCommandsForCompose() ?: NoopDashboardHeroCommands
+                val glassHeroCommands = shellCtrl?.glassHeroCommandsForCompose() ?: NoopGlassHeroCommands
                 CompositionLocalProvider(
                     LocalPreferences provides deps.preferences,
                     LocalDashboardHeroCommands provides heroCommands,
+                    LocalGlassHeroCommands provides glassHeroCommands,
                 ) {
                     val onShellBindingReady: (DashboardShellBinding) -> Unit = { shellBinding ->
                         if (shellCtrl == null) {
@@ -111,6 +119,25 @@ class AimiDashboardComposeRootView @JvmOverloads constructor(
                             config = deps.config,
                             onShellBindingReady = onShellBindingReady,
                         )
+
+                        DashboardHomeVariant.GLASS -> {
+                            val auditorHost = remember { FrameLayout(context) }
+                            LaunchedEffect(Unit) {
+                                onShellBindingReady(
+                                    DashboardShellBinding.fromComposeEmbeddedColumn(
+                                        shellPostRoot = this@AimiDashboardComposeRootView,
+                                        auditorHost = auditorHost,
+                                        glucoseGraph = null,
+                                    ),
+                                )
+                            }
+                            GlassOverviewComposeEmbedded(
+                                overviewViewModel = viewModel,
+                                statusViewModel = statusViewModel,
+                                graphViewModel = graphViewModel,
+                                embeddedState = embeddedComposeState,
+                            )
+                        }
 
                         DashboardHomeVariant.DASHBOARD_V1,
                         DashboardHomeVariant.OVERVIEW,

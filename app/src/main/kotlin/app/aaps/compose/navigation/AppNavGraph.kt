@@ -1,5 +1,6 @@
 package app.aaps.compose.navigation
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,6 +16,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,8 +55,10 @@ import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.interfaces.VisibilityContext
+import app.aaps.core.ui.UiMode
 import app.aaps.core.ui.compose.AapsTopAppBar
 import app.aaps.core.ui.compose.ComposablePluginContent
+import app.aaps.core.ui.compose.LocalPreferences
 import app.aaps.core.ui.compose.LocalSnackbarHostState
 import app.aaps.core.ui.compose.ScreenMode
 import app.aaps.core.ui.compose.ToolbarConfig
@@ -66,6 +70,8 @@ import app.aaps.core.ui.compose.siteRotation.SiteLocationPickerScreen
 import app.aaps.plugins.automation.AutomationRuntime
 import app.aaps.plugins.configuration.setupwizard.SWDefinition
 import app.aaps.plugins.configuration.setupwizard.SetupWizardScreen
+import app.aaps.plugins.main.general.dashboard.glass.GlassLoopDashboardScreen
+import app.aaps.plugins.main.general.dashboard.glass.GlassLoopDashboardViewModel
 import app.aaps.plugins.sync.nsclientV3.clientcontrol.compose.AuthorizedClientsScreen
 import app.aaps.plugins.sync.nsclientV3.clientcontrol.compose.PairWithMasterScreen
 import app.aaps.ui.compose.calibrationDialog.CalibrationDialogScreen
@@ -146,6 +152,7 @@ fun NavGraphBuilder.appNavGraph(
     configurationViewModel: ConfigurationViewModel,
     treatmentsViewModel: TreatmentsViewModel,
     statsViewModel: StatsViewModel,
+    glassLoopDashboardViewModel: GlassLoopDashboardViewModel,
     siteRotationManagementViewModel: SiteRotationManagementViewModel,
     graphViewModel: app.aaps.ui.compose.overview.graphs.GraphViewModel,
     chipsViewModel: ChipsViewModel,
@@ -515,6 +522,23 @@ fun NavGraphBuilder.appNavGraph(
         StatsScreen(
             viewModel = statsViewModel,
             onNavigateBack = { navController.safePopBackStack() }
+        )
+    }
+
+    composable(AppRoute.GlassLoopDashboard.route) {
+        val uiState by glassLoopDashboardViewModel.uiState.collectAsStateWithLifecycle()
+        LaunchedEffect(Unit) { glassLoopDashboardViewModel.refresh() }
+        val preferences = LocalPreferences.current
+        val darkModeValue by preferences.observe(StringKey.GeneralDarkMode).collectAsState()
+        val isDark = when (UiMode.fromString(darkModeValue)) {
+            UiMode.LIGHT -> false
+            UiMode.DARK -> true
+            UiMode.SYSTEM -> isSystemInDarkTheme()
+        }
+        GlassLoopDashboardScreen(
+            uiState = uiState,
+            onBack = { navController.safePopBackStack() },
+            isDark = isDark,
         )
     }
 
