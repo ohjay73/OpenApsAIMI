@@ -9,6 +9,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.fragment.app.FragmentActivity
 import app.aaps.plugins.main.general.dashboard.AimiDashboardComposeRootView
+import app.aaps.plugins.main.general.dashboard.DashboardV2ToolAction
 import app.aaps.plugins.main.skins.DashboardHomeVariant
 
 /**
@@ -20,6 +21,8 @@ fun DashboardOverviewHost(
     paddingValues: PaddingValues,
     fabBottomOffset: Dp,
     dashboardHomeVariant: DashboardHomeVariant,
+    availablePluginClassNames: Set<String>,
+    onToolAction: (DashboardV2ToolAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     AndroidView(
@@ -32,6 +35,8 @@ fun DashboardOverviewHost(
             AimiDashboardComposeRootView(
                 context = ctx,
                 dashboardHomeVariant = dashboardHomeVariant,
+                availablePluginClassNames = availablePluginClassNames,
+                onToolAction = onToolAction,
             )
         },
         update = { },

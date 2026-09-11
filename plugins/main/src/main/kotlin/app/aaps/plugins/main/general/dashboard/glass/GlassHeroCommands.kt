@@ -12,7 +12,7 @@ interface GlassHeroCommands {
     fun openBattery()
     fun openBasal()
     fun openSensorInsert()
-    fun openPreferences()
+    fun openSensorQuality()
     fun openStatsScreen()
     fun openTreatmentsScreen()
 }
@@ -27,7 +27,7 @@ object NoopGlassHeroCommands : GlassHeroCommands {
     override fun openBattery() {}
     override fun openBasal() {}
     override fun openSensorInsert() {}
-    override fun openPreferences() {}
+    override fun openSensorQuality() {}
     override fun openStatsScreen() {}
     override fun openTreatmentsScreen() {}
 }

@@ -36,7 +36,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.aaps.core.ui.compose.StatusLevel
 import app.aaps.core.ui.compose.statusLevelToColor
-import app.aaps.core.ui.R as CoreUiR
 import app.aaps.plugins.main.R
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -53,7 +52,8 @@ internal fun StatusAgoraCard(
     onOpenBattery: () -> Unit,
     onOpenBasal: () -> Unit,
     onOpenSensorInsert: () -> Unit,
-    onOpenPreferences: () -> Unit,
+    onOpenSensorQuality: () -> Unit,
+    onOpenTools: () -> Unit,
 ) {
     GlassContainer(isDark = isDark, modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -112,6 +112,20 @@ internal fun StatusAgoraCard(
                         leadingIcon = {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_glyco_battery),
+                                contentDescription = null,
+                                tint = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B),
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    )
+                    GlassPill(
+                        label = stringResource(R.string.dashboard_glass_tools_label),
+                        value = "",
+                        isDark = isDark,
+                        modifier = Modifier.width(100.dp).clickable { onOpenTools() },
+                        leadingIcon = {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_glyco_settings),
                                 contentDescription = null,
                                 tint = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B),
                                 modifier = Modifier.size(14.dp)
@@ -184,7 +198,10 @@ internal fun StatusAgoraCard(
                         value = state.sensorAge,
                         isDark = isDark,
                         valueColor = statusLevelToColor(state.sensorAgeStatus),
-                        modifier = Modifier.width(100.dp).clickable { onOpenSensorInsert() },
+                        modifier = Modifier.width(100.dp).combinedClickable(
+                            onClick = onOpenSensorQuality,
+                            onLongClick = onOpenSensorInsert
+                        ),
                         leadingIcon = {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_glyco_sensor),
@@ -244,10 +261,10 @@ internal fun StatusAgoraCard(
                         }
                     )
                     GlassPill(
-                        label = stringResource(CoreUiR.string.nav_preferences),
-                        value = "—",
+                        label = stringResource(R.string.dashboard_glass_activity_label),
+                        value = stringResource(R.string.dashboard_glass_activity_value, state.stepsText, state.hrText),
                         isDark = isDark,
-                        modifier = Modifier.width(100.dp).clickable { onOpenPreferences() },
+                        modifier = Modifier.width(100.dp),
                         leadingIcon = {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_glyco_settings),

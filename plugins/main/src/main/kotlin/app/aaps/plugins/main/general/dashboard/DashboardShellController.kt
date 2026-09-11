@@ -805,14 +805,6 @@ internal class DashboardShellController(
         }
     }
 
-    /** Runs [action] only after a Protection.PREFERENCES check passes — matches how the classic
-     *  Preferences entry point is gated elsewhere. */
-    private fun withPreferencesProtection(action: () -> Unit) {
-        protectionCheck.requestProtection(ProtectionCheck.Protection.PREFERENCES) { result ->
-            if (result == ProtectionResult.GRANTED) action()
-        }
-    }
-
     @RequiresApi(Build.VERSION_CODES.CUPCAKE)
     private fun openSensorApp(): Boolean {
         if (xDripSource.isEnabled()) return openCgmApp("com.eveningoutpost.dexdrip")
@@ -1532,9 +1524,8 @@ internal class DashboardShellController(
                 )
             }
 
-            override fun openPreferences() = withPreferencesProtection {
-                uiInteraction.openComposeMainAtRoute(host.context, "preferences")
-            }
+            override fun openSensorQuality() =
+                uiInteraction.openComposeMainAtRoute(host.context, "glass_sensor_quality")
 
             override fun openStatsScreen() =
                 uiInteraction.openComposeMainAtRoute(host.context, "stats")

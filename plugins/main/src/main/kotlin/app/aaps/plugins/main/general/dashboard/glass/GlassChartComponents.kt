@@ -53,6 +53,8 @@ internal fun BgChartCard(
     currentBgValue: Float,
     lowLine: Float,
     highLine: Float,
+    predictions: List<PredictionPoint>,
+    historyFraction: Float,
     axisMinValue: Float,
     axisHeadroom: Float,
     formatValue: (Float) -> String,
@@ -148,7 +150,7 @@ internal fun BgChartCard(
                         val chartW = size.width - 65f
                         val chartH = size.height - 36f
                         val treatmentY = chartH - 8f
-                        val p = (down.position.x / chartW).coerceIn(0f, 1f)
+                        val p = (down.position.x / (chartW * historyFraction)).coerceIn(0f, 1f)
                         touchedReading = readings.minByOrNull { abs(it.progress - p) }
 
                         // Check if the touch landed near a treatment marker (X + Y)
@@ -165,7 +167,7 @@ internal fun BgChartCard(
                         while (true) {
                             val event = awaitPointerEvent(pass = PointerEventPass.Main)
                             if (event.changes.any { it.pressed }) {
-                                val px = (event.changes.first().position.x / chartW).coerceIn(0f, 1f)
+                                val px = (event.changes.first().position.x / (chartW * historyFraction)).coerceIn(0f, 1f)
                                 touchedReading = readings.minByOrNull { abs(it.progress - px) }
                                 event.changes.first().consume()
                             } else {
@@ -181,9 +183,13 @@ internal fun BgChartCard(
                 val chartW = w - paddingRight
                 val chartH = h - 36f
 
+                fun historyX(progress: Float): Float = progress * chartW * historyFraction
+                fun predictionX(progress: Float): Float = (historyFraction + progress * (1f - historyFraction)) * chartW
+
                 val minY = axisMinValue
                 val maxY = maxOf(
                     readings.maxByOrNull { it.value }?.value ?: highLine,
+                    predictions.maxByOrNull { it.value }?.value ?: highLine,
                     highLine
                 ) + axisHeadroom
 
@@ -228,7 +234,7 @@ internal fun BgChartCard(
                 // 3. Vertical time lines and labels
                 val timeTicks = 6
                 for (i in 0 until timeTicks) {
-                    val x = (i.toFloat() / (timeTicks - 1)) * chartW
+                    val x = historyX(i.toFloat() / (timeTicks - 1))
                     drawLine(
                         color = if (isDark) Color(0x14FFFFFF) else Color(0x0D000000),
                         start = Offset(x, 0f),
@@ -236,6 +242,16 @@ internal fun BgChartCard(
                         strokeWidth = 0.8f
                     )
                 }
+
+                // 3b. "Now" line separating history from predictions
+                val nowX = chartW * historyFraction
+                drawLine(
+                    color = if (isDark) Color(0x40FFFFFF) else Color(0x30000000),
+                    start = Offset(nowX, 0f),
+                    end = Offset(nowX, chartH),
+                    strokeWidth = 1.5f,
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
+                )
 
                 // 4. BG curve and filled area - colored by range zone
                 if (readings.size >= 2) {
@@ -250,9 +266,9 @@ internal fun BgChartCard(
                         val prev = readings[i - 1]
                         val curr = readings[i]
 
-                        val pX = prev.progress * chartW
+                        val pX = historyX(prev.progress)
                         val pY = mapY(prev.value)
-                        val cX = curr.progress * chartW
+                        val cX = historyX(curr.progress)
                         val cY = mapY(curr.value)
 
                         val midX = (pX + cX) / 2f
@@ -269,7 +285,7 @@ internal fun BgChartCard(
                     }
 
                     // Current reading point at the right edge (glowing circle with white center)
-                    val lastX = readings.last().progress * chartW
+                    val lastX = historyX(readings.last().progress)
                     val lastY = mapY(readings.last().value)
                     val lastColor = zoneColor(readings.last().value)
                     drawCircle(color = lastColor, radius = 10f, center = Offset(lastX, lastY))
@@ -278,12 +294,48 @@ internal fun BgChartCard(
 
                 // 5. Treatment markers (+ carbs, - bolus/SMB)
                 for (t in treatments) {
-                    val tx = t.progress * chartW
+                    val tx = historyX(t.progress)
                     val ty = chartH - 8f
                     if (t.isCarb) {
                         drawCircle(color = Color(0xFF38BDF8), radius = 10f, center = Offset(tx, ty))
                     } else {
                         drawCircle(color = Color(0xFF0284C7), radius = 10f, center = Offset(tx, ty))
+                    }
+                }
+
+                // 5b. BG predictions (extend past "now" into the fixed prediction horizon)
+                if (predictions.isNotEmpty()) {
+                    fun predictionColor(type: PredictionType): Color = when (type) {
+                        PredictionType.IOB   -> Color(0xFF64B5F6)
+                        PredictionType.COB   -> Color(0xFFFFB74D)
+                        PredictionType.A_COB -> Color(0xFFFFB74D).copy(alpha = 0.5f)
+                        PredictionType.UAM   -> Color(0xFFE6D39A)
+                        PredictionType.ZT    -> Color(0xFF4DD4D4)
+                    }
+
+                    predictions.groupBy { it.type }.forEach { (type, points) ->
+                        val sorted = points.sortedBy { it.progress }
+                        if (sorted.size >= 2) {
+                            for (i in 1 until sorted.size) {
+                                val prev = sorted[i - 1]
+                                val curr = sorted[i]
+                                drawLine(
+                                    color = predictionColor(type),
+                                    start = Offset(predictionX(prev.progress), mapY(prev.value)),
+                                    end = Offset(predictionX(curr.progress), mapY(curr.value)),
+                                    strokeWidth = 3f,
+                                    cap = StrokeCap.Round,
+                                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f))
+                                )
+                            }
+                        }
+                        sorted.forEach { point ->
+                            drawCircle(
+                                color = predictionColor(type),
+                                radius = 4f,
+                                center = Offset(predictionX(point.progress), mapY(point.value))
+                            )
+                        }
                     }
                 }
 
@@ -296,8 +348,8 @@ internal fun BgChartCard(
                 }
                 val now = LocalTime.now()
                 for (i in 0 until timeTicks) {
-                    val x = (i.toFloat() / (timeTicks - 1)) * chartW
                     val progress = i.toFloat() / (timeTicks - 1)
+                    val x = historyX(progress)
                     val hoursAgo = timeRangeHours * (1f - progress)
                     val totalMinutes = (hoursAgo * 60).toLong()
                     val labelTime = now.minusMinutes(totalMinutes)
@@ -307,7 +359,7 @@ internal fun BgChartCard(
 
                 // 7. Touched-point indicator (dashed line + circle)
                 touchedReading?.let { pt ->
-                    val ptX = pt.progress * chartW
+                    val ptX = historyX(pt.progress)
                     val ptY = mapY(pt.value)
 
                     drawLine(
@@ -401,6 +453,7 @@ internal fun IobChartCard(
     iobReadings: List<IobReadingPoint>,
     currentIob: Float,
     timeRangeHours: Int,
+    historyFraction: Float,
     isDark: Boolean
 ) {
     var touchedIob by remember { mutableStateOf<IobReadingPoint?>(null) }
@@ -453,17 +506,17 @@ internal fun IobChartCard(
 
             Canvas(modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(iobReadings, timeRangeHours) {
+                .pointerInput(iobReadings, timeRangeHours, historyFraction) {
                     awaitEachGesture {
                         val down = awaitFirstDown()
                         val chartW = size.width - 65f
-                        val p = (down.position.x / chartW).coerceIn(0f, 1f)
+                        val p = (down.position.x / (chartW * historyFraction)).coerceIn(0f, 1f)
                         touchedIob = iobReadings.minByOrNull { abs(it.progress - p) }
 
                         while (true) {
                             val event = awaitPointerEvent(pass = PointerEventPass.Main)
                             if (event.changes.any { it.pressed }) {
-                                val px = (event.changes.first().position.x / chartW).coerceIn(0f, 1f)
+                                val px = (event.changes.first().position.x / (chartW * historyFraction)).coerceIn(0f, 1f)
                                 touchedIob = iobReadings.minByOrNull { abs(it.progress - px) }
                                 event.changes.first().consume()
                             } else {
@@ -478,6 +531,8 @@ internal fun IobChartCard(
                 val paddingRight = 65f
                 val chartW = w - paddingRight
                 val chartH = h - 28f
+
+                fun historyX(progress: Float): Float = progress * chartW * historyFraction
 
                 val peakIob = maxOf(
                     iobReadings.maxByOrNull { it.iob }?.iob ?: 0f,
@@ -512,7 +567,7 @@ internal fun IobChartCard(
 
                 // Vertical grid lines
                 for (i in 0 until 6) {
-                    val x = (i.toFloat() / 5f) * chartW
+                    val x = historyX(i.toFloat() / 5f)
                     drawLine(
                         color = if (isDark) Color(0x14FFFFFF) else Color(0x0D000000),
                         start = Offset(x, 0f),
@@ -540,7 +595,7 @@ internal fun IobChartCard(
                     val path = Path()
                     val areaPath = Path()
 
-                    val firstX = iobReadings.first().progress * chartW
+                    val firstX = historyX(iobReadings.first().progress)
                     val firstY = mapY(iobReadings.first().iob)
 
                     path.moveTo(firstX, firstY)
@@ -551,9 +606,9 @@ internal fun IobChartCard(
                         val prev = iobReadings[i - 1]
                         val curr = iobReadings[i]
 
-                        val pX = prev.progress * chartW
+                        val pX = historyX(prev.progress)
                         val pY = mapY(prev.iob)
-                        val cX = curr.progress * chartW
+                        val cX = historyX(curr.progress)
                         val cY = mapY(curr.iob)
 
                         val midX = (pX + cX) / 2f
@@ -561,7 +616,7 @@ internal fun IobChartCard(
                         areaPath.cubicTo(midX, pY, midX, cY, cX, cY)
                     }
 
-                    val lastX = iobReadings.last().progress * chartW
+                    val lastX = historyX(iobReadings.last().progress)
                     val lastY = mapY(iobReadings.last().iob)
                     areaPath.lineTo(lastX, chartH)
                     areaPath.close()
@@ -597,8 +652,8 @@ internal fun IobChartCard(
                 }
                 val now = LocalTime.now()
                 for (i in 0 until 6) {
-                    val x = (i.toFloat() / 5f) * chartW
                     val progress = i.toFloat() / 5f
+                    val x = historyX(progress)
                     val hoursAgo = timeRangeHours * (1f - progress)
                     val totalMinutes = (hoursAgo * 60).toLong()
                     val labelTime = now.minusMinutes(totalMinutes)
@@ -608,7 +663,7 @@ internal fun IobChartCard(
 
                 // Touched IOB point indicator (dashed line + circle)
                 touchedIob?.let { pt ->
-                    val ptX = pt.progress * chartW
+                    val ptX = historyX(pt.progress)
                     val ptY = mapY(pt.iob)
 
                     drawLine(

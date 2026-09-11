@@ -41,6 +41,7 @@ class GlassChartStateMapperTest {
             chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
             mgdlToChartY = identity,
             pumpStatusText = "",
+            predictions = emptyList(),
         )
 
         assertThat(result.bgReadings).isEmpty()
@@ -62,6 +63,7 @@ class GlassChartStateMapperTest {
             chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
             mgdlToChartY = identity,
             pumpStatusText = "",
+            predictions = emptyList(),
         )
 
         assertThat(result.bgReadings).hasSize(2)
@@ -85,6 +87,7 @@ class GlassChartStateMapperTest {
             chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
             mgdlToChartY = suspiciousConverter,
             pumpStatusText = "",
+            predictions = emptyList(),
         )
 
         assertThat(result.lowLine).isEqualTo(70f)
@@ -108,6 +111,7 @@ class GlassChartStateMapperTest {
             chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
             mgdlToChartY = mgdlToMmol,
             pumpStatusText = "",
+            predictions = emptyList(),
         )
 
         assertThat(result.bgReadings).hasSize(1)
@@ -137,6 +141,7 @@ class GlassChartStateMapperTest {
             chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
             mgdlToChartY = identity,
             pumpStatusText = "",
+            predictions = emptyList(),
         )
 
         assertThat(result.treatments).hasSize(2)
@@ -158,6 +163,7 @@ class GlassChartStateMapperTest {
             chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
             mgdlToChartY = identity,
             pumpStatusText = "",
+            predictions = emptyList(),
         )
 
         assertThat(result.bgReadings).isEmpty()
@@ -181,6 +187,7 @@ class GlassChartStateMapperTest {
             chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
             mgdlToChartY = mgdlToMmol,
             pumpStatusText = "",
+            predictions = emptyList(),
         )
 
         assertThat(result.axisMinValue).isWithin(0.01f).of((30.0 / 18.0).toFloat())
@@ -206,9 +213,62 @@ class GlassChartStateMapperTest {
             chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
             mgdlToChartY = identity,
             pumpStatusText = "",
+            predictions = emptyList(),
         )
 
         assertThat(result.iobReadings).hasSize(1)
         assertThat(result.currentIob).isEqualTo(2f)
+    }
+
+    @Test
+    fun `predictions outside the 2-hour horizon are excluded, and progress is 0 at now, 1 at horizon end`() {
+        val nowEpochMs = 100_000_000L
+        val rangeHours = 6
+
+        val result = buildGlassChartState(
+            rangeHours = rangeHours,
+            nowEpochMs = nowEpochMs,
+            bgReadings = emptyList(),
+            iobPoints = emptyList(),
+            boluses = emptyList(),
+            carbs = emptyList(),
+            chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
+            mgdlToChartY = identity,
+            pumpStatusText = "",
+            predictions = listOf(
+                BgDataPoint(timestamp = nowEpochMs, value = 120.0, range = BgRange.IN_RANGE, type = BgType.IOB_PREDICTION),
+                BgDataPoint(timestamp = nowEpochMs + 3_600_000L, value = 100.0, range = BgRange.IN_RANGE, type = BgType.IOB_PREDICTION),
+                BgDataPoint(timestamp = nowEpochMs + 2 * 3_600_000L, value = 90.0, range = BgRange.IN_RANGE, type = BgType.IOB_PREDICTION),
+                BgDataPoint(timestamp = nowEpochMs + 3 * 3_600_000L, value = 80.0, range = BgRange.IN_RANGE, type = BgType.IOB_PREDICTION),
+            ),
+        )
+
+        assertThat(result.predictions).hasSize(3)
+        assertThat(result.predictions[0].progress).isEqualTo(0f)
+        assertThat(result.predictions[2].progress).isEqualTo(1f)
+        assertThat(result.historyFraction).isWithin(0.001f).of(6f / 8f)
+    }
+
+    @Test
+    fun `unrecognized BgType predictions are silently dropped, not crashed on`() {
+        val nowEpochMs = 100_000_000L
+
+        val result = buildGlassChartState(
+            rangeHours = 6,
+            nowEpochMs = nowEpochMs,
+            bgReadings = emptyList(),
+            iobPoints = emptyList(),
+            boluses = emptyList(),
+            carbs = emptyList(),
+            chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
+            mgdlToChartY = identity,
+            pumpStatusText = "",
+            predictions = listOf(
+                BgDataPoint(timestamp = nowEpochMs, value = 120.0, range = BgRange.IN_RANGE, type = BgType.REGULAR),
+                BgDataPoint(timestamp = nowEpochMs, value = 120.0, range = BgRange.IN_RANGE, type = BgType.BUCKETED),
+            ),
+        )
+
+        assertThat(result.predictions).isEmpty()
     }
 }

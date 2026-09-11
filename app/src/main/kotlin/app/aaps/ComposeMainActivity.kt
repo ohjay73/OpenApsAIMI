@@ -61,6 +61,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.net.toUri
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.initializer
@@ -152,6 +153,7 @@ import app.aaps.plugins.main.general.dashboard.DashboardV2ToolAction
 import app.aaps.plugins.main.general.dashboard.DashboardV2ToolDestination
 import app.aaps.plugins.main.general.dashboard.DashboardV2ToolsScreen
 import app.aaps.plugins.main.general.dashboard.glass.GlassLoopDashboardViewModel
+import app.aaps.plugins.main.general.dashboard.viewmodel.OverviewViewModel
 import app.aaps.plugins.main.skins.DashboardHomeVariant
 import app.aaps.plugins.main.skins.DashboardHomeVariantResolver
 import app.aaps.plugins.main.skins.SkinDashboardPreferenceSync
@@ -238,6 +240,7 @@ class ComposeMainActivity : AppCompatActivity() {
     @Inject lateinit var objectives: Objectives
     @Inject lateinit var graphViewModelFactory: GraphViewModel.Factory
     @Inject lateinit var chipsViewModelFactory: ChipsViewModel.Factory
+    @Inject lateinit var overviewViewModelFactory: OverviewViewModel.Factory
     @Inject lateinit var overviewDataCache: OverviewDataCache
 
     private var accessTree: ActivityResultLauncher<Uri?>? = null
@@ -257,6 +260,13 @@ class ComposeMainActivity : AppCompatActivity() {
     }
     private val chipsViewModel: ChipsViewModel by viewModels {
         viewModelFactory { initializer { chipsViewModelFactory.create(overviewDataCache) } }
+    }
+    // Keyed the same as AimiDashboardComposeRootView.VIEW_MODEL_KEY ("AimiDashboardCompose") so this is
+    // the SAME instance the dashboard's own DashboardShellController.start()s and keeps refreshed — a
+    // default-keyed `by viewModels()` here would create a second, never-started instance whose
+    // statusCardState LiveData is never populated.
+    private val overviewViewModel: OverviewViewModel by lazy {
+        ViewModelProvider(this, overviewViewModelFactory)["AimiDashboardCompose", OverviewViewModel::class.java]
     }
     private val treatmentsViewModel: TreatmentsViewModel by viewModels()
     private val glassLoopDashboardViewModel: GlassLoopDashboardViewModel by viewModels()
@@ -689,6 +699,11 @@ class ComposeMainActivity : AppCompatActivity() {
                 } else {
                     emptySet()
                 }
+                val availablePluginClassNames = activePlugin.getPluginsList()
+                    .asSequence()
+                    .filter(PluginBase::hasComposeContent)
+                    .map { it.javaClass.simpleName }
+                    .toSet()
 
                 // Pump setup button in bottom bar
                 val pumpPlugin = activePlugin.activePumpInternal as PluginBase
@@ -864,6 +879,23 @@ class ComposeMainActivity : AppCompatActivity() {
                                 paddingValues = pad,
                                 fabBottomOffset = fab,
                                 dashboardHomeVariant = dashboardHomeVariant,
+                                availablePluginClassNames = availablePluginClassNames,
+                                onToolAction = { action ->
+                                    when (val destination = action.destination) {
+                                        DashboardV2ToolDestination.Actions -> manageSheetState.show()
+                                        is DashboardV2ToolDestination.Element -> handleNavigationRequest(
+                                            NavigationRequest.Element(destination.type),
+                                            navController,
+                                        )
+
+                                        is DashboardV2ToolDestination.Plugin -> handleNavigationRequest(
+                                            NavigationRequest.Plugin(destination.className),
+                                            navController,
+                                        )
+
+                                        is DashboardV2ToolDestination.AimiActivity -> launchDashboardV2Aimi(action)
+                                    }
+                                },
                             )
                         }
                     } else {
@@ -917,6 +949,7 @@ class ComposeMainActivity : AppCompatActivity() {
                 siteRotationManagementViewModel = siteRotationManagementViewModel,
                 graphViewModel = graphViewModel,
                 chipsViewModel = chipsViewModel,
+                overviewViewModel = overviewViewModel,
                 swDefinition = swDefinition,
                 rxBus = rxBus,
                 activePlugin = activePlugin,

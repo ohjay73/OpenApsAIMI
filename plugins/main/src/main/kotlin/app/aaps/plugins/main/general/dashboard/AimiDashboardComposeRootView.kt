@@ -39,6 +39,8 @@ class AimiDashboardComposeRootView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     private val dashboardHomeVariant: DashboardHomeVariant = DashboardHomeVariant.DASHBOARD_V1,
+    private val availablePluginClassNames: Set<String> = emptySet(),
+    private val onToolAction: (DashboardV2ToolAction) -> Unit = {},
 ) : FrameLayout(context, attrs),
     LifecycleOwner {
 
@@ -136,6 +138,8 @@ class AimiDashboardComposeRootView @JvmOverloads constructor(
                                 statusViewModel = statusViewModel,
                                 graphViewModel = graphViewModel,
                                 embeddedState = embeddedComposeState,
+                                availablePluginClassNames = availablePluginClassNames,
+                                onToolAction = onToolAction,
                             )
                         }
 

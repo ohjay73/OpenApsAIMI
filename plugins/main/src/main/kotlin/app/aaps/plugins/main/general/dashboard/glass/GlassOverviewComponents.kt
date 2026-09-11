@@ -20,6 +20,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Arrangement
@@ -146,7 +147,9 @@ internal fun GlassPill(
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     color = valueColor ?: if (isDark) Color(0xFFE2E8F0) else Color(0xFF1E293B),
-                    lineHeight = 13.sp
+                    lineHeight = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }

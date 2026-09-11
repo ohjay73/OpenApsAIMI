@@ -28,4 +28,6 @@ data class GlassUiState(
     val isTempTargetActive: Boolean = false,
     val targetText: String = "--",
     val basalPercentText: String = "--",
+    val stepsText: String = "--",
+    val hrText: String = "--",
 )

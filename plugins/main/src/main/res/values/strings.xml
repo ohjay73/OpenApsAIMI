@@ -226,7 +226,12 @@
     <string name="dashboard_glass_iob_label">IOB</string>
     <string name="dashboard_glass_target_label">Target</string>
     <string name="dashboard_glass_basal_t_label">Basal T</string>
+    <string name="dashboard_glass_activity_label">Activity</string>
+    <string name="dashboard_glass_tools_label">Tools</string>
+    <string name="dashboard_glass_activity_value" comment="%1$s=step count e.g. 4200, %2$s=heart rate in bpm e.g. 72">%1$s · %2$s bpm</string>
     <string name="dashboard_glass_loop_dashboard_title">Loop Dashboard</string>
+    <string name="dashboard_glass_sensor_quality_title">Sensor Quality</string>
+    <string name="dashboard_glass_sensor_quality_empty">No smoothing quality data available. This screen shows data only when the active smoothing plugin reports it.</string>
     <string name="dashboard_glass_loop_dashboard_last_run" comment="%1$s=time, e.g. 14:32">Last run: %1$s</string>
     <string name="dashboard_glass_loop_dashboard_pump_label">PUMP</string>
     <string name="dashboard_glass_loop_dashboard_requested" comment="%1$s=insulin amount with unit, e.g. 0.50 U">%1$s requested</string>

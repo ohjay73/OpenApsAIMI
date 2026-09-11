@@ -72,6 +72,8 @@ import app.aaps.plugins.configuration.setupwizard.SWDefinition
 import app.aaps.plugins.configuration.setupwizard.SetupWizardScreen
 import app.aaps.plugins.main.general.dashboard.glass.GlassLoopDashboardScreen
 import app.aaps.plugins.main.general.dashboard.glass.GlassLoopDashboardViewModel
+import app.aaps.plugins.main.general.dashboard.glass.GlassSensorQualityScreen
+import app.aaps.plugins.main.general.dashboard.viewmodel.OverviewViewModel
 import app.aaps.plugins.sync.nsclientV3.clientcontrol.compose.AuthorizedClientsScreen
 import app.aaps.plugins.sync.nsclientV3.clientcontrol.compose.PairWithMasterScreen
 import app.aaps.ui.compose.calibrationDialog.CalibrationDialogScreen
@@ -156,6 +158,7 @@ fun NavGraphBuilder.appNavGraph(
     siteRotationManagementViewModel: SiteRotationManagementViewModel,
     graphViewModel: app.aaps.ui.compose.overview.graphs.GraphViewModel,
     chipsViewModel: ChipsViewModel,
+    overviewViewModel: OverviewViewModel,
     // Dependencies
     swDefinition: SWDefinition,
     rxBus: RxBus,
@@ -537,6 +540,21 @@ fun NavGraphBuilder.appNavGraph(
         }
         GlassLoopDashboardScreen(
             uiState = uiState,
+            onBack = { navController.safePopBackStack() },
+            isDark = isDark,
+        )
+    }
+
+    composable(AppRoute.GlassSensorQuality.route) {
+        val preferences = LocalPreferences.current
+        val darkModeValue by preferences.observe(StringKey.GeneralDarkMode).collectAsState()
+        val isDark = when (UiMode.fromString(darkModeValue)) {
+            UiMode.LIGHT -> false
+            UiMode.DARK -> true
+            UiMode.SYSTEM -> isSystemInDarkTheme()
+        }
+        GlassSensorQualityScreen(
+            overviewViewModel = overviewViewModel,
             onBack = { navController.safePopBackStack() },
             isDark = isDark,
         )
