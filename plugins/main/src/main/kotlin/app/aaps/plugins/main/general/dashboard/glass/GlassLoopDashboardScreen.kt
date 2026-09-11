@@ -2,6 +2,7 @@ package app.aaps.plugins.main.general.dashboard.glass
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,7 +18,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Divider
@@ -31,7 +34,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,24 +47,26 @@ fun GlassLoopDashboardScreen(
     uiState: GlassLoopDashboardState,
     onBack: () -> Unit,
     isDark: Boolean,
+    onOpenAimiContext: () -> Unit,
 ) {
-    val bgColorTop = if (isDark) Color(0xFF070E1B) else Color(0xFFF1F5F9)
-    val bgColorBot = if (isDark) Color(0xFF0B1424) else Color(0xFFE8EEF8)
-    val cardBgStart = if (isDark) Color(0x24FFFFFF) else Color(0xF5FFFFFF)
-    val cardBgEnd = if (isDark) Color(0x0EFFFFFF) else Color(0xE0EEF2FA)
-    val borderCard = if (isDark) Color(0x26FFFFFF) else Color(0xB8CBD5E1)
-    val textBright = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val textMuted = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
-    val cellBg = if (isDark) Color(0x12FFFFFF) else Color(0xFFF1F5F9)
-    val cellBorder = if (isDark) Color(0x1AFFFFFF) else Color(0xFFE2E8F0)
-    val skyBlue = Color(0xFF38BDF8)
-    val emerald = Color(0xFF10B981)
+    val bgColorTop = if (isDark) Color(0xFF213145) else Color(0xFFF1F5F9)
+    val bgColorBot = if (isDark) Color(0xFF0F1C2C) else Color(0xFFE8EEF8)
+    val cardBgStart = if (isDark) Color(0xFF0F1C2C) else Color(0xFFFFFFFF)
+    val cardBgEnd = if (isDark) Color(0xFF0F1C2C) else Color(0xFFF8FAFC)
+    val borderCard = if (isDark) Color(0x33EAF1FF) else Color(0xFFE2E8F0)
+    val textBright = if (isDark) Color(0xFFEAF1FF) else Color(0xFF0D1B2A)
+    val textMuted = if (isDark) Color(0xFF778598) else Color(0xFF64748B)
+    val cellBg = if (isDark) Color(0x14EAF1FF) else Color(0xFFF1F5F9)
+    val cellBorder = if (isDark) Color(0x22EAF1FF) else Color(0xFFE2E8F0)
+    val skyBlue = Color(0xFF0984E3)
+    val emerald = Color(0xFF00B894)
     val amber = Color(0xFFF59E0B)
-    val red = Color(0xFFEF4444)
+    val red = Color(0xFFF43F5E)
     val indigo = Color(0xFF6366F1)
-    val iconBgBlue = if (isDark) Color(0xFF1E3A5F) else Color(0xFFDBEAFE)
-    val iconBgGreen = if (isDark) Color(0xFF0D3320) else Color(0xFFD1FAE5)
+    val iconBgBlue = if (isDark) Color(0xFF15406B) else Color(0xFFDBEAFE)
+    val iconBgGreen = if (isDark) Color(0xFF0B4A3A) else Color(0xFFD1FAE5)
     val iconBgAmber = if (isDark) Color(0xFF3D2E0A) else Color(0xFFFEF3C7)
+    val dividerSoft = if (isDark) Color(0x1AEAF1FF) else Color(0x1A000000)
 
     Box(
         modifier = Modifier
@@ -202,6 +209,90 @@ fun GlassLoopDashboardScreen(
                 }
             }
 
+            // CARD 1b: TRAJECTORY
+            SectionCard(
+                isDark, cardBgStart, cardBgEnd, borderCard,
+                icon = { Icon(Icons.AutoMirrored.Filled.TrendingUp, null, tint = skyBlue, modifier = Modifier.size(16.dp)) },
+                iconBg = iconBgBlue,
+                title = stringResource(R.string.dashboard_glass_loop_trajectory_title)
+            ) {
+                if (uiState.hasTrajectory) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        MetricCell(
+                            isDark, cellBg, cellBorder, Modifier.weight(1f),
+                            label = stringResource(R.string.dashboard_glass_loop_trajectory_hybrid_label),
+                            value = uiState.trajectoryHybridText,
+                            valueFontSize = 16.sp,
+                        )
+                        MetricCell(
+                            isDark, cellBg, cellBorder, Modifier.weight(1f),
+                            label = stringResource(R.string.dashboard_glass_loop_trajectory_iob_label),
+                            value = uiState.trajectoryIobText,
+                            valueFontSize = 16.sp,
+                        )
+                        MetricCell(
+                            isDark, cellBg, cellBorder, Modifier.weight(1f),
+                            label = stringResource(R.string.dashboard_glass_loop_trajectory_cob_label),
+                            value = uiState.trajectoryCobText,
+                            valueFontSize = 16.sp,
+                        )
+                    }
+                } else {
+                    Text(stringResource(R.string.dashboard_glass_loop_trajectory_stale), color = textMuted, fontSize = 11.sp)
+                }
+            }
+
+            // CARD 1c: PHYSIO
+            SectionCard(
+                isDark, cardBgStart, cardBgEnd, borderCard,
+                icon = { Icon(Icons.Default.Bolt, null, tint = indigo, modifier = Modifier.size(16.dp)) },
+                iconBg = iconBgBlue,
+                title = stringResource(R.string.dashboard_glass_loop_physio_title)
+            ) {
+                if (uiState.hasPhysio) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            MetricCell(
+                                isDark, cellBg, cellBorder, Modifier.weight(1f),
+                                label = stringResource(R.string.dashboard_glass_loop_physio_mode_label),
+                                value = uiState.physioModeText,
+                                valueFontSize = 13.sp,
+                            )
+                            MetricCell(
+                                isDark, cellBg, cellBorder, Modifier.weight(1f),
+                                label = stringResource(R.string.dashboard_glass_loop_physio_intent_label),
+                                value = uiState.physioIntentText,
+                                valueFontSize = 13.sp,
+                            )
+                        }
+                        MetricCell(
+                            isDark, cellBg, cellBorder, Modifier.fillMaxWidth(),
+                            label = stringResource(R.string.dashboard_glass_loop_physio_thermal_label),
+                            value = uiState.physioThermalText,
+                            valueFontSize = 13.sp,
+                        )
+                        if (uiState.physioUpdatedText.isNotBlank()) {
+                            Text(uiState.physioUpdatedText, color = textMuted, fontSize = 9.sp)
+                        }
+                        Text(
+                            text = stringResource(R.string.dashboard_glass_loop_physio_open_context),
+                            color = skyBlue,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(
+                                    onClickLabel = stringResource(R.string.dashboard_glass_loop_physio_open_context),
+                                    role = Role.Button,
+                                ) { onOpenAimiContext() }
+                                .padding(horizontal = 4.dp, vertical = 6.dp)
+                        )
+                    }
+                } else {
+                    Text(stringResource(R.string.dashboard_glass_loop_physio_stale), color = textMuted, fontSize = 11.sp)
+                }
+            }
+
             // CARD 2: KEY FACTORS
             SectionCard(
                 isDark, cardBgStart, cardBgEnd, borderCard,
@@ -217,7 +308,7 @@ fun GlassLoopDashboardScreen(
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(9999.dp))
-                            .background(if (isDark) Color(0x1AFFFFFF) else Color(0xFFE2E8F0))
+                            .background(if (isDark) Color(0x14EAF1FF) else Color(0xFFE2E8F0))
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     ) {
                         Text(
@@ -272,13 +363,88 @@ fun GlassLoopDashboardScreen(
                     SafetyRow(
                         stringResource(R.string.dashboard_glass_loop_tir_low_label),
                         stringResource(R.string.dashboard_glass_loop_tir_low_value, uiState.tirLow1hText, uiState.tirLow24hText),
-                        emerald
+                        emerald,
+                        labelColor = textMuted,
+                        dividerColor = dividerSoft,
                     )
                     SafetyRow(
                         stringResource(R.string.dashboard_glass_loop_steps_label),
                         uiState.steps5mText,
                         textMuted,
+                        labelColor = textMuted,
+                        dividerColor = dividerSoft,
                         showDivider = false
+                    )
+                }
+            }
+
+            // CARD 2b: ML TRAINING
+            SectionCard(
+                isDark, cardBgStart, cardBgEnd, borderCard,
+                icon = {
+                    Icon(
+                        Icons.Default.Psychology,
+                        null,
+                        tint = if (!uiState.hasMlTraining) textMuted else if (uiState.mlCircuitOpen) amber else emerald,
+                        modifier = Modifier.size(16.dp)
+                    )
+                },
+                iconBg = if (!uiState.hasMlTraining) cellBg else if (uiState.mlCircuitOpen) iconBgAmber else iconBgGreen,
+                title = stringResource(R.string.dashboard_glass_loop_ml_training_title)
+            ) {
+                if (uiState.hasMlTraining) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            MetricCell(
+                                isDark, cellBg, cellBorder, Modifier.weight(1f),
+                                label = stringResource(R.string.dashboard_glass_loop_ml_last_trained_label),
+                                value = uiState.mlLastTrainedText,
+                                valueFontSize = 13.sp,
+                            )
+                            MetricCell(
+                                isDark, cellBg, cellBorder, Modifier.weight(1f),
+                                label = stringResource(R.string.dashboard_glass_loop_ml_samples_label),
+                                value = uiState.mlSampleCountText,
+                                valueFontSize = 13.sp,
+                            )
+                        }
+                        Text(
+                            text = stringResource(
+                                if (uiState.mlCircuitOpen) R.string.dashboard_glass_loop_ml_circuit_open
+                                else R.string.dashboard_glass_loop_ml_circuit_closed
+                            ),
+                            color = if (uiState.mlCircuitOpen) amber else emerald,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                } else {
+                    Text(stringResource(R.string.dashboard_glass_loop_ml_training_stale), color = textMuted, fontSize = 11.sp)
+                }
+            }
+
+            // CARD 2c: MODEL FILES
+            SectionCard(
+                isDark, cardBgStart, cardBgEnd, borderCard,
+                icon = { Icon(Icons.Default.Tune, null, tint = indigo, modifier = Modifier.size(16.dp)) },
+                iconBg = iconBgBlue,
+                title = stringResource(R.string.dashboard_glass_loop_ml_files_title)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SafetyRow(
+                        stringResource(R.string.dashboard_glass_loop_ml_file_basal_label),
+                        uiState.basalModelFileText,
+                        textMuted,
+                        labelColor = textMuted,
+                        dividerColor = dividerSoft,
+                    )
+                    SafetyRow(
+                        stringResource(R.string.dashboard_glass_loop_ml_file_smb_label),
+                        uiState.smbModelFileText,
+                        textMuted,
+                        labelColor = textMuted,
+                        dividerColor = dividerSoft,
+                        showDivider = false,
                     )
                 }
             }
@@ -328,7 +494,7 @@ private fun SectionCard(
     badge: @Composable (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val textMuted = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
+    val textMuted = if (isDark) Color(0xFF778598) else Color(0xFF64748B)
     GlassCardInner(isDark, cardBgStart, cardBgEnd, borderCard) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(
@@ -344,7 +510,7 @@ private fun SectionCard(
                 }
                 badge?.invoke()
             }
-            Divider(color = if (isDark) Color(0x1AFFFFFF) else Color(0xFFE2E8F0), thickness = 0.5.dp)
+            Divider(color = if (isDark) Color(0x1AEAF1FF) else Color(0xFFE2E8F0), thickness = 0.5.dp)
             content()
         }
     }
@@ -363,30 +529,44 @@ private fun MetricCell(
     valueFontSize: TextUnit = 20.sp,
     subContent: @Composable (() -> Unit)? = null
 ) {
-    val textBright = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val textMuted = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
+    val textBright = if (isDark) Color(0xFFEAF1FF) else Color(0xFF0F172A)
+    val textMuted = if (isDark) Color(0xFF778598) else Color(0xFF64748B)
     val finalValueColor = if (valueColor != Color.Unspecified) valueColor else textBright
 
     GlassCardInner(isDark, cellBg, cellBg, cellBorder, modifier) {
         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(label, color = if (labelColor != Color.Unspecified) labelColor else textMuted, fontSize = 9.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
-            Text(value, color = finalValueColor, fontSize = valueFontSize, fontWeight = FontWeight.Bold)
+            Text(
+                value,
+                color = finalValueColor,
+                fontSize = valueFontSize,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
             subContent?.invoke()
         }
     }
 }
 
 @Composable
-private fun SafetyRow(label: String, value: String, valueColor: Color, showDivider: Boolean = true) {
+private fun SafetyRow(
+    label: String,
+    value: String,
+    valueColor: Color,
+    labelColor: Color,
+    dividerColor: Color,
+    showDivider: Boolean = true,
+) {
     Column {
         Row(
             modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(label, color = Color(0xFF64748B), fontSize = 11.sp, fontWeight = FontWeight.Medium)
+            Text(label, color = labelColor, fontSize = 11.sp, fontWeight = FontWeight.Medium)
             Text(value, color = valueColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
         }
-        if (showDivider) Divider(color = Color(0x0DFFFFFF), thickness = 0.5.dp)
+        if (showDivider) Divider(color = dividerColor, thickness = 0.5.dp)
     }
 }

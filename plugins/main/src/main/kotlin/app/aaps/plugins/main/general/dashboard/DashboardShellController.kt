@@ -42,7 +42,6 @@ import app.aaps.core.interfaces.rx.events.EventUpdateOverviewIobCob
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
-import app.aaps.core.ui.dialogs.OKDialog
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.BooleanNonKey
 import app.aaps.core.keys.IntKey
@@ -61,7 +60,6 @@ import app.aaps.plugins.main.general.dashboard.compose.DashboardHeroCommands
 import app.aaps.plugins.main.general.dashboard.glass.GlassHeroCommands
 import app.aaps.plugins.main.general.dashboard.viewmodel.AdjustmentCardState
 import app.aaps.plugins.main.general.dashboard.viewmodel.OverviewViewModel
-import app.aaps.plugins.main.general.dashboard.viewmodel.StatusCardState
 import app.aaps.plugins.main.general.manual.UserManualActivity
 import app.aaps.plugins.main.general.overview.OverviewDataImpl
 import app.aaps.plugins.main.general.overview.graphData.GraphData
@@ -1479,48 +1477,58 @@ internal class DashboardShellController(
 
     private fun createGlassHeroCommands(): GlassHeroCommands =
         object : GlassHeroCommands {
-            override fun openLoop() = openLoopDialog()
+            override fun openLoop() {
+                // Own inlined Protection.BOLUS check (same gate openLoopDialog() applies) rather than reusing
+                // openLoopDialog(): that shared helper also routes the legacy uiInteraction.openRunningModeScreen()
+                // for its other callers (the status card / loop indicator taps, and the legacy hero's
+                // openLoopDialogFromHero()), which must keep that legacy behavior.
+                host.activity?.let { activity ->
+                    protectionCheck.requestProtection(ProtectionCheck.Protection.BOLUS) { result ->
+                        if (result == ProtectionResult.GRANTED && host.isBindingAttached()) {
+                            uiInteraction.openComposeMainAtRoute(host.context, "glass_loop_detail")
+                        }
+                    }
+                }
+            }
 
             override fun openLoopDashboard() =
                 uiInteraction.openComposeMainAtRoute(host.context, "glass_loop_dashboard")
 
             override fun openInsulin() {
-                openBolus()
+                // Own inlined Protection.BOLUS check (same gate openBolus() applies) rather than reusing
+                // openBolus(): that shared helper also routes the legacy uiInteraction.openInsulinScreen()
+                // for other callers (the bottom-nav bolus command), which must keep that legacy behavior.
+                host.activity?.let { activity ->
+                    protectionCheck.requestProtection(ProtectionCheck.Protection.BOLUS) { result ->
+                        if (result == ProtectionResult.GRANTED) {
+                            uiInteraction.openComposeMainAtRoute(host.context, "glass_insulin_detail")
+                        }
+                    }
+                }
             }
 
-            override fun openTarget() = withBolusProtection { activity ->
-                uiInteraction.openTempTargetManagementScreen(activity)
+            override fun openTarget() = withBolusProtection {
+                uiInteraction.openComposeMainAtRoute(host.context, "glass_target_detail")
             }
 
             override fun openBasal() = withBolusProtection {
-                uiInteraction.openComposeMainAtRoute(host.context, "temp_basal_dialog")
+                uiInteraction.openComposeMainAtRoute(host.context, "glass_basal_detail")
             }
 
             override fun openCannula() = withBolusProtection {
-                uiInteraction.openComposeMainAtRoute(host.context, "fill_dialog/0")
+                uiInteraction.openComposeMainAtRoute(host.context, "glass_cannula_detail")
             }
 
-            override fun openPump() {
-                // Reservoir detail — same OKDialog pattern as DASHBOARD_V2's Reservoir badge.
-                OKDialog.show(
-                    host.context,
-                    resourceHelper.gs(R.string.dashboard_v2_reservoir),
-                    statusCardStateSnapshot()?.reservoirText ?: "--"
-                )
-            }
+            override fun openPump() =
+                uiInteraction.openComposeMainAtRoute(host.context, "glass_pump_detail")
 
-            override fun openBattery() {
-                OKDialog.show(
-                    host.context,
-                    resourceHelper.gs(R.string.dashboard_v2_battery),
-                    statusCardStateSnapshot()?.pumpBatteryText ?: "--"
-                )
-            }
+            override fun openBattery() =
+                uiInteraction.openComposeMainAtRoute(host.context, "glass_battery_detail")
 
             override fun openSensorInsert() = withBolusProtection {
                 uiInteraction.openComposeMainAtRoute(
                     host.context,
-                    "care_dialog/${CareportalEventType.SENSOR_INSERT.ordinal}",
+                    "glass_sensor_insert_detail/${CareportalEventType.SENSOR_INSERT.ordinal}",
                 )
             }
 
@@ -1533,8 +1541,6 @@ internal class DashboardShellController(
             override fun openTreatmentsScreen() =
                 uiInteraction.openComposeMainAtRoute(host.context, "treatments")
         }
-
-    private fun statusCardStateSnapshot(): StatusCardState? = viewModel.statusCardState.value
 
     private fun launchAimiAdaptationStatusActivity() {
         try {

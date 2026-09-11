@@ -325,6 +325,15 @@ class BasalMlTrainingCoordinator @Inject constructor(
         ) != null
     }
 
+    /** Epoch ms of the last completed training run, or 0 if none yet. Read-only, dashboard-facing. */
+    fun lastTrainedAtMs(): Long = lastTrainMs.get()
+
+    /** True while the training circuit breaker is currently open (recent failures cooling down). */
+    fun isCircuitOpenNow(): Boolean = circuitBreaker.isOpen()
+
+    /** File backing the basal adaptive weights, for read-only metadata (dashboard use only). */
+    fun basalWeightsFile(): File = storageHelper.getAimiFile(BASAL_WEIGHTS)
+
     private fun isCircuitOpen(now: Long): Boolean = circuitBreaker.isOpen(now)
 
     private fun recordFailure() {

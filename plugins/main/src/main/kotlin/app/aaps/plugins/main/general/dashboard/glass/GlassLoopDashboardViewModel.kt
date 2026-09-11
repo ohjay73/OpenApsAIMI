@@ -17,6 +17,13 @@ import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.ui.R as CoreUiR
 import app.aaps.plugins.aps.openAPSAIMI.GlucoseStatusCalculatorAimi
+import app.aaps.plugins.aps.openAPSAIMI.learning.BasalMlTrainingCoordinator
+import app.aaps.plugins.aps.openAPSAIMI.learning.BasalNeuralLearner
+import app.aaps.plugins.aps.openAPSAIMI.ml.AimiSmbModelStore
+import app.aaps.plugins.aps.openAPSAIMI.patient.PatientStateRuntimeRepository
+import app.aaps.plugins.aps.openAPSAIMI.patient.PatientStatePresentationBuilder
+import app.aaps.plugins.aps.openAPSAIMI.pkpd.TrajectoryRuntimeRepository
+import app.aaps.plugins.aps.openAPSAIMI.utils.AimiStorageHelper
 import app.aaps.plugins.main.R
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -44,6 +51,8 @@ class GlassLoopDashboardViewModel @Inject constructor(
     private val resourceHelper: ResourceHelper,
     private val dateUtil: DateUtil,
     private val config: Config,
+    private val basalNeuralLearner: BasalNeuralLearner,
+    private val aimiStorageHelper: AimiStorageHelper,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(GlassLoopDashboardState())
@@ -124,6 +133,40 @@ class GlassLoopDashboardViewModel @Inject constructor(
 
                 val lastRunTime = (result?.date ?: 0L).let { date -> if (date > 0L) dateUtil.timeString(date) else "" }
 
+                val trajectoryCurves = TrajectoryRuntimeRepository.getLatest()
+                val hasTrajectory = trajectoryCurves != null
+                val trajectoryHybridText = trajectoryCurves?.hybridTerminal?.let { profileUtil.fromMgdlToStringInUnits(it) } ?: "--"
+                val trajectoryIobText = trajectoryCurves?.iob?.lastOrNull()?.takeIf { it.isFinite() }?.let { profileUtil.fromMgdlToStringInUnits(it) } ?: "--"
+                val trajectoryCobText = trajectoryCurves?.cobTerminal?.let { profileUtil.fromMgdlToStringInUnits(it) } ?: "--"
+
+                val physioSnapshot = PatientStateRuntimeRepository.getLatest()
+                val physioPresentation = physioSnapshot?.let {
+                    PatientStatePresentationBuilder.build(it, dateUtil.now())
+                }
+                val hasPhysio = physioPresentation != null
+                val physioModeText = physioPresentation?.modeHeadline ?: "--"
+                val physioIntentText = physioPresentation?.intentSummary ?: "--"
+                val physioThermalText = physioPresentation?.thermalSummary ?: "--"
+                val physioUpdatedText = physioPresentation?.updatedSummary ?: ""
+
+                val trainingCoordinator = BasalMlTrainingCoordinator.instance
+                val hasMlTraining = trainingCoordinator != null
+                val lastTrainedMs = trainingCoordinator?.lastTrainedAtMs() ?: 0L
+                val mlLastTrainedText = if (lastTrainedMs > 0L)
+                    resourceHelper.gs(R.string.dashboard_glass_loop_ml_last_trained_value, dateUtil.minAgoShort(lastTrainedMs))
+                else
+                    resourceHelper.gs(R.string.dashboard_glass_loop_ml_never_trained)
+                val mlSampleCountText = basalNeuralLearner.getGovernanceSnapshot().sampleCount.toString()
+                val mlCircuitOpen = trainingCoordinator?.isCircuitOpenNow() ?: false
+
+                val basalModelFile = trainingCoordinator?.basalWeightsFile()
+                val basalModelFileText = basalModelFile?.takeIf { it.exists() }?.let { dateUtil.dateAndTimeString(it.lastModified()) }
+                    ?: resourceHelper.gs(R.string.dashboard_glass_loop_ml_file_missing)
+
+                val smbModelFile = AimiSmbModelStore.modelFile(aimiStorageHelper.getAimiDirectory())
+                val smbModelFileText = smbModelFile.takeIf { it.exists() }?.let { dateUtil.dateAndTimeString(it.lastModified()) }
+                    ?: resourceHelper.gs(R.string.dashboard_glass_loop_ml_file_missing)
+
                 GlassLoopDashboardState(
                     isLoading = false,
                     lastRunTime = lastRunTime,
@@ -148,6 +191,21 @@ class GlassLoopDashboardViewModel @Inject constructor(
                     hourOfDay = hourOfDay,
                     isWeekend = isWeekend,
                     buildVersionText = config.VERSION_NAME,
+                    hasTrajectory = hasTrajectory,
+                    trajectoryHybridText = trajectoryHybridText,
+                    trajectoryIobText = trajectoryIobText,
+                    trajectoryCobText = trajectoryCobText,
+                    hasPhysio = hasPhysio,
+                    physioModeText = physioModeText,
+                    physioIntentText = physioIntentText,
+                    physioThermalText = physioThermalText,
+                    physioUpdatedText = physioUpdatedText,
+                    hasMlTraining = hasMlTraining,
+                    mlLastTrainedText = mlLastTrainedText,
+                    mlSampleCountText = mlSampleCountText,
+                    mlCircuitOpen = mlCircuitOpen,
+                    basalModelFileText = basalModelFileText,
+                    smbModelFileText = smbModelFileText,
                 )
             }
 

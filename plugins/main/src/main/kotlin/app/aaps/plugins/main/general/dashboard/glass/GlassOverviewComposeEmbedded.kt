@@ -2,16 +2,22 @@ package app.aaps.plugins.main.general.dashboard.glass
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
@@ -19,17 +25,23 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.aaps.core.interfaces.overview.graph.BgDataPoint
 import app.aaps.core.interfaces.overview.graph.BgType
 import app.aaps.core.interfaces.overview.graph.BolusGraphPoint
 import app.aaps.core.interfaces.overview.graph.CarbsGraphPoint
 import app.aaps.core.interfaces.overview.graph.GraphDataPoint
+import app.aaps.core.interfaces.overview.graph.TreatmentGraphData
 import app.aaps.core.keys.StringKey
+import app.aaps.core.keys.StringNonKey
 import app.aaps.core.ui.UiMode
 import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.LocalPreferences
@@ -61,6 +73,8 @@ internal fun GlassOverviewComposeEmbedded(
     val commands = LocalGlassHeroCommands.current
     var rangeHours by remember { mutableStateOf(6) }
     var showTools by remember { mutableStateOf(false) }
+    var showPersonalize by remember { mutableStateOf(false) }
+    LaunchedEffect(showTools) { if (!showTools) showPersonalize = false }
 
     AapsTheme {
         val preferences = LocalPreferences.current
@@ -70,11 +84,13 @@ internal fun GlassOverviewComposeEmbedded(
             UiMode.DARK   -> true
             UiMode.SYSTEM -> isSystemInDarkTheme()
         }
-        val state = buildGlassUiState(status, statusLights)
+        val selectedPillsRaw by preferences.observe(StringNonKey.GlassSelectedPills).collectAsState()
+        val selectedPills = remember(selectedPillsRaw) { parseSelectedGlassPills(selectedPillsRaw) }
+        val treatmentData by graphViewModel.treatmentGraphFlow.collectAsStateWithLifecycle()
+        val state = buildGlassUiState(status, statusLights, treatmentData)
 
         val bgReadings by graphViewModel.bgReadingsFlow.collectAsStateWithLifecycle()
         val iobData by graphViewModel.iobGraphFlow.collectAsStateWithLifecycle()
-        val treatmentData by graphViewModel.treatmentGraphFlow.collectAsStateWithLifecycle()
         val chartConfig by graphViewModel.chartConfigFlow.collectAsStateWithLifecycle()
         val predictions by graphViewModel.predictionsFlow.collectAsStateWithLifecycle()
         val nowEpochMs = System.currentTimeMillis()
@@ -115,6 +131,7 @@ internal fun GlassOverviewComposeEmbedded(
                     onOpenSensorInsert = commands::openSensorInsert,
                     onOpenSensorQuality = commands::openSensorQuality,
                     onOpenTools = { showTools = true },
+                    selectedPills = selectedPills,
                 )
                 BgChartCard(
                     readings = chartState.bgReadings,
@@ -158,7 +175,9 @@ internal fun GlassOverviewComposeEmbedded(
                 }
             }
             if (showTools) {
-                BackHandler(enabled = showTools) { showTools = false }
+                BackHandler(enabled = showTools) {
+                    if (showPersonalize) showPersonalize = false else showTools = false
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -172,16 +191,77 @@ internal fun GlassOverviewComposeEmbedded(
                             )
                         )
                 ) {
-                    DashboardV2ToolsScreen(
-                        paddingValues = PaddingValues(0.dp),
-                        fabBottomOffset = 0.dp,
-                        availablePluginClassNames = availablePluginClassNames,
-                        onAction = { action ->
-                            showTools = false
-                            onToolAction(action)
-                        },
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    if (showPersonalize) {
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.dashboard_glass_personalize_title),
+                                    color = if (isDark) Color.White else Color(0xFF0D1B2A),
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Text(
+                                    text = stringResource(app.aaps.core.ui.R.string.ok),
+                                    color = if (isDark) Color(0xFF6DFAD2) else Color(0xFF00B894),
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable(
+                                            onClickLabel = stringResource(app.aaps.core.ui.R.string.ok),
+                                            role = Role.Button,
+                                        ) { showPersonalize = false }
+                                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                                )
+                            }
+                            GlassPersonalizeScreen(
+                                selectedPills = selectedPills.toSet(),
+                                onToggle = { id, checked ->
+                                    val next = selectedPills.toMutableSet()
+                                    if (checked) next.add(id) else next.remove(id)
+                                    preferences.put(StringNonKey.GlassSelectedPills, serializeSelectedGlassPills(next))
+                                },
+                                isDark = isDark,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    } else {
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.End,
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.dashboard_glass_personalize_button),
+                                    color = if (isDark) Color(0xFF6DFAD2) else Color(0xFF00B894),
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable(
+                                            onClickLabel = stringResource(R.string.dashboard_glass_personalize_button),
+                                            role = Role.Button,
+                                        ) { showPersonalize = true }
+                                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                                )
+                            }
+                            DashboardV2ToolsScreen(
+                                paddingValues = PaddingValues(0.dp),
+                                fabBottomOffset = 0.dp,
+                                availablePluginClassNames = availablePluginClassNames,
+                                onAction = { action ->
+                                    showTools = false
+                                    onToolAction(action)
+                                },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -274,7 +354,11 @@ internal fun buildGlassChartState(
     )
 }
 
-internal fun buildGlassUiState(status: StatusCardState?, lights: StatusUiState?): GlassUiState {
+internal fun buildGlassUiState(
+    status: StatusCardState?,
+    lights: StatusUiState?,
+    treatmentData: TreatmentGraphData,
+): GlassUiState {
     if (status == null) return GlassUiState()
     return GlassUiState(
         currentBg = status.glucoseText,
@@ -297,11 +381,16 @@ internal fun buildGlassUiState(status: StatusCardState?, lights: StatusUiState?)
         sensorLabel = lights?.sensorStatus?.label ?: "Sensor",
         loopStatusText = status.loopStatusText,
         loopIsRunning = status.loopIsRunning,
-        iobText = status.iobText,
+        // lastSensorValueText holds the total IOB WITHOUT the "IOB: " prefix baked into status.iobText
+        // (which DASHBOARD_V2/legacy views display standalone) — reused here to avoid Glass's own separate
+        // pill title duplicating that prefix. Do not "fix" this back to status.iobText.
+        iobText = status.lastSensorValueText ?: "--",
         isTempTargetActive = status.isTempTargetActive,
         targetText = status.targetText ?: "--",
         basalPercentText = status.effectiveBasalText ?: "--",
         stepsText = status.stepsText ?: "--",
         hrText = status.hrText ?: "--",
+        lastBolusText = treatmentData.boluses.filter { it.isValid && it.timestamp <= System.currentTimeMillis() }.maxByOrNull { it.timestamp }?.label ?: "--",
+        lastCarbsText = treatmentData.carbs.filter { it.isValid && it.timestamp <= System.currentTimeMillis() }.maxByOrNull { it.timestamp }?.label ?: "--",
     )
 }

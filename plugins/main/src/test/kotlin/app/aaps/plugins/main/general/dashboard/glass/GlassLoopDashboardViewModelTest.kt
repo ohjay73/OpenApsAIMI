@@ -19,7 +19,10 @@ import app.aaps.core.interfaces.stats.TirCalculator
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.plugins.aps.openAPSAIMI.GlucoseStatusCalculatorAimi
+import app.aaps.plugins.aps.openAPSAIMI.learning.BasalNeuralLearner
+import app.aaps.plugins.aps.openAPSAIMI.utils.AimiStorageHelper
 import com.google.common.truth.Truth.assertThat
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.runBlocking
@@ -49,6 +52,8 @@ class GlassLoopDashboardViewModelTest {
     private val resourceHelper: ResourceHelper = mock()
     private val dateUtil: DateUtil = mock()
     private val config: Config = mock()
+    private val basalNeuralLearner: BasalNeuralLearner = mock()
+    private val aimiStorageHelper: AimiStorageHelper = mock()
 
     // Held so tests can advance the ViewModel's Main-dispatched refresh() coroutine.
     private val testDispatcher = StandardTestDispatcher()
@@ -73,6 +78,11 @@ class GlassLoopDashboardViewModelTest {
         whenever(config.VERSION_NAME).thenReturn("3.5.0")
         whenever(dateUtil.now()).thenReturn(1_000_000_000L)
         whenever(dateUtil.timeString(any())).thenReturn("14:32")
+        whenever(dateUtil.dateAndTimeString(any())).thenReturn("2026-09-11 14:32")
+        // getGovernanceSnapshot()/getAimiDirectory() return non-null Kotlin types -- Mockito's unstubbed
+        // default (null) would trip a Kotlin null-check at the call site, so both need an explicit stub.
+        whenever(basalNeuralLearner.getGovernanceSnapshot()).thenReturn(mock())
+        whenever(aimiStorageHelper.getAimiDirectory()).thenReturn(File("/tmp/glass-loop-dashboard-test"))
 
         val emptyTir: TIR = mock()
         whenever(emptyTir.belowPct()).thenReturn(null)
@@ -88,6 +98,7 @@ class GlassLoopDashboardViewModelTest {
         viewModel = GlassLoopDashboardViewModel(
             activePlugin, glucoseStatusProvider, tddCalculator, tirCalculator, glucoseStatusCalculatorAimi,
             persistenceLayer, profileFunction, profileUtil, preferences, resourceHelper, dateUtil, config,
+            basalNeuralLearner, aimiStorageHelper,
         )
     }
 

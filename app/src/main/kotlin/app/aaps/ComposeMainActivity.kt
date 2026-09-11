@@ -988,6 +988,7 @@ class ComposeMainActivity : AppCompatActivity() {
                         navController.navigate(route) { launchSingleTop = true }
                     }
                 },
+                onOpenAimiContext = { launchDashboardV2Aimi(DashboardV2ToolAction.AIMI_CONTEXT) },
             )
         }
 

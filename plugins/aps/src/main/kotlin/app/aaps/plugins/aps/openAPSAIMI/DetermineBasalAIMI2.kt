@@ -87,6 +87,7 @@ import app.aaps.plugins.aps.openAPSAIMI.pkpd.DiaGovernor
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.InsulinKineticsAuthority
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkpdLearningDiagnostics
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.TapSitePeakShift
+import app.aaps.plugins.aps.openAPSAIMI.pkpd.TrajectoryRuntimeRepository
 import app.aaps.plugins.aps.openAPSAIMI.orchestration.AimiIntelligenceSnapshot
 import app.aaps.plugins.aps.openAPSAIMI.orchestration.AimiIntelligenceSnapshotBuilder
 import app.aaps.plugins.aps.openAPSAIMI.orchestration.AimiAdaptationStatusBuilder
@@ -17865,6 +17866,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         min_bg = pkpdTargetsMinBg
         target_bg = pkpdTargetsTargetBg
         max_bg = pkpdTargetsMaxBg
+        this.lastAdvancedPredictionCurves?.let { TrajectoryRuntimeRepository.publish(it) }
         val modelcal = runUamModelCalHypoGuardPostHypoAndSetPredictedSmb(
             rT = rT,
             bg = bg,

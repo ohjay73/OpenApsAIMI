@@ -1,5 +1,6 @@
 package app.aaps.plugins.main.general.dashboard.glass
 
+import app.aaps.core.interfaces.overview.graph.TreatmentGraphData
 import app.aaps.plugins.main.general.dashboard.viewmodel.StatusCardState
 import com.google.common.truth.Truth.assertThat
 import org.junit.jupiter.api.Test
@@ -37,37 +38,44 @@ class GlassOverviewComposeEmbeddedKtTest {
             unitText = unitText,
         )
 
+    private val emptyTreatmentData = TreatmentGraphData(
+        boluses = emptyList(),
+        carbs = emptyList(),
+        extendedBoluses = emptyList(),
+        therapyEvents = emptyList(),
+    )
+
     @Test
     fun `null status maps to all-defaults GlassUiState`() {
-        val result = buildGlassUiState(status = null, lights = null)
+        val result = buildGlassUiState(status = null, lights = null, treatmentData = emptyTreatmentData)
 
         assertThat(result).isEqualTo(GlassUiState())
     }
 
     @Test
     fun `active temp target maps to isTempTargetActive true`() {
-        val result = buildGlassUiState(status = statusCardState(isTempTargetActive = true), lights = null)
+        val result = buildGlassUiState(status = statusCardState(isTempTargetActive = true), lights = null, treatmentData = emptyTreatmentData)
 
         assertThat(result.isTempTargetActive).isTrue()
     }
 
     @Test
     fun `no active temp target maps to isTempTargetActive false`() {
-        val result = buildGlassUiState(status = statusCardState(isTempTargetActive = false), lights = null)
+        val result = buildGlassUiState(status = statusCardState(isTempTargetActive = false), lights = null, treatmentData = emptyTreatmentData)
 
         assertThat(result.isTempTargetActive).isFalse()
     }
 
     @Test
     fun `unit text is read from StatusCardState, not hardcoded`() {
-        val result = buildGlassUiState(status = statusCardState(unitText = "mmol/L"), lights = null)
+        val result = buildGlassUiState(status = statusCardState(unitText = "mmol/L"), lights = null, treatmentData = emptyTreatmentData)
 
         assertThat(result.unit).isEqualTo("mmol/L")
     }
 
     @Test
     fun `loop not running maps to loopIsRunning false`() {
-        val result = buildGlassUiState(status = statusCardState(loopIsRunning = false), lights = null)
+        val result = buildGlassUiState(status = statusCardState(loopIsRunning = false), lights = null, treatmentData = emptyTreatmentData)
 
         assertThat(result.loopIsRunning).isFalse()
     }

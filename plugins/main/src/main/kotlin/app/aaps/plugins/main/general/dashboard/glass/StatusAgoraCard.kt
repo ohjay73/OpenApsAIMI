@@ -38,6 +38,14 @@ import app.aaps.core.ui.compose.StatusLevel
 import app.aaps.core.ui.compose.statusLevelToColor
 import app.aaps.plugins.main.R
 
+private fun glassPillValue(id: GlassPillId, state: GlassUiState): String = when (id) {
+    GlassPillId.IOB -> state.iobText
+    GlassPillId.TARGET -> state.targetText
+    GlassPillId.BASAL_RATE -> state.basalPercentText
+    GlassPillId.LAST_BOLUS -> state.lastBolusText
+    GlassPillId.LAST_CARBS -> state.lastCarbsText
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun StatusAgoraCard(
@@ -54,6 +62,7 @@ internal fun StatusAgoraCard(
     onOpenSensorInsert: () -> Unit,
     onOpenSensorQuality: () -> Unit,
     onOpenTools: () -> Unit,
+    selectedPills: List<GlassPillId>,
 ) {
     GlassContainer(isDark = isDark, modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -277,34 +286,31 @@ internal fun StatusAgoraCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            if (selectedPills.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(14.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                BottomMetricPill(
-                    title = stringResource(R.string.dashboard_glass_iob_label),
-                    value = state.iobText,
-                    isDark = isDark,
-                    onClick = onOpenInsulin,
-                    modifier = Modifier.weight(1f)
-                )
-                BottomMetricPill(
-                    title = if (state.isTempTargetActive) "" else stringResource(R.string.dashboard_glass_target_label),
-                    value = state.targetText,
-                    isDark = isDark,
-                    onClick = onOpenTarget,
-                    modifier = Modifier.weight(1f),
-                    accentColor = if (state.isTempTargetActive) Color(0xFFF4D700) else null
-                )
-                BottomMetricPill(
-                    title = stringResource(R.string.dashboard_glass_basal_t_label),
-                    value = state.basalPercentText,
-                    isDark = isDark,
-                    onClick = onOpenBasal,
-                    modifier = Modifier.weight(1f)
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    GLASS_PILL_CATALOG.filter { it.id in selectedPills }.forEach { entry ->
+                        val isTarget = entry.id == GlassPillId.TARGET
+                        BottomMetricPill(
+                            title = if (isTarget && state.isTempTargetActive) "" else stringResource(entry.labelRes),
+                            value = glassPillValue(entry.id, state),
+                            isDark = isDark,
+                            onClick = when (entry.id) {
+                                GlassPillId.IOB -> onOpenInsulin
+                                GlassPillId.TARGET -> onOpenTarget
+                                GlassPillId.BASAL_RATE -> onOpenBasal
+                                GlassPillId.LAST_BOLUS -> onOpenInsulin
+                                GlassPillId.LAST_CARBS -> onOpenInsulin
+                            },
+                            modifier = Modifier.weight(1f),
+                            accentColor = if (isTarget && state.isTempTargetActive) Color(0xFFF4D700) else null
+                        )
+                    }
+                }
             }
         }
     }

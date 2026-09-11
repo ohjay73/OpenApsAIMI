@@ -70,9 +70,17 @@ import app.aaps.core.ui.compose.siteRotation.SiteLocationPickerScreen
 import app.aaps.plugins.automation.AutomationRuntime
 import app.aaps.plugins.configuration.setupwizard.SWDefinition
 import app.aaps.plugins.configuration.setupwizard.SetupWizardScreen
+import app.aaps.plugins.main.general.dashboard.glass.GlassBasalDetailScreen
+import app.aaps.plugins.main.general.dashboard.glass.GlassBatteryDetailScreen
+import app.aaps.plugins.main.general.dashboard.glass.GlassCannulaDetailScreen
+import app.aaps.plugins.main.general.dashboard.glass.GlassInsulinDetailScreen
 import app.aaps.plugins.main.general.dashboard.glass.GlassLoopDashboardScreen
+import app.aaps.plugins.main.general.dashboard.glass.GlassLoopDetailScreen
 import app.aaps.plugins.main.general.dashboard.glass.GlassLoopDashboardViewModel
+import app.aaps.plugins.main.general.dashboard.glass.GlassPumpDetailScreen
+import app.aaps.plugins.main.general.dashboard.glass.GlassSensorInsertDetailScreen
 import app.aaps.plugins.main.general.dashboard.glass.GlassSensorQualityScreen
+import app.aaps.plugins.main.general.dashboard.glass.GlassTargetDetailScreen
 import app.aaps.plugins.main.general.dashboard.viewmodel.OverviewViewModel
 import app.aaps.plugins.sync.nsclientV3.clientcontrol.compose.AuthorizedClientsScreen
 import app.aaps.plugins.sync.nsclientV3.clientcontrol.compose.PairWithMasterScreen
@@ -183,6 +191,8 @@ fun NavGraphBuilder.appNavGraph(
     findScreenDef: (key: String) -> PreferenceSubScreenDef?,
     /** Opens [app.aaps.activities.PreferencesActivity] — pass plugin simpleName or null for the full preference tree */
     onOpenLegacyXmlPreferences: (pluginSimpleName: String?) -> Unit,
+    /** Opens the AIMI Context screen, reusing the same launch mechanism as the Tools grid's "AIMI Context" tile */
+    onOpenAimiContext: () -> Unit,
 ) {
     composable(
         AppRoute.InsulinManagement.route,
@@ -542,6 +552,7 @@ fun NavGraphBuilder.appNavGraph(
             uiState = uiState,
             onBack = { navController.safePopBackStack() },
             isDark = isDark,
+            onOpenAimiContext = onOpenAimiContext,
         )
     }
 
@@ -556,6 +567,142 @@ fun NavGraphBuilder.appNavGraph(
         GlassSensorQualityScreen(
             overviewViewModel = overviewViewModel,
             onBack = { navController.safePopBackStack() },
+            isDark = isDark,
+        )
+    }
+
+    composable(AppRoute.GlassPumpDetail.route) {
+        val preferences = LocalPreferences.current
+        val darkModeValue by preferences.observe(StringKey.GeneralDarkMode).collectAsState()
+        val isDark = when (UiMode.fromString(darkModeValue)) {
+            UiMode.LIGHT -> false
+            UiMode.DARK -> true
+            UiMode.SYSTEM -> isSystemInDarkTheme()
+        }
+        GlassPumpDetailScreen(
+            overviewViewModel = overviewViewModel,
+            onBack = { navController.safePopBackStack() },
+            isDark = isDark,
+        )
+    }
+
+    composable(AppRoute.GlassBatteryDetail.route) {
+        val preferences = LocalPreferences.current
+        val darkModeValue by preferences.observe(StringKey.GeneralDarkMode).collectAsState()
+        val isDark = when (UiMode.fromString(darkModeValue)) {
+            UiMode.LIGHT -> false
+            UiMode.DARK -> true
+            UiMode.SYSTEM -> isSystemInDarkTheme()
+        }
+        GlassBatteryDetailScreen(
+            overviewViewModel = overviewViewModel,
+            onBack = { navController.safePopBackStack() },
+            isDark = isDark,
+        )
+    }
+
+    composable(AppRoute.GlassInsulinDetail.route) {
+        val preferences = LocalPreferences.current
+        val darkModeValue by preferences.observe(StringKey.GeneralDarkMode).collectAsState()
+        val isDark = when (UiMode.fromString(darkModeValue)) {
+            UiMode.LIGHT -> false
+            UiMode.DARK -> true
+            UiMode.SYSTEM -> isSystemInDarkTheme()
+        }
+        GlassInsulinDetailScreen(
+            insulinButtonsDef = builtInSearchables.insulinButtons,
+            bgInfoState = graphViewModel.bgInfoState,
+            iobUiState = chipsViewModel.iobUiState,
+            cobUiState = chipsViewModel.cobUiState,
+            onNavigateBack = { navController.safePopBackStack() },
+            onShowDeliveryError = { comment ->
+                onShowDeliveryError(comment, app.aaps.core.ui.R.string.treatmentdeliveryerror)
+            },
+            isDark = isDark,
+        )
+    }
+
+    composable(AppRoute.GlassCannulaDetail.route) { backStackEntry ->
+        val preferences = LocalPreferences.current
+        val darkModeValue by preferences.observe(StringKey.GeneralDarkMode).collectAsState()
+        val isDark = when (UiMode.fromString(darkModeValue)) {
+            UiMode.LIGHT -> false
+            UiMode.DARK -> true
+            UiMode.SYSTEM -> isSystemInDarkTheme()
+        }
+        val siteLocation = backStackEntry.savedStateHandle.get<String>("site_location")
+        val siteArrow = backStackEntry.savedStateHandle.get<String>("site_arrow")
+        val siteResult = if (siteLocation != null || siteArrow != null) Pair(siteLocation, siteArrow) else null
+
+        GlassCannulaDetailScreen(
+            fillButtonsDef = builtInSearchables.fillButtons,
+            onNavigateBack = { navController.safePopBackStack() },
+            onPickSiteLocation = {
+                navController.navigate(AppRoute.SiteLocationPicker.createRoute(TE.Type.CANNULA_CHANGE))
+            },
+            siteLocationResult = siteResult,
+            isDark = isDark,
+        )
+    }
+
+    composable(AppRoute.GlassBasalDetail.route) {
+        val preferences = LocalPreferences.current
+        val darkModeValue by preferences.observe(StringKey.GeneralDarkMode).collectAsState()
+        val isDark = when (UiMode.fromString(darkModeValue)) {
+            UiMode.LIGHT -> false
+            UiMode.DARK -> true
+            UiMode.SYSTEM -> isSystemInDarkTheme()
+        }
+        GlassBasalDetailScreen(
+            onNavigateBack = { navController.safePopBackStack() },
+            onShowDeliveryError = { comment ->
+                onShowDeliveryError(comment, app.aaps.core.ui.R.string.temp_basal_delivery_error)
+            },
+            isDark = isDark,
+        )
+    }
+
+    composable(AppRoute.GlassTargetDetail.route) {
+        // Activity-scoped ViewModel, NOT hiltViewModel(): reuse the SAME instance the shared
+        // TempTargetManagement destination (above) already binds to, following that destination's own
+        // pattern for obtaining this ViewModel.
+        GlassTargetDetailScreen(
+            viewModel = tempTargetManagementViewModel,
+            onNavigateBack = { navController.safePopBackStack() },
+        )
+    }
+
+    composable(AppRoute.GlassLoopDetail.route) {
+        // Activity-scoped ViewModel, NOT hiltViewModel(): reuse the SAME instance the shared
+        // RunningMode destination (above) already binds to, following that destination's own
+        // pattern for obtaining this ViewModel.
+        GlassLoopDetailScreen(
+            viewModel = runningModeManagementViewModel,
+            onNavigateBack = { navController.safePopBackStack() },
+        )
+    }
+
+    composable(
+        route = AppRoute.GlassSensorInsertDetail.route,
+        arguments = listOf(navArgument("eventTypeOrdinal") { type = NavType.IntType })
+    ) { backStackEntry ->
+        val preferences = LocalPreferences.current
+        val darkModeValue by preferences.observe(StringKey.GeneralDarkMode).collectAsState()
+        val isDark = when (UiMode.fromString(darkModeValue)) {
+            UiMode.LIGHT -> false
+            UiMode.DARK -> true
+            UiMode.SYSTEM -> isSystemInDarkTheme()
+        }
+        val siteLocation = backStackEntry.savedStateHandle.get<String>("site_location")
+        val siteArrow = backStackEntry.savedStateHandle.get<String>("site_arrow")
+        val siteResult = if (siteLocation != null || siteArrow != null) Pair(siteLocation, siteArrow) else null
+
+        GlassSensorInsertDetailScreen(
+            onNavigateBack = { navController.safePopBackStack() },
+            onPickSiteLocation = {
+                navController.navigate(AppRoute.SiteLocationPicker.createRoute(TE.Type.SENSOR_CHANGE))
+            },
+            siteLocationResult = siteResult,
             isDark = isDark,
         )
     }

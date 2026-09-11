@@ -30,4 +30,6 @@ data class GlassUiState(
     val basalPercentText: String = "--",
     val stepsText: String = "--",
     val hrText: String = "--",
+    val lastBolusText: String = "--",
+    val lastCarbsText: String = "--",
 )

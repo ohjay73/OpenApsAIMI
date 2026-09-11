@@ -200,14 +200,20 @@ internal fun BottomMetricPill(
                     text = "$title ",
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.Bold,
-                    color = textColor
+                    color = textColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    softWrap = false,
                 )
             }
             Text(
                 text = value,
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = valueColor
+                color = valueColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                softWrap = false,
             )
         }
     }
