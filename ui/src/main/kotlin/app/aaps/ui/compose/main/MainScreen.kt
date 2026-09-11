@@ -160,6 +160,9 @@ fun MainScreen(
     dashboardOverview: (@Composable (PaddingValues, Dp) -> Unit)? = null,
     /** Optional DASHBOARD_V2 Tools content. Its presence also enables the fixed five-tab navigation. */
     dashboardTools: (@Composable (PaddingValues, Dp) -> Unit)? = null,
+    /** True only for the GLASS dashboard skin — swaps in [GlassNavigationBar] instead of the default
+     *  [MainNavigationBar]. Does not affect OVERVIEW/DASHBOARD_V1, which keep using MainNavigationBar. */
+    isGlassSkin: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     LocalDateUtil.current
@@ -450,6 +453,25 @@ fun MainScreen(
                                             }
                                         }
                                     },
+                                    modifier = Modifier.onSizeChanged {
+                                        if (it.height > 0 && it.height != bottomBarHeightPx) bottomBarHeightPx = it.height
+                                    },
+                                )
+                            } else if (isGlassSkin) {
+                                GlassNavigationBar(
+                                    masterOrPairedClient = masterOrPairedClient,
+                                    onTreatmentClick = {
+                                        treatmentViewModel.refreshState()
+                                        showTreatmentSheet = true
+                                    },
+                                    onScenariosClick = {
+                                        scenesViewModel.refreshState()
+                                        showAutomationSheet = true
+                                    },
+                                    onManagementClick = { manageSheetState.show() },
+                                    onNavigate = onNavigate,
+                                    loopActionAvailable = loopActionState.actionAvailable,
+                                    onLoopActionClick = { showLoopActionSheet = true },
                                     modifier = Modifier.onSizeChanged {
                                         if (it.height > 0 && it.height != bottomBarHeightPx) bottomBarHeightPx = it.height
                                     },

@@ -147,6 +147,9 @@ fun DashboardV2ToolsScreen(
     availablePluginClassNames: Set<String>,
     onAction: (DashboardV2ToolAction) -> Unit,
     modifier: Modifier = Modifier,
+    /** Null shows every tile (today's behavior, used by every DASHBOARD_V2 caller). A non-null set hides
+     *  any tile not in it — used by Glass's Tools-tile personalization. */
+    visibleActions: Set<DashboardV2ToolAction>? = null,
 ) {
     val columns =
         if (LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT) {
@@ -176,25 +179,29 @@ fun DashboardV2ToolsScreen(
                 color = MaterialTheme.colorScheme.onSurface,
             )
         }
-        items(DashboardV2ToolAction.general, key = DashboardV2ToolAction::name) { action ->
+        val visibleGeneral = DashboardV2ToolAction.general.filter { visibleActions == null || it in visibleActions }
+        items(visibleGeneral, key = DashboardV2ToolAction::name) { action ->
             DashboardV2ToolTile(
                 action = action,
                 enabled = action.isAvailable(availablePluginClassNames),
                 onClick = { onAction(action) },
             )
         }
-        item(span = { GridItemSpan(maxLineSpan) }) {
-            Text(
-                text = stringResource(R.string.dashboard_v2_tools_aimi_section),
-                modifier =
-                    Modifier
-                    .fillMaxWidth()
-                    .padding(top = 12.dp, bottom = 4.dp),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
+        val visibleAimi = DashboardV2ToolAction.aimi.filter { visibleActions == null || it in visibleActions }
+        if (visibleAimi.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Text(
+                    text = stringResource(R.string.dashboard_v2_tools_aimi_section),
+                    modifier =
+                        Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp, bottom = 4.dp),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
-        items(DashboardV2ToolAction.aimi, key = DashboardV2ToolAction::name) { action ->
+        items(visibleAimi, key = DashboardV2ToolAction::name) { action ->
             DashboardV2ToolTile(
                 action = action,
                 enabled = action.isAvailable(availablePluginClassNames),
@@ -258,7 +265,7 @@ private fun DashboardV2ToolTile(
     }
 }
 
-private fun DashboardV2ToolAction.icon(): ImageVector =
+internal fun DashboardV2ToolAction.icon(): ImageVector =
     when (this) {
         DashboardV2ToolAction.ACTIONS -> Icons.Default.PlayArrow
         DashboardV2ToolAction.RAPID_ACTING -> Icons.Default.Medication
@@ -276,7 +283,7 @@ private fun DashboardV2ToolAction.icon(): ImageVector =
     }
 
 @StringRes
-private fun DashboardV2ToolAction.labelRes(): Int =
+internal fun DashboardV2ToolAction.labelRes(): Int =
     when (this) {
         DashboardV2ToolAction.ACTIONS -> R.string.dashboard_v2_tool_actions
         DashboardV2ToolAction.RAPID_ACTING -> R.string.dashboard_v2_tool_rapid_acting

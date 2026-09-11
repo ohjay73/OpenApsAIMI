@@ -24,6 +24,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.aaps.plugins.main.R
+import app.aaps.plugins.main.general.dashboard.DashboardV2ToolAction
+import app.aaps.plugins.main.general.dashboard.labelRes
 
 private val LightBg = Color(0xFFF1F5F9)
 private val LightCard = Color(0xFFFFFFFF)
@@ -41,6 +43,8 @@ private val DarkMuted = Color(0xFF778598)
 internal fun GlassPersonalizeScreen(
     selectedPills: Set<GlassPillId>,
     onToggle: (GlassPillId, Boolean) -> Unit,
+    selectedTools: Set<DashboardV2ToolAction>,
+    onToolToggle: (DashboardV2ToolAction, Boolean) -> Unit,
     isDark: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -65,6 +69,12 @@ internal fun GlassPersonalizeScreen(
                 fontSize = 13.sp,
             )
         }
+        Text(
+            text = stringResource(R.string.dashboard_glass_personalize_section_main_screen),
+            color = muted,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+        )
         GLASS_PILL_CATALOG.forEach { entry ->
             val checked = entry.id in selectedPills
             Row(
@@ -86,6 +96,37 @@ internal fun GlassPersonalizeScreen(
                 Checkbox(
                     checked = checked,
                     onCheckedChange = { onToggle(entry.id, it) },
+                    colors = CheckboxDefaults.colors(checkedColor = accent),
+                )
+            }
+        }
+        Text(
+            text = stringResource(R.string.dashboard_glass_personalize_section_tools),
+            color = muted,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+        )
+        DashboardV2ToolAction.entries.forEach { action ->
+            val checked = action in selectedTools
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(card)
+                    .clickable { onToolToggle(action, !checked) }
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = stringResource(action.labelRes()),
+                    color = primary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Checkbox(
+                    checked = checked,
+                    onCheckedChange = { onToolToggle(action, it) },
                     colors = CheckboxDefaults.colors(checkedColor = accent),
                 )
             }

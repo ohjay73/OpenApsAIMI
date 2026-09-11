@@ -40,6 +40,7 @@ import app.aaps.core.interfaces.overview.graph.BolusGraphPoint
 import app.aaps.core.interfaces.overview.graph.CarbsGraphPoint
 import app.aaps.core.interfaces.overview.graph.GraphDataPoint
 import app.aaps.core.interfaces.overview.graph.TreatmentGraphData
+import app.aaps.core.keys.BooleanNonKey
 import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.StringNonKey
 import app.aaps.core.ui.UiMode
@@ -86,6 +87,15 @@ internal fun GlassOverviewComposeEmbedded(
         }
         val selectedPillsRaw by preferences.observe(StringNonKey.GlassSelectedPills).collectAsState()
         val selectedPills = remember(selectedPillsRaw) { parseSelectedGlassPills(selectedPillsRaw) }
+        LaunchedEffect(Unit) {
+            if (!preferences.get(BooleanNonKey.GlassTopGridPillsMigrated)) {
+                val current = parseSelectedGlassPills(preferences.get(StringNonKey.GlassSelectedPills)).toSet()
+                preferences.put(StringNonKey.GlassSelectedPills, serializeSelectedGlassPills(withTopGridDefaultsMerged(current)))
+                preferences.put(BooleanNonKey.GlassTopGridPillsMigrated, true)
+            }
+        }
+        val selectedToolsRaw by preferences.observe(StringNonKey.GlassSelectedTools).collectAsState()
+        val selectedTools = remember(selectedToolsRaw) { parseSelectedGlassTools(selectedToolsRaw).toSet() }
         val treatmentData by graphViewModel.treatmentGraphFlow.collectAsStateWithLifecycle()
         val state = buildGlassUiState(status, statusLights, treatmentData)
 
@@ -225,6 +235,12 @@ internal fun GlassOverviewComposeEmbedded(
                                     if (checked) next.add(id) else next.remove(id)
                                     preferences.put(StringNonKey.GlassSelectedPills, serializeSelectedGlassPills(next))
                                 },
+                                selectedTools = selectedTools,
+                                onToolToggle = { action, checked ->
+                                    val next = selectedTools.toMutableSet()
+                                    if (checked) next.add(action) else next.remove(action)
+                                    preferences.put(StringNonKey.GlassSelectedTools, serializeSelectedGlassTools(next))
+                                },
                                 isDark = isDark,
                                 modifier = Modifier.fillMaxSize(),
                             )
@@ -259,6 +275,7 @@ internal fun GlassOverviewComposeEmbedded(
                                     onToolAction(action)
                                 },
                                 modifier = Modifier.fillMaxSize(),
+                                visibleActions = selectedTools,
                             )
                         }
                     }
@@ -307,13 +324,29 @@ internal fun buildGlassChartState(
         else                    -> null
     }
 
-    val predictionPoints = windowedPredictions.mapNotNull { p ->
+    val predictionPointsRaw = windowedPredictions.mapNotNull { p ->
         val type = predictionType(p.type) ?: return@mapNotNull null
         PredictionPoint(
             progress = predictionProgress(p.timestamp),
             value = mgdlToChartY(p.value).toFloat(),
             type = type,
         )
+    }
+    // Anchor each prediction path to the last real BG reading at progress=0, so the dashed prediction
+    // line starts exactly where the solid history line ends. Without this, predictions (timestamped from
+    // the last loop run, not from "now", and missing their own index-0 anchor point in the underlying
+    // AdvancedPredictionCurves/predictionsAsGv data) can visibly jump from the freshest CGM reading.
+    // A real prediction point can itself land at progress=0 (its timestamp equals nowEpochMs) — drop those
+    // before prepending the synthetic anchor so a type never ends up with two progress=0 points (which would
+    // just move the discontinuity instead of removing it, since the two values are not guaranteed equal).
+    val lastReadingY = windowedBg.lastOrNull()?.let { mgdlToChartY(it.value).toFloat() }
+    val predictionPoints = if (lastReadingY != null) {
+        val anchors = predictionPointsRaw.map { it.type }.distinct().map { type ->
+            PredictionPoint(progress = 0f, value = lastReadingY, type = type)
+        }
+        anchors + predictionPointsRaw.filter { it.progress > 0f }
+    } else {
+        predictionPointsRaw
     }
 
     val historyFraction = rangeHours.toFloat() / (rangeHours + predictionHorizonHours).toFloat()

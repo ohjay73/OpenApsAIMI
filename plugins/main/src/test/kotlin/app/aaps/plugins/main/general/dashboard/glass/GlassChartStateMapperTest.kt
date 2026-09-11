@@ -250,6 +250,61 @@ class GlassChartStateMapperTest {
     }
 
     @Test
+    fun `prediction line is anchored to the last BG reading, so it starts where the history line ends`() {
+        val nowEpochMs = 100_000_000L
+
+        val result = buildGlassChartState(
+            rangeHours = 6,
+            nowEpochMs = nowEpochMs,
+            bgReadings = listOf(bg(nowEpochMs, 145.0)),
+            iobPoints = emptyList(),
+            boluses = emptyList(),
+            carbs = emptyList(),
+            chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
+            mgdlToChartY = identity,
+            pumpStatusText = "",
+            predictions = listOf(
+                BgDataPoint(timestamp = nowEpochMs + 3_600_000L, value = 100.0, range = BgRange.IN_RANGE, type = BgType.IOB_PREDICTION),
+            ),
+        )
+
+        // 2 points: the synthetic anchor at progress=0 (value = last BG reading), then the real prediction.
+        assertThat(result.predictions).hasSize(2)
+        assertThat(result.predictions[0].progress).isEqualTo(0f)
+        assertThat(result.predictions[0].value).isEqualTo(145f)
+        assertThat(result.predictions[1].progress).isGreaterThan(0f)
+    }
+
+    @Test
+    fun `a real prediction landing exactly at progress 0 is replaced by the anchor, not duplicated`() {
+        val nowEpochMs = 100_000_000L
+
+        val result = buildGlassChartState(
+            rangeHours = 6,
+            nowEpochMs = nowEpochMs,
+            bgReadings = listOf(bg(nowEpochMs, 145.0)),
+            iobPoints = emptyList(),
+            boluses = emptyList(),
+            carbs = emptyList(),
+            chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
+            mgdlToChartY = identity,
+            pumpStatusText = "",
+            predictions = listOf(
+                // Lands exactly at progress=0 (timestamp == nowEpochMs) with a value that DIFFERS from the
+                // last BG reading — without the fix this would render as a second, conflicting progress=0
+                // point for the same type, moving the discontinuity instead of removing it.
+                BgDataPoint(timestamp = nowEpochMs, value = 130.0, range = BgRange.IN_RANGE, type = BgType.IOB_PREDICTION),
+                BgDataPoint(timestamp = nowEpochMs + 3_600_000L, value = 100.0, range = BgRange.IN_RANGE, type = BgType.IOB_PREDICTION),
+            ),
+        )
+
+        val atProgressZero = result.predictions.filter { it.progress == 0f }
+        assertThat(atProgressZero).hasSize(1)
+        assertThat(atProgressZero.single().value).isEqualTo(145f)
+        assertThat(result.predictions).hasSize(2)
+    }
+
+    @Test
     fun `unrecognized BgType predictions are silently dropped, not crashed on`() {
         val nowEpochMs = 100_000_000L
 

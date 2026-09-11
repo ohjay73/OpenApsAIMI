@@ -230,9 +230,15 @@
     <string name="dashboard_glass_last_carbs_label">Last Carbs</string>
     <string name="dashboard_glass_personalize_title">Personalize</string>
     <string name="dashboard_glass_personalize_button">Personalize</string>
-    <string name="dashboard_glass_personalize_empty_hint">Nothing selected. The row stays hidden until you pick at least one item below.</string>
+    <string name="dashboard_glass_personalize_empty_hint">Nothing selected. These items stay hidden on the main screen until you pick at least one below.</string>
+    <string name="dashboard_glass_personalize_section_main_screen">Main screen</string>
+    <string name="dashboard_glass_personalize_section_tools">Tools screen</string>
     <string name="dashboard_glass_activity_label">Activity</string>
     <string name="dashboard_glass_tools_label">Tools</string>
+    <string name="dashboard_glass_personalize_pump_label">Pump</string>
+    <string name="dashboard_glass_personalize_cannula_label">Cannula</string>
+    <string name="dashboard_glass_personalize_battery_label">Battery</string>
+    <string name="dashboard_glass_personalize_sensor_label">Sensor</string>
     <string name="dashboard_glass_activity_value" comment="%1$s=step count e.g. 4200, %2$s=heart rate in bpm e.g. 72">%1$s · %2$s bpm</string>
     <string name="dashboard_glass_loop_dashboard_title">Loop Dashboard</string>
     <string name="dashboard_glass_sensor_quality_title">Sensor Quality</string>

@@ -361,4 +361,7 @@
     <string name="dashboard_v2_nav_configuration">Config</string>
     <string name="dashboard_v2_nav_preferences">Preferences</string>
 
+    <!-- GLASS fixed navigation -->
+    <string name="dashboard_glass_nav_profiles">Profiles</string>
+
 </resources>
