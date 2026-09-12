@@ -323,7 +323,10 @@ internal fun BgChartCard(
                                     color = predictionColor(type),
                                     start = Offset(predictionX(prev.progress), mapY(prev.value)),
                                     end = Offset(predictionX(curr.progress), mapY(curr.value)),
-                                    strokeWidth = 3f,
+                                    // Same 6f width as the solid history curve above (Stroke(width = 6f, ...))
+                                    // — the dashed line should read as a continuation of the same stroke,
+                                    // not a thinner overlay.
+                                    strokeWidth = 6f,
                                     cap = StrokeCap.Round,
                                     pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f))
                                 )
@@ -454,7 +457,8 @@ internal fun IobChartCard(
     currentIob: Float,
     timeRangeHours: Int,
     historyFraction: Float,
-    isDark: Boolean
+    isDark: Boolean,
+    predictions: List<IobReadingPoint> = emptyList(),
 ) {
     var touchedIob by remember { mutableStateOf<IobReadingPoint?>(null) }
 
@@ -533,9 +537,11 @@ internal fun IobChartCard(
                 val chartH = h - 28f
 
                 fun historyX(progress: Float): Float = progress * chartW * historyFraction
+                fun predictionX(progress: Float): Float = (historyFraction + progress * (1f - historyFraction)) * chartW
 
                 val peakIob = maxOf(
                     iobReadings.maxByOrNull { it.iob }?.iob ?: 0f,
+                    predictions.maxByOrNull { it.iob }?.iob ?: 0f,
                     currentIob
                 ).coerceAtLeast(0f)
                 val maxIob = when {
@@ -641,6 +647,25 @@ internal fun IobChartCard(
 
                     drawCircle(color = Color(0xFF38BDF8), radius = 8f, center = Offset(lastX, lastY))
                     drawCircle(color = Color.White, radius = 3.5f, center = Offset(lastX, lastY))
+                }
+
+                // IOB projection (no further treatments assumed) — same 5f stroke width as the solid
+                // history curve above, just dashed, so the two curves read as one continuous line in
+                // design terms, only the dash pattern changes at the boundary.
+                if (predictions.size >= 2) {
+                    val sorted = predictions.sortedBy { it.progress }
+                    for (i in 1 until sorted.size) {
+                        val prev = sorted[i - 1]
+                        val curr = sorted[i]
+                        drawLine(
+                            color = Color(0xFF38BDF8),
+                            start = Offset(predictionX(prev.progress), mapY(prev.iob)),
+                            end = Offset(predictionX(curr.progress), mapY(curr.iob)),
+                            strokeWidth = 5f,
+                            cap = StrokeCap.Round,
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f))
+                        )
+                    }
                 }
 
                 // Hour labels on the X-axis (aligned with the BG chart)

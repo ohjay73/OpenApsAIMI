@@ -221,6 +221,87 @@ class GlassChartStateMapperTest {
     }
 
     @Test
+    fun `IOB prediction is anchored to its own first point, closing the gap to the history line`() {
+        val nowEpochMs = 100_000_000L
+
+        val result = buildGlassChartState(
+            rangeHours = 6,
+            nowEpochMs = nowEpochMs,
+            bgReadings = emptyList(),
+            // The last cached history point is a few minutes stale, same as a real GraphViewModel cache tick.
+            iobPoints = listOf(GraphDataPoint(timestamp = nowEpochMs - 4 * 60_000L, value = 2.5)),
+            boluses = emptyList(),
+            carbs = emptyList(),
+            chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
+            mgdlToChartY = identity,
+            pumpStatusText = "",
+            predictions = emptyList(),
+            iobPredictionPoints = listOf(
+                GraphDataPoint(timestamp = nowEpochMs, value = 2.4),
+                GraphDataPoint(timestamp = nowEpochMs + 3_600_000L, value = 1.2),
+            ),
+        )
+
+        // History gets a connector at progress=1, using the prediction's own fresh anchor value (2.4), not
+        // the stale cached history value (2.5) — the two data sources can legitimately disagree slightly.
+        assertThat(result.iobReadings).hasSize(2)
+        assertThat(result.iobReadings[1].progress).isEqualTo(1f)
+        assertThat(result.iobReadings[1].iob).isEqualTo(2.4f)
+
+        assertThat(result.iobPredictions).hasSize(2)
+        assertThat(result.iobPredictions[0].progress).isEqualTo(0f)
+        assertThat(result.iobPredictions[0].iob).isEqualTo(2.4f)
+        assertThat(result.iobPredictions[1].progress).isGreaterThan(0f)
+    }
+
+    @Test
+    fun `no IOB prediction data produces no connector and no prediction points`() {
+        val nowEpochMs = 100_000_000L
+
+        val result = buildGlassChartState(
+            rangeHours = 6,
+            nowEpochMs = nowEpochMs,
+            bgReadings = emptyList(),
+            iobPoints = listOf(GraphDataPoint(timestamp = nowEpochMs - 4 * 60_000L, value = 2.5)),
+            boluses = emptyList(),
+            carbs = emptyList(),
+            chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
+            mgdlToChartY = identity,
+            pumpStatusText = "",
+            predictions = emptyList(),
+            iobPredictionPoints = emptyList(),
+        )
+
+        assertThat(result.iobReadings).hasSize(1)
+        assertThat(result.iobPredictions).isEmpty()
+    }
+
+    @Test
+    fun `IOB prediction outside the 2-hour horizon is excluded`() {
+        val nowEpochMs = 100_000_000L
+
+        val result = buildGlassChartState(
+            rangeHours = 6,
+            nowEpochMs = nowEpochMs,
+            bgReadings = emptyList(),
+            iobPoints = emptyList(),
+            boluses = emptyList(),
+            carbs = emptyList(),
+            chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
+            mgdlToChartY = identity,
+            pumpStatusText = "",
+            predictions = emptyList(),
+            iobPredictionPoints = listOf(
+                GraphDataPoint(timestamp = nowEpochMs, value = 2.0),
+                GraphDataPoint(timestamp = nowEpochMs + 3 * 3_600_000L, value = 0.0),
+            ),
+        )
+
+        assertThat(result.iobPredictions).hasSize(1)
+        assertThat(result.iobPredictions[0].progress).isEqualTo(0f)
+    }
+
+    @Test
     fun `predictions outside the 2-hour horizon are excluded, and progress is 0 at now, 1 at horizon end`() {
         val nowEpochMs = 100_000_000L
         val rangeHours = 6

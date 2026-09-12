@@ -110,6 +110,7 @@ internal fun GlassOverviewComposeEmbedded(
                 nowEpochMs = nowEpochMs,
                 bgReadings = bgReadings,
                 iobPoints = iobData.iob,
+                iobPredictionPoints = iobData.predictions,
                 boluses = treatmentData.boluses,
                 carbs = treatmentData.carbs,
                 chartConfig = chartConfig,
@@ -159,6 +160,7 @@ internal fun GlassOverviewComposeEmbedded(
                 )
                 IobChartCard(
                     iobReadings = chartState.iobReadings,
+                    predictions = chartState.iobPredictions,
                     currentIob = chartState.currentIob,
                     timeRangeHours = chartState.rangeHours,
                     historyFraction = chartState.historyFraction,
@@ -301,6 +303,7 @@ internal fun buildGlassChartState(
     mgdlToChartY: (Double) -> Double,
     pumpStatusText: String,
     predictions: List<BgDataPoint>,
+    iobPredictionPoints: List<GraphDataPoint> = emptyList(),
     predictionHorizonHours: Int = 2,
 ): GlassChartState {
     val windowStart = nowEpochMs - rangeHours * 3_600_000L
@@ -383,8 +386,32 @@ internal fun buildGlassChartState(
     } else {
         emptyList()
     }
+    // Same anchor/continuity idea as the BG chart's predictions, but simpler: IOB is always locally
+    // computable from known treatments (never "unavailable" the way a CGM reading can be), so there is no
+    // staleness gate here — the projection is trustworthy whenever it exists at all.
+    val windowedIobPredictions = iobPredictionPoints
+        .filter { it.timestamp in nowEpochMs..predictionWindowEnd }
+        .sortedBy { it.timestamp }
+    val iobPredictionPointsRaw = windowedIobPredictions.map {
+        IobReadingPoint(progress = predictionProgress(it.timestamp), iob = it.value.toFloat())
+    }
+    // The first raw point represents "IOB right now," computed fresh in the same call that produced the
+    // whole projection — use its value as the shared anchor for both the prediction's own progress=0 point
+    // and the history line's connector to the boundary, guaranteeing the two curves meet exactly.
+    val iobAnchorValue = iobPredictionPointsRaw.firstOrNull()?.iob
+    val iobPredictions = if (iobAnchorValue != null) {
+        listOf(IobReadingPoint(progress = 0f, iob = iobAnchorValue)) + iobPredictionPointsRaw.filter { it.progress > 0f }
+    } else {
+        emptyList()
+    }
+
+    val lastIobProgress = windowedIob.lastOrNull()?.let { progress(it.timestamp) }
     val iobReadingPoints = windowedIob.map {
         IobReadingPoint(progress = progress(it.timestamp), iob = it.value.toFloat())
+    } + if (iobAnchorValue != null && lastIobProgress != null && lastIobProgress < 1f) {
+        listOf(IobReadingPoint(progress = 1f, iob = iobAnchorValue))
+    } else {
+        emptyList()
     }
     val treatmentPoints = buildList {
         windowedBoluses.forEach { b ->
@@ -400,6 +427,7 @@ internal fun buildGlassChartState(
         iobReadings = iobReadingPoints,
         treatments = treatmentPoints,
         predictions = predictionPoints,
+        iobPredictions = iobPredictions,
         historyFraction = historyFraction,
         currentBgValue = bgReadingPoints.lastOrNull()?.value ?: 0f,
         currentIob = iobReadingPoints.lastOrNull()?.iob ?: 0f,

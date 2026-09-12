@@ -23,6 +23,9 @@ data class GlassChartState(
     val iobReadings: List<IobReadingPoint> = emptyList(),
     val treatments: List<TreatmentPoint> = emptyList(),
     val predictions: List<PredictionPoint> = emptyList(),
+    /** Projected IOB decay assuming no further treatments — same anchor-to-boundary continuity as
+     *  [predictions], see [buildGlassChartState]. */
+    val iobPredictions: List<IobReadingPoint> = emptyList(),
     val historyFraction: Float = 1f,
     val currentBgValue: Float = 0f,
     val currentIob: Float = 0f,
