@@ -2,14 +2,18 @@ package app.aaps.plugins.aps.openAPSAIMI.smb
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.jupiter.api.Test
+import java.util.Locale
+import kotlin.math.exp
 
 /**
- * Locks the descent re-dose guard on the two reference episodes it was fitted on, plus one case per
- * condition.
+ * Locks the descent re-dose guard on the three reference episodes it was measured on, plus one case
+ * per condition.
  *
- * The two reference episodes carry their real numbers. They are the reason the guard exists:
+ * The reference episodes carry their real numbers. They are the reason the guard exists, and the
+ * reason condition (f) was added:
  *  - the night of 08/09, three boluses re-dosing a descent, which ended at BG 70.4;
- *  - the lunch of 09/09, a good burst of 8.96 U that the guard must leave alone.
+ *  - the lunch of 09/09, a good burst of 8.96 U that the guard must leave alone;
+ *  - the afternoon of 11/09, thirteen blocks in a row while BG was going up: 13 false positives.
  */
 class DescentRedoseGuardTest {
 
@@ -29,7 +33,7 @@ class DescentRedoseGuardTest {
      * The measured trace, on the 5 min CGM cadence, with the peak at offset 0.
      *
      * It holds the local bump the guard was built for: 170.2 at +40 then 186.8 at +55, so BG is
-     * *rising* at the moment of the first re-dose. An instant "BG is falling" test sees nothing here.
+     * *rising* at the moment of the first re-dose.
      */
     private val night0809 = series(
         0.0 to 232.5,
@@ -54,37 +58,60 @@ class DescentRedoseGuardTest {
         95.0 to 171.6, // third re-dose reads this
     )
 
+    /**
+     * OPEN QUESTION, do not "fix" this test silently.
+     *
+     * Condition (f) removes the three blocks of the 08/09 night: at each of those ticks the fitted
+     * slope is positive (+1.28, +1.08 and +0.26 mg/dL/min), because each re-dose landed on a bump
+     * inside the descent. That is exactly the shape condition (f) was asked to refuse, and it is
+     * also exactly the shape the guard was originally built to catch, so the two goals collide.
+     *
+     * The slope of the 08/09 bumps (+0.26 to +1.28) sits inside the range of the 13 false positives
+     * of 11/09 (+0.24 to +1.36), so the slope alone does not separate the two episodes. Changing
+     * [DescentRedoseGuard.MAX_SLOPE_MGDL_PER_MIN] is a decision to be taken with the measured data,
+     * not a detail of this test.
+     */
     @Test
-    fun `night of 08-09 first re-dose at peak plus 57 minutes is blocked`() {
-        val verdict = DescentRedoseGuard.evaluate(night0809, nowMs = at(57.0), iobU = 13.81)
+    fun `night of 08-09 no longer blocks because BG was going up at each re-dose`() {
+        val first = DescentRedoseGuard.evaluate(night0809, nowMs = at(57.0), iobU = 13.81)
+        val second = DescentRedoseGuard.evaluate(night0809, nowMs = at(63.0), iobU = 14.29)
+        val third = DescentRedoseGuard.evaluate(night0809, nowMs = at(98.0), iobU = 11.28)
 
-        assertThat(verdict.block).isTrue()
-        assertThat(verdict.reasonCode).isEqualTo(DescentRedoseGuard.REASON_BLOCKED)
-        assertThat(verdict.peakMgdl).isWithin(1e-9).of(232.5)
-        assertThat(verdict.peakAgeMinutes).isWithin(1e-9).of(57.0)
-        assertThat(verdict.currentBgMgdl).isWithin(1e-9).of(186.8)
-        assertThat(verdict.troughMgdl).isWithin(1e-9).of(170.2)
+        for (verdict in listOf(first, second, third)) {
+            assertThat(verdict.block).isFalse()
+            assertThat(verdict.reasonCode).isEqualTo(DescentRedoseGuard.REASON_BG_RISING)
+            assertThat(verdict.slopeMgdlPerMin!!).isGreaterThan(0.0)
+        }
+        assertThat(first.slopeMgdlPerMin!!).isWithin(0.01).of(1.28)
+        assertThat(second.slopeMgdlPerMin!!).isWithin(0.01).of(1.08)
+        assertThat(third.slopeMgdlPerMin!!).isWithin(0.01).of(0.26)
     }
 
+    /** Only condition (f) changed the 08/09 verdict: (a) to (e) still all hold at those ticks. */
     @Test
-    fun `night of 08-09 second re-dose at peak plus 63 minutes is blocked`() {
-        val verdict = DescentRedoseGuard.evaluate(night0809, nowMs = at(63.0), iobU = 14.29)
+    fun `night of 08-09 still satisfies conditions a to e`() {
+        val first = DescentRedoseGuard.evaluate(
+            night0809, nowMs = at(57.0), iobU = 13.81, maxSlopeMgdlPerMin = Double.MAX_VALUE,
+        )
+        assertThat(first.block).isTrue()
+        assertThat(first.peakMgdl).isWithin(1e-9).of(232.5)
+        assertThat(first.peakAgeMinutes).isWithin(1e-9).of(57.0)
+        assertThat(first.currentBgMgdl).isWithin(1e-9).of(186.8)
+        assertThat(first.troughMgdl).isWithin(1e-9).of(170.2)
 
-        assertThat(verdict.block).isTrue()
-        assertThat(verdict.currentBgMgdl).isWithin(1e-9).of(190.8)
-        assertThat(verdict.troughMgdl).isWithin(1e-9).of(170.2)
+        val second = DescentRedoseGuard.evaluate(
+            night0809, nowMs = at(63.0), iobU = 14.29, maxSlopeMgdlPerMin = Double.MAX_VALUE,
+        )
+        assertThat(second.block).isTrue()
         // The bump is +20.6 over the trough, still inside the basin, so condition (e) holds.
-        assertThat(verdict.reboundFromTroughMgdl).isWithin(1e-9).of(20.6)
-    }
+        assertThat(second.reboundFromTroughMgdl).isWithin(1e-9).of(20.6)
 
-    @Test
-    fun `night of 08-09 third re-dose at peak plus 98 minutes is blocked`() {
-        val verdict = DescentRedoseGuard.evaluate(night0809, nowMs = at(98.0), iobU = 11.28)
-
-        assertThat(verdict.block).isTrue()
-        assertThat(verdict.currentBgMgdl).isWithin(1e-9).of(171.6)
-        assertThat(verdict.troughMgdl).isWithin(1e-9).of(166.6)
-        assertThat(verdict.peakAgeMinutes).isWithin(1e-9).of(98.0)
+        val third = DescentRedoseGuard.evaluate(
+            night0809, nowMs = at(98.0), iobU = 11.28, maxSlopeMgdlPerMin = Double.MAX_VALUE,
+        )
+        assertThat(third.block).isTrue()
+        assertThat(third.troughMgdl).isWithin(1e-9).of(166.6)
+        assertThat(third.peakAgeMinutes).isWithin(1e-9).of(98.0)
     }
 
     // ---------------------------------------------------------------------------------------
@@ -138,6 +165,97 @@ class DescentRedoseGuardTest {
     }
 
     // ---------------------------------------------------------------------------------------
+    // Reference episode 3 — afternoon of 11/09, thirteen blocks in a row on a BG that was rising.
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * The measured rise of 11/09, from 15:49 to 16:02, about one reading per minute.
+     *
+     * Offsets are minutes after the peak of 14:33 (191.2 mg/dL), so 15:49 sits at +76 min, which is
+     * the peak age the export recorded for that tick. There is no 15:54 reading, as in the export.
+     */
+    private val rise1109 = listOf(
+        76.0 to 139.5, 77.0 to 141.4, 78.0 to 141.5, 79.0 to 142.8, 80.0 to 142.8,
+        82.0 to 148.8, 83.0 to 151.3, 84.0 to 153.3, 85.0 to 153.2, 86.0 to 153.2,
+        87.0 to 155.5, 88.0 to 157.3, 89.0 to 159.6,
+    )
+
+    /** IOB at each of the 13 ticks, in the same order, U. */
+    private val iob1109 = listOf(
+        6.21, 6.66, 6.57, 6.50, 6.42, 6.77, 6.88, 6.90, 6.92, 6.94, 6.96, 6.99, 7.01,
+    )
+
+    /**
+     * The whole afternoon: the fall down to the lowest point, then the measured rise.
+     *
+     * Only the rise was exported. The fall from 191.2 at 14:33 to 136.0 at 15:47 is modelled as a
+     * slowing fall, which is what a CGM trace does when it bottoms out. The verdicts it produces
+     * match the export closely: at 15:49 it gives drop 51.7 for a measured 52.2, and rebound 3.5
+     * for a measured 2.7.
+     */
+    private val afternoon1109 = buildList {
+        for (minute in 0..73) {
+            add(DescentRedoseGuard.Reading(at(minute.toDouble()), 133.0 + 58.2 * exp(-minute / 28.0)))
+        }
+        add(DescentRedoseGuard.Reading(at(74.0), 136.0)) // lowest point, 15:47
+        add(DescentRedoseGuard.Reading(at(75.0), 137.6))
+        addAll(rise1109.map { DescentRedoseGuard.Reading(at(it.first), it.second) })
+    }
+
+    private fun verdict1109(index: Int, maxSlope: Double = DescentRedoseGuard.MAX_SLOPE_MGDL_PER_MIN) =
+        DescentRedoseGuard.evaluate(
+            afternoon1109,
+            nowMs = at(rise1109[index].first),
+            iobU = iob1109[index],
+            maxSlopeMgdlPerMin = maxSlope,
+        )
+
+    /** Without condition (f) the shipped guard blocks all thirteen ticks. This is the bug. */
+    @Test
+    fun `without condition f the 13 ticks of 11-09 all block`() {
+        for (index in rise1109.indices) {
+            assertThat(verdict1109(index, maxSlope = Double.MAX_VALUE).block).isTrue()
+        }
+    }
+
+    @Test
+    fun `the 11-09 ticks are no longer blocked once the fitted slope is positive`() {
+        val stillBlocked = mutableListOf<String>()
+        for (index in 2..rise1109.indices.last) {
+            val verdict = verdict1109(index)
+            if (verdict.block) {
+                stillBlocked += String.format(
+                    Locale.US, "+%.0f min %s", rise1109[index].first, verdict.reason,
+                )
+            } else {
+                assertThat(verdict.reasonCode).isEqualTo(DescentRedoseGuard.REASON_BG_RISING)
+                assertThat(verdict.slopeMgdlPerMin!!).isGreaterThan(0.0)
+            }
+        }
+        assertThat(stillBlocked).isEmpty()
+    }
+
+    /**
+     * KNOWN RESIDUAL, on purpose: the first two ticks after the lowest point still block.
+     *
+     * This is not a data artefact, it is what a 15 min least-squares fit has to say. At 15:49 the
+     * window reaches back to 15:34, when BG was still on its way down, and BG at 15:34 can only be
+     * higher than at 15:49 because 15:47 was the lowest point. So the fit is still negative there
+     * whatever the shape of the fall, and no threshold on a 15 min slope can free that tick.
+     *
+     * 11 of the 13 false positives are removed. Freeing the last two needs a different measure (a
+     * shorter window, or a rise counted from the lowest point), which is a separate decision.
+     */
+    @Test
+    fun `the first two ticks of 11-09 still block because the slope window still holds the fall`() {
+        for (index in 0..1) {
+            val verdict = verdict1109(index)
+            assertThat(verdict.block).isTrue()
+            assertThat(verdict.slopeMgdlPerMin!!).isLessThan(0.0)
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
     // Condition (e) — the rebound guard is required, not a refinement.
     // ---------------------------------------------------------------------------------------
 
@@ -164,6 +282,69 @@ class DescentRedoseGuardTest {
         assertThat(verdict.peakAgeMinutes!!).isAtLeast(DescentRedoseGuard.PEAK_AGE_MINUTES)
         assertThat(verdict.dropFromPeakMgdl!!).isAtLeast(DescentRedoseGuard.DROP_MGDL)
         assertThat(verdict.reboundFromTroughMgdl!!).isGreaterThan(DescentRedoseGuard.REBOUND_MGDL)
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Condition (f) — the slope guard.
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    fun `a flat trace has a slope of exactly zero and still blocks`() {
+        val flat = series(
+            0.0 to 250.0, // peak
+            10.0 to 200.0,
+            19.0 to 150.0,
+            24.0 to 150.0,
+            29.0 to 150.0,
+            34.0 to 150.0,
+        )
+        val verdict = DescentRedoseGuard.evaluate(flat, nowMs = at(34.0), iobU = 10.0)
+
+        assertThat(verdict.slopeMgdlPerMin).isWithin(1e-12).of(0.0)
+        assertThat(verdict.block).isTrue()
+        assertThat(verdict.reasonCode).isEqualTo(DescentRedoseGuard.REASON_BLOCKED)
+    }
+
+    @Test
+    fun `fewer than three readings in the slope window never blocks`() {
+        // 8 min cadence: the last 15 min hold only two readings, so the slope cannot be trusted.
+        val sparse = series(
+            0.0 to 232.5, // peak
+            8.0 to 215.0,
+            16.0 to 200.0,
+            24.0 to 185.0,
+            32.0 to 175.0,
+            40.0 to 170.0,
+        )
+        val verdict = DescentRedoseGuard.evaluate(sparse, nowMs = at(42.0), iobU = 10.0)
+
+        assertThat(verdict.block).isFalse()
+        assertThat(verdict.reasonCode).isEqualTo(DescentRedoseGuard.REASON_SLOPE_NO_DATA)
+        assertThat(verdict.slopeMgdlPerMin).isNull()
+        // Everything else held: without (f) this tick would have blocked.
+        val withoutF = DescentRedoseGuard.evaluate(
+            sparse, nowMs = at(42.0), iobU = 10.0, maxSlopeMgdlPerMin = Double.MAX_VALUE,
+        )
+        assertThat(withoutF.reasonCode).isEqualTo(DescentRedoseGuard.REASON_SLOPE_NO_DATA)
+    }
+
+    @Test
+    fun `the slope never reaches back across a hole longer than ten minutes`() {
+        val withHole = series(
+            0.0 to 250.0, // steep fall before the hole
+            10.0 to 225.0,
+            20.0 to 200.0,
+            // 28 min hole here
+            48.0 to 140.0,
+            50.0 to 142.0,
+            52.0 to 144.0,
+            54.0 to 146.0,
+        )
+        val verdict = DescentRedoseGuard.evaluate(withHole, nowMs = at(55.0), iobU = 12.0)
+
+        // Only the four readings after the hole are used, and they are going up at 1 mg/dL/min.
+        assertThat(verdict.slopeMgdlPerMin!!).isWithin(1e-9).of(1.0)
+        assertThat(verdict.block).isFalse()
     }
 
     // ---------------------------------------------------------------------------------------
@@ -208,6 +389,7 @@ class DescentRedoseGuardTest {
 
         assertThat(verdict.block).isTrue()
         assertThat(verdict.peakMgdl).isWithin(1e-9).of(250.0)
+        assertThat(verdict.slopeMgdlPerMin!!).isLessThan(0.0)
     }
 
     @Test
@@ -217,6 +399,7 @@ class DescentRedoseGuardTest {
         assertThat(verdict.block).isFalse()
         assertThat(verdict.reasonCode).isEqualTo(DescentRedoseGuard.REASON_NO_DATA)
         assertThat(verdict.peakMgdl).isNull()
+        assertThat(verdict.slopeMgdlPerMin).isNull()
     }
 
     @Test
@@ -244,11 +427,22 @@ class DescentRedoseGuardTest {
         40.0 to current,
     )
 
+    /** A descent that is still falling at the end, so all six conditions hold. */
+    private val fallingDescent = series(
+        0.0 to 232.5, // peak
+        10.0 to 200.0,
+        20.0 to 180.0,
+        28.0 to 174.0,
+        34.0 to 171.0,
+        40.0 to 170.0, // trough, and current value
+    )
+
     @Test
-    fun `the reference descent blocks when all five conditions hold`() {
-        val verdict = DescentRedoseGuard.evaluate(descent(), nowMs = at(42.0), iobU = 10.0)
+    fun `the reference descent blocks when all six conditions hold`() {
+        val verdict = DescentRedoseGuard.evaluate(fallingDescent, nowMs = at(42.0), iobU = 10.0)
 
         assertThat(verdict.block).isTrue()
+        assertThat(verdict.slopeMgdlPerMin!!).isLessThan(0.0)
     }
 
     @Test
@@ -287,7 +481,7 @@ class DescentRedoseGuardTest {
 
     @Test
     fun `condition d alone missing - only 5 U still active`() {
-        val verdict = DescentRedoseGuard.evaluate(descent(), nowMs = at(42.0), iobU = 5.0)
+        val verdict = DescentRedoseGuard.evaluate(fallingDescent, nowMs = at(42.0), iobU = 5.0)
 
         assertThat(verdict.block).isFalse()
         assertThat(verdict.reasonCode).isEqualTo(DescentRedoseGuard.REASON_IOB_TOO_LOW)
@@ -301,6 +495,24 @@ class DescentRedoseGuardTest {
 
         assertThat(verdict.block).isFalse()
         assertThat(verdict.reasonCode).isEqualTo(DescentRedoseGuard.REASON_REBOUND_ABOVE_TROUGH)
+    }
+
+    @Test
+    fun `condition f alone missing - BG is going up again`() {
+        val bump = series(
+            0.0 to 232.5, // peak
+            10.0 to 200.0,
+            20.0 to 180.0,
+            28.0 to 172.0,
+            34.0 to 176.0,
+            40.0 to 182.0, // rising again, but only +10 over the trough so (e) still holds
+        )
+        val verdict = DescentRedoseGuard.evaluate(bump, nowMs = at(42.0), iobU = 10.0)
+
+        assertThat(verdict.block).isFalse()
+        assertThat(verdict.reasonCode).isEqualTo(DescentRedoseGuard.REASON_BG_RISING)
+        assertThat(verdict.reboundFromTroughMgdl!!).isAtMost(DescentRedoseGuard.REBOUND_MGDL)
+        assertThat(verdict.slopeMgdlPerMin!!).isGreaterThan(0.0)
     }
 
     @Test
@@ -327,7 +539,7 @@ class DescentRedoseGuardTest {
 
     @Test
     fun `with the key off the verdict is still computed but no dose is withheld`() {
-        val verdict = DescentRedoseGuard.evaluate(night0809, nowMs = at(57.0), iobU = 13.81)
+        val verdict = DescentRedoseGuard.evaluate(fallingDescent, nowMs = at(42.0), iobU = 10.0)
 
         // The shadow measurement happens whatever the key says.
         assertThat(verdict.block).isTrue()
@@ -341,7 +553,7 @@ class DescentRedoseGuardTest {
 
     @Test
     fun `with the key on the same tick withholds the dose`() {
-        val verdict = DescentRedoseGuard.evaluate(night0809, nowMs = at(57.0), iobU = 13.81)
+        val verdict = DescentRedoseGuard.evaluate(fallingDescent, nowMs = at(42.0), iobU = 10.0)
 
         val withheld = DescentRedoseGuard.shouldWithhold(
             verdict = verdict, armed = true, isExplicitUserAction = false, proposedUnits = 0.55,
@@ -351,7 +563,7 @@ class DescentRedoseGuardTest {
 
     @Test
     fun `a user-initiated bolus is never withheld even with the key on`() {
-        val verdict = DescentRedoseGuard.evaluate(night0809, nowMs = at(57.0), iobU = 13.81)
+        val verdict = DescentRedoseGuard.evaluate(fallingDescent, nowMs = at(42.0), iobU = 10.0)
 
         val withheld = DescentRedoseGuard.shouldWithhold(
             verdict = verdict, armed = true, isExplicitUserAction = true, proposedUnits = 0.55,
@@ -361,7 +573,7 @@ class DescentRedoseGuardTest {
 
     @Test
     fun `a tick that already proposes nothing is not reported as a withholding`() {
-        val verdict = DescentRedoseGuard.evaluate(night0809, nowMs = at(57.0), iobU = 13.81)
+        val verdict = DescentRedoseGuard.evaluate(fallingDescent, nowMs = at(42.0), iobU = 10.0)
 
         val withheld = DescentRedoseGuard.shouldWithhold(
             verdict = verdict, armed = true, isExplicitUserAction = false, proposedUnits = 0.0,
@@ -380,13 +592,35 @@ class DescentRedoseGuardTest {
     }
 
     @Test
+    fun `a rising tick of 11-09 is not withheld even with the key on`() {
+        val verdict = verdict1109(rise1109.indices.last)
+
+        val withheld = DescentRedoseGuard.shouldWithhold(
+            verdict = verdict, armed = true, isExplicitUserAction = false, proposedUnits = 0.55,
+        )
+        assertThat(withheld).isFalse()
+    }
+
+    @Test
     fun `the reason string always starts with the reason code so it can be counted`() {
-        val blocked = DescentRedoseGuard.evaluate(night0809, nowMs = at(57.0), iobU = 13.81)
+        val blocked = DescentRedoseGuard.evaluate(fallingDescent, nowMs = at(42.0), iobU = 10.0)
         val passed = DescentRedoseGuard.evaluate(lunch0909, nowMs = at(77.0), iobU = 9.0)
 
         assertThat(blocked.reason).startsWith(DescentRedoseGuard.REASON_BLOCKED)
         assertThat(passed.reason).startsWith(DescentRedoseGuard.REASON_DROP_TOO_SMALL)
         assertThat(blocked.reason).contains("peak=232.5")
-        assertThat(blocked.reason).contains("iob=13.81")
+        assertThat(blocked.reason).contains("iob=10.00")
+    }
+
+    @Test
+    fun `the reason string carries the slope so the export can be read`() {
+        val blocked = DescentRedoseGuard.evaluate(fallingDescent, nowMs = at(42.0), iobU = 10.0)
+        val rising = DescentRedoseGuard.evaluate(night0809, nowMs = at(57.0), iobU = 13.81)
+        val unknown = DescentRedoseGuard.evaluate(emptyList(), nowMs = at(10.0), iobU = 20.0)
+
+        assertThat(blocked.reason).contains("slope=-0.33")
+        assertThat(rising.reason).contains("slope=1.28")
+        // An empty window has no slope at all, and the short reason string says so by leaving it out.
+        assertThat(unknown.reason).isEqualTo("no_data iob=20.00")
     }
 }

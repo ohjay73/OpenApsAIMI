@@ -1,5 +1,6 @@
 package app.aaps.plugins.main.general.dashboard.glass
 
+import app.aaps.core.interfaces.overview.graph.BasalGraphData
 import app.aaps.core.interfaces.overview.graph.BgDataPoint
 import app.aaps.core.interfaces.overview.graph.BgRange
 import app.aaps.core.interfaces.overview.graph.BgType
@@ -458,6 +459,124 @@ class GlassChartStateMapperTest {
         )
 
         assertThat(result.bgReadings).hasSize(1)
+    }
+
+    @Test
+    fun `no basal data produces empty basal series and a safe non-zero maxBasalRateUh`() {
+        val result = buildGlassChartState(
+            rangeHours = 6,
+            nowEpochMs = 100_000_000L,
+            bgReadings = emptyList(),
+            iobPoints = emptyList(),
+            boluses = emptyList(),
+            carbs = emptyList(),
+            chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
+            mgdlToChartY = identity,
+            pumpStatusText = "",
+            predictions = emptyList(),
+        )
+
+        assertThat(result.basalReadings).isEmpty()
+        assertThat(result.profileBasalReadings).isEmpty()
+        // A 0.0 maxBasal (BasalGraphData's own default) would divide-by-zero a chart's Y-axis scaling.
+        assertThat(result.maxBasalRateUh).isGreaterThan(0f)
+    }
+
+    @Test
+    fun `a rate change before the window is carried forward as a progress-0 point`() {
+        val nowEpochMs = 100_000_000L
+        val rangeHours = 6
+        val windowStart = nowEpochMs - rangeHours * 3_600_000L
+
+        val result = buildGlassChartState(
+            rangeHours = rangeHours,
+            nowEpochMs = nowEpochMs,
+            bgReadings = emptyList(),
+            iobPoints = emptyList(),
+            boluses = emptyList(),
+            carbs = emptyList(),
+            chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
+            mgdlToChartY = identity,
+            pumpStatusText = "",
+            predictions = emptyList(),
+            basalData = BasalGraphData(
+                profileBasal = emptyList(),
+                actualBasal = listOf(GraphDataPoint(timestamp = windowStart - 3_600_000L, value = 0.8)),
+                maxBasal = 1.5,
+            ),
+        )
+
+        assertThat(result.basalReadings).hasSize(1)
+        assertThat(result.basalReadings[0].progress).isEqualTo(0f)
+        assertThat(result.basalReadings[0].rateUh).isEqualTo(0.8f)
+        assertThat(result.maxBasalRateUh).isEqualTo(1.5f)
+    }
+
+    @Test
+    fun `a temp basal change inside the window is mapped to its own progress, after the carried-forward point`() {
+        val nowEpochMs = 100_000_000L
+        val rangeHours = 6
+        val windowStart = nowEpochMs - rangeHours * 3_600_000L
+        val tempStart = windowStart + 3_600_000L
+
+        val result = buildGlassChartState(
+            rangeHours = rangeHours,
+            nowEpochMs = nowEpochMs,
+            bgReadings = emptyList(),
+            iobPoints = emptyList(),
+            boluses = emptyList(),
+            carbs = emptyList(),
+            chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
+            mgdlToChartY = identity,
+            pumpStatusText = "",
+            predictions = emptyList(),
+            basalData = BasalGraphData(
+                profileBasal = listOf(GraphDataPoint(timestamp = windowStart - 3_600_000L, value = 0.8)),
+                actualBasal = listOf(
+                    GraphDataPoint(timestamp = windowStart - 3_600_000L, value = 0.8),
+                    GraphDataPoint(timestamp = tempStart, value = 2.0),
+                ),
+                maxBasal = 2.0,
+            ),
+        )
+
+        assertThat(result.basalReadings).hasSize(2)
+        assertThat(result.basalReadings[0].progress).isEqualTo(0f)
+        assertThat(result.basalReadings[0].rateUh).isEqualTo(0.8f)
+        assertThat(result.basalReadings[1].rateUh).isEqualTo(2.0f)
+        assertThat(result.basalReadings[1].progress).isWithin(0.001f).of(1f / 6f)
+
+        // The unaffected profile line still only carries its own single carried-forward point.
+        assertThat(result.profileBasalReadings).hasSize(1)
+        assertThat(result.profileBasalReadings[0].rateUh).isEqualTo(0.8f)
+    }
+
+    @Test
+    fun `a basal change exactly at the window start is not duplicated by the carry-forward point`() {
+        val nowEpochMs = 100_000_000L
+        val rangeHours = 6
+        val windowStart = nowEpochMs - rangeHours * 3_600_000L
+
+        val result = buildGlassChartState(
+            rangeHours = rangeHours,
+            nowEpochMs = nowEpochMs,
+            bgReadings = emptyList(),
+            iobPoints = emptyList(),
+            boluses = emptyList(),
+            carbs = emptyList(),
+            chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
+            mgdlToChartY = identity,
+            pumpStatusText = "",
+            predictions = emptyList(),
+            basalData = BasalGraphData(
+                profileBasal = emptyList(),
+                actualBasal = listOf(GraphDataPoint(timestamp = windowStart, value = 1.0)),
+                maxBasal = 1.0,
+            ),
+        )
+
+        assertThat(result.basalReadings).hasSize(1)
+        assertThat(result.basalReadings[0].progress).isEqualTo(0f)
     }
 
     @Test

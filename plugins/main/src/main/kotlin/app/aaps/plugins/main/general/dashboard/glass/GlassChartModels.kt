@@ -4,6 +4,10 @@ data class BgReadingPoint(val progress: Float, val value: Float)
 data class IobReadingPoint(val progress: Float, val iob: Float)
 data class TreatmentPoint(val progress: Float, val isCarb: Boolean, val label: String, val timestamp: Long = 0L)
 
+/** One basal step: `rateUh` holds from this point's `progress` until the next point (or "now" for the
+ *  last one) — a step series, not a smooth curve. Same window-relative `progress` scale as [BgReadingPoint]. */
+data class BasalReadingPoint(val progress: Float, val rateUh: Float)
+
 enum class PredictionType { IOB, COB, A_COB, UAM, ZT }
 data class PredictionPoint(val progress: Float, val value: Float, val type: PredictionType)
 
@@ -26,6 +30,15 @@ data class GlassChartState(
     /** Projected IOB decay assuming no further treatments — same anchor-to-boundary continuity as
      *  [predictions], see [buildGlassChartState]. */
     val iobPredictions: List<IobReadingPoint> = emptyList(),
+    /** Actual delivered basal (temp rate when one is running, else the scheduled rate) — a solid step line
+     *  with area fill, same window-relative `progress` scale as [bgReadings] (no prediction segment: TBR
+     *  is only ever known up to now). */
+    val basalReadings: List<BasalReadingPoint> = emptyList(),
+    /** Scheduled profile basal, for comparison against [basalReadings] — a dashed step line, no fill. */
+    val profileBasalReadings: List<BasalReadingPoint> = emptyList(),
+    /** Y-axis scale for both basal series: the dual-axis ceiling is `maxBasalRateUh * 4`, so basal only
+     *  ever occupies the bottom ~25% of the chart height (mirrors the classic dashboard's BasalGraphData). */
+    val maxBasalRateUh: Float = 1f,
     val historyFraction: Float = 1f,
     val currentBgValue: Float = 0f,
     val currentIob: Float = 0f,

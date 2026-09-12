@@ -16,6 +16,10 @@ import java.util.Locale
  * (170.2 mg/dL then 186.8 mg/dL fifteen minutes later, so +17), and at that instant BG was rising,
  * not falling. Only a window that still remembers the peak sees it.
  *
+ * Condition (f) below now refuses that same 08/09 bump, because it also refuses the 13 false
+ * positives of 11/09 and the two shapes are not separable by slope alone. Read the two sections
+ * together before touching a threshold: the guard trades those three blocks for those thirteen.
+ *
  * ## Why the rebound guard (condition e) is not an extra
  *
  * A bare episode test cannot tell a *bump inside a descent* from a *new meal that starts within two
@@ -25,12 +29,24 @@ import java.util.Locale
  * the basin of the descent: as soon as BG has climbed more than [REBOUND_MGDL] above the lowest
  * point reached since the peak, the guard steps aside and calls it a new rise.
  *
+ * ## Why the slope guard (condition f) was added
+ *
+ * Condition (e) reads a **distance** to the lowest point, so it only wakes up once the rise is
+ * already large. On 11/09 between 15:49 and 16:02 the guard held insulin back on 13 ticks in a row
+ * while BG was climbing from 139.5 to 159.6 mg/dL; (e) only stepped in 16 min too late, and BG
+ * reached 181.3 by 16:20. Every one of those 13 ticks was a false positive.
+ *
+ * Condition (f) adds the missing **direction**: the guard may only block while BG is not going up.
+ * The slope is a least-squares fit over the last [SLOPE_WINDOW_MINUTES] minutes of the same usable
+ * window the peak and the lowest point come from, in mg/dL per minute. A two-point difference is
+ * not enough: the readings arrive once a minute and the signal is noisy.
+ *
  * ## Limits (measured, not guessed)
  *
  *  - **Bolus channel only.** On the night of 08/09 it removes 1.64 U out of about 4.2 U of the
  *    episode; the 2.52 U that the temporary basal command integrates over the same window are not
  *    touched. The basal channel is separate work.
- *  - **The five thresholds are fitted on one corpus and were never checked out of sample**
+ *  - **The first five thresholds are fitted on one corpus and were never checked out of sample**
  *    (8420 ticks / 271 boluses / 48 classified bursts). A stricter setting touched a single bad
  *    burst; this setting touches 4 out of 12. That is still few.
  *  - **8 bad bursts are not touched at all.** Their failure mechanism is not descent re-dosing, so
@@ -51,7 +67,7 @@ object DescentRedoseGuard {
      * counted and read afterwards. Fields are null when the window was too poor to compute them.
      */
     data class Verdict(
-        /** True when all five conditions hold and the bolus should be refused. */
+        /** True when all six conditions hold and the bolus should be refused. */
         val block: Boolean,
         /** Stable token, one of the `REASON_*` constants. Safe to count on. */
         val reasonCode: String,
@@ -71,9 +87,15 @@ object DescentRedoseGuard {
         val currentBgMgdl: Double?,
         /** IOB handed to the guard, U. */
         val iobU: Double,
+        /**
+         * Least-squares slope over the last [SLOPE_WINDOW_MINUTES] minutes, mg/dL per minute.
+         *
+         * Null when the slope window held fewer than [SLOPE_MIN_READINGS] usable readings.
+         */
+        val slopeMgdlPerMin: Double? = null,
     )
 
-    /** All five conditions hold: this is a re-dose inside a covered descent. */
+    /** All six conditions hold: this is a re-dose inside a covered descent. */
     const val REASON_BLOCKED = "descent_redose"
 
     /** No usable reading inside the window. */
@@ -96,6 +118,12 @@ object DescentRedoseGuard {
 
     /** (e) failed: BG has climbed back well above the lowest point, so this reads as a new rise. */
     const val REASON_REBOUND_ABOVE_TROUGH = "rebound_above_trough"
+
+    /** (f) failed: BG is going up right now, so holding insulin back would make the rise worse. */
+    const val REASON_BG_RISING = "bg_rising"
+
+    /** (f) could not be judged: fewer than [SLOPE_MIN_READINGS] readings in the slope window. */
+    const val REASON_SLOPE_NO_DATA = "slope_no_data"
 
     /**
      * Window looked at, minutes.
@@ -147,6 +175,30 @@ object DescentRedoseGuard {
     const val REBOUND_MGDL: Double = 25.0
 
     /**
+     * (f) How far back the slope is measured, minutes.
+     *
+     * 15 min is about 15 readings on the one minute cadence, long enough for the fit to survive
+     * CGM noise and short enough to describe what BG is doing now.
+     */
+    const val SLOPE_WINDOW_MINUTES: Int = 15
+
+    /**
+     * (f) Largest slope that still counts as "not going up", mg/dL per minute.
+     *
+     * 0.0 means the guard only blocks while the fit is flat or falling. A real descent is clearly
+     * negative (-3.5 mg/dL/min measured on 12/09), so this does not get in the way of the case the
+     * guard was built for. The 13 false positives of 11/09 sat between +0.24 and +1.36.
+     */
+    const val MAX_SLOPE_MGDL_PER_MIN: Double = 0.0
+
+    /**
+     * (f) Fewest readings the slope window must hold for the fit to be trusted.
+     *
+     * Below this the slope is unknown, and an unknown slope must never open the way to a block.
+     */
+    const val SLOPE_MIN_READINGS: Int = 3
+
+    /**
      * Largest hole between two readings the window may contain, minutes.
      *
      * Walking back in time stops at the first hole wider than this. The corpus holds a 21.7 h hole;
@@ -158,7 +210,7 @@ object DescentRedoseGuard {
     private const val MS_PER_MINUTE = 60_000.0
 
     /**
-     * Applies the five conditions to [readings] and says whether the bolus should be refused.
+     * Applies the six conditions to [readings] and says whether the bolus should be refused.
      *
      * @param readings glucose readings in any order; only those inside the window are used.
      * @param nowMs current time, epoch ms.
@@ -175,6 +227,8 @@ object DescentRedoseGuard {
         iobMinU: Double = IOB_MIN_U,
         reboundMgdl: Double = REBOUND_MGDL,
         maxGapMinutes: Double = MAX_GAP_MINUTES,
+        slopeWindowMinutes: Int = SLOPE_WINDOW_MINUTES,
+        maxSlopeMgdlPerMin: Double = MAX_SLOPE_MGDL_PER_MIN,
     ): Verdict {
         val window = usableWindow(readings, nowMs, windowMinutes, maxGapMinutes)
             ?: return empty(REASON_NO_DATA, iobU)
@@ -196,14 +250,18 @@ object DescentRedoseGuard {
         val ageMinutes = (nowMs - peak.timeMs) / MS_PER_MINUTE
         val drop = peak.bgMgdl - current.bgMgdl
         val rebound = current.bgMgdl - trough.bgMgdl
+        // Same usable window, so the slope cannot disagree with the peak and the lowest point.
+        val slope = slopeMgdlPerMin(window, nowMs, slopeWindowMinutes)
 
         val code = when {
-            peak.bgMgdl < peakMinMgdl -> REASON_PEAK_TOO_LOW
-            ageMinutes < peakAgeMinutes -> REASON_PEAK_TOO_RECENT
-            drop < dropMgdl             -> REASON_DROP_TOO_SMALL
-            iobU < iobMinU              -> REASON_IOB_TOO_LOW
-            rebound > reboundMgdl       -> REASON_REBOUND_ABOVE_TROUGH
-            else                        -> REASON_BLOCKED
+            peak.bgMgdl < peakMinMgdl          -> REASON_PEAK_TOO_LOW
+            ageMinutes < peakAgeMinutes        -> REASON_PEAK_TOO_RECENT
+            drop < dropMgdl                    -> REASON_DROP_TOO_SMALL
+            iobU < iobMinU                     -> REASON_IOB_TOO_LOW
+            rebound > reboundMgdl              -> REASON_REBOUND_ABOVE_TROUGH
+            slope == null                      -> REASON_SLOPE_NO_DATA
+            slope > maxSlopeMgdlPerMin         -> REASON_BG_RISING
+            else                               -> REASON_BLOCKED
         }
 
         return Verdict(
@@ -211,8 +269,9 @@ object DescentRedoseGuard {
             reasonCode = code,
             reason = String.format(
                 Locale.US,
-                "%s peak=%.1f age=%.0f drop=%.1f trough=%.1f rebound=%.1f bg=%.1f iob=%.2f",
+                "%s peak=%.1f age=%.0f drop=%.1f trough=%.1f rebound=%.1f bg=%.1f iob=%.2f slope=%s",
                 code, peak.bgMgdl, ageMinutes, drop, trough.bgMgdl, rebound, current.bgMgdl, iobU,
+                formatSlope(slope),
             ),
             peakMgdl = peak.bgMgdl,
             peakAgeMinutes = ageMinutes,
@@ -221,8 +280,40 @@ object DescentRedoseGuard {
             reboundFromTroughMgdl = rebound,
             currentBgMgdl = current.bgMgdl,
             iobU = iobU,
+            slopeMgdlPerMin = slope,
         )
     }
+
+    /**
+     * Least-squares slope of the last [slopeWindowMinutes] minutes of [window], mg/dL per minute.
+     *
+     * [window] is the window already cut at the first hole wider than `MAX_GAP_MINUTES`, so the
+     * hole rule is applied once and never duplicated here. Null when the slope cannot be trusted:
+     * fewer than [SLOPE_MIN_READINGS] readings, or every reading on the same timestamp.
+     *
+     * Time is counted in minutes before [nowMs], so the numbers stay small and the fit keeps its
+     * precision instead of squaring epoch milliseconds.
+     */
+    private fun slopeMgdlPerMin(window: List<Reading>, nowMs: Long, slopeWindowMinutes: Int): Double? {
+        val start = nowMs - (slopeWindowMinutes * MS_PER_MINUTE).toLong()
+        val points = window.filter { it.timeMs >= start }
+        if (points.size < SLOPE_MIN_READINGS) return null
+
+        val meanMinutes = points.sumOf { (it.timeMs - nowMs) / MS_PER_MINUTE } / points.size
+        val meanBg = points.sumOf { it.bgMgdl } / points.size
+        var covariance = 0.0
+        var variance = 0.0
+        for (point in points) {
+            val minutes = (point.timeMs - nowMs) / MS_PER_MINUTE - meanMinutes
+            covariance += minutes * (point.bgMgdl - meanBg)
+            variance += minutes * minutes
+        }
+        if (variance <= 0.0) return null
+        return covariance / variance
+    }
+
+    private fun formatSlope(slope: Double?): String =
+        if (slope == null) "na" else String.format(Locale.US, "%.2f", slope)
 
     /**
      * Whether the dose must actually be withheld this tick.
@@ -278,5 +369,6 @@ object DescentRedoseGuard {
         reboundFromTroughMgdl = null,
         currentBgMgdl = null,
         iobU = iobU,
+        slopeMgdlPerMin = null,
     )
 }

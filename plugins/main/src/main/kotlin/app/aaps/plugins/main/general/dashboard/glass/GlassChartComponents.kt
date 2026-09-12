@@ -57,6 +57,9 @@ internal fun BgChartCard(
     historyFraction: Float,
     axisMinValue: Float,
     axisHeadroom: Float,
+    basalReadings: List<BasalReadingPoint> = emptyList(),
+    profileBasalReadings: List<BasalReadingPoint> = emptyList(),
+    maxBasalRateUh: Float = 1f,
     formatValue: (Float) -> String,
     isDark: Boolean,
 ) {
@@ -252,6 +255,52 @@ internal fun BgChartCard(
                     strokeWidth = 1.5f,
                     pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
                 )
+
+                // 3c. TBR (basal) overlay — dual Y-axis sharing this chart's height. Dashed step line for the
+                // scheduled profile basal, solid step line with area fill for the actually delivered basal
+                // (profile rate, or the temp rate while one is running) — same design as the classic
+                // dashboard's BasalGraphData-driven graph. Confined to the bottom ~25% of the chart height
+                // (maxY = maxBasalRateUh * 4) so it never competes visually with the BG curve above it.
+                val maxYBasal = (maxBasalRateUh * 4f).coerceAtLeast(0.01f)
+                fun mapBasalY(rateUh: Float): Float {
+                    val clamped = rateUh.coerceIn(0f, maxYBasal)
+                    return chartH - (clamped / maxYBasal) * chartH
+                }
+                fun stepPath(points: List<BasalReadingPoint>, endX: Float): Path {
+                    val path = Path()
+                    if (points.isEmpty()) return path
+                    var x = historyX(points.first().progress)
+                    var y = mapBasalY(points.first().rateUh)
+                    path.moveTo(x, y)
+                    for (i in 1 until points.size) {
+                        val nx = historyX(points[i].progress)
+                        path.lineTo(nx, y)
+                        y = mapBasalY(points[i].rateUh)
+                        path.lineTo(nx, y)
+                        x = nx
+                    }
+                    path.lineTo(endX, y)
+                    return path
+                }
+                val basalNowX = chartW * historyFraction
+                if (basalReadings.isNotEmpty()) {
+                    val linePath = stepPath(basalReadings, basalNowX)
+                    val areaPath = Path().apply {
+                        addPath(linePath)
+                        lineTo(basalNowX, chartH)
+                        lineTo(historyX(basalReadings.first().progress), chartH)
+                        close()
+                    }
+                    drawPath(path = areaPath, color = Color(0xFF818CF8).copy(alpha = if (isDark) 0.18f else 0.12f))
+                    drawPath(path = linePath, color = Color(0xFF818CF8).copy(alpha = 0.9f), style = Stroke(width = 3f))
+                }
+                if (profileBasalReadings.isNotEmpty()) {
+                    drawPath(
+                        path = stepPath(profileBasalReadings, basalNowX),
+                        color = if (isDark) Color(0xFFCBD5E1).copy(alpha = 0.5f) else Color(0xFF64748B).copy(alpha = 0.6f),
+                        style = Stroke(width = 2f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 5f)))
+                    )
+                }
 
                 // 4. BG curve and filled area - colored by range zone
                 if (readings.size >= 2) {

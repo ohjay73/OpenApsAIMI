@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.aaps.core.interfaces.overview.graph.BasalGraphData
 import app.aaps.core.interfaces.overview.graph.BgDataPoint
 import app.aaps.core.interfaces.overview.graph.BgType
 import app.aaps.core.interfaces.overview.graph.BolusGraphPoint
@@ -101,16 +102,18 @@ internal fun GlassOverviewComposeEmbedded(
 
         val bgReadings by graphViewModel.bgReadingsFlow.collectAsStateWithLifecycle()
         val iobData by graphViewModel.iobGraphFlow.collectAsStateWithLifecycle()
+        val basalData by graphViewModel.basalGraphFlow.collectAsStateWithLifecycle()
         val chartConfig by graphViewModel.chartConfigFlow.collectAsStateWithLifecycle()
         val predictions by graphViewModel.predictionsFlow.collectAsStateWithLifecycle()
         val nowEpochMs = System.currentTimeMillis()
-        val chartState = remember(rangeHours, bgReadings, iobData, treatmentData, chartConfig, predictions, status?.pumpStatusText) {
+        val chartState = remember(rangeHours, bgReadings, iobData, basalData, treatmentData, chartConfig, predictions, status?.pumpStatusText) {
             buildGlassChartState(
                 rangeHours = rangeHours,
                 nowEpochMs = nowEpochMs,
                 bgReadings = bgReadings,
                 iobPoints = iobData.iob,
                 iobPredictionPoints = iobData.predictions,
+                basalData = basalData,
                 boluses = treatmentData.boluses,
                 carbs = treatmentData.carbs,
                 chartConfig = chartConfig,
@@ -155,6 +158,9 @@ internal fun GlassOverviewComposeEmbedded(
                     historyFraction = chartState.historyFraction,
                     axisMinValue = chartState.axisMinValue,
                     axisHeadroom = chartState.axisHeadroom,
+                    basalReadings = chartState.basalReadings,
+                    profileBasalReadings = chartState.profileBasalReadings,
+                    maxBasalRateUh = chartState.maxBasalRateUh,
                     formatValue = { v -> graphViewModel.formatBgChartAxisTick(v.toDouble()) },
                     isDark = isDark,
                 )
@@ -304,6 +310,7 @@ internal fun buildGlassChartState(
     pumpStatusText: String,
     predictions: List<BgDataPoint>,
     iobPredictionPoints: List<GraphDataPoint> = emptyList(),
+    basalData: BasalGraphData = BasalGraphData(emptyList(), emptyList(), 0.0),
     predictionHorizonHours: Int = 2,
 ): GlassChartState {
     val windowStart = nowEpochMs - rangeHours * 3_600_000L
@@ -422,12 +429,29 @@ internal fun buildGlassChartState(
         }
     }
 
+    // BasalGraphData only carries a point where the rate CHANGES (a step series) — see its KDoc. Carry the
+    // last known value from before the window forward as a progress=0 point, so a window that starts mid-step
+    // (no change since before windowStart) still renders a value instead of starting empty.
+    fun stepSeries(points: List<GraphDataPoint>): List<BasalReadingPoint> {
+        val carriedForward = points.lastOrNull { it.timestamp <= windowStart }
+        // Strictly after windowStart: a point AT windowStart is already covered by carriedForward above,
+        // and including it again here would render a redundant duplicate progress=0 point.
+        val withinWindow = points.filter { it.timestamp > windowStart && it.timestamp <= nowEpochMs }
+        return buildList {
+            carriedForward?.let { add(BasalReadingPoint(progress = 0f, rateUh = it.value.toFloat())) }
+            withinWindow.forEach { add(BasalReadingPoint(progress = progress(it.timestamp), rateUh = it.value.toFloat())) }
+        }
+    }
+
     return GlassChartState(
         bgReadings = bgReadingPoints,
         iobReadings = iobReadingPoints,
         treatments = treatmentPoints,
         predictions = predictionPoints,
         iobPredictions = iobPredictions,
+        basalReadings = stepSeries(basalData.actualBasal),
+        profileBasalReadings = stepSeries(basalData.profileBasal),
+        maxBasalRateUh = basalData.maxBasal.toFloat().coerceAtLeast(0.1f),
         historyFraction = historyFraction,
         currentBgValue = bgReadingPoints.lastOrNull()?.value ?: 0f,
         currentIob = iobReadingPoints.lastOrNull()?.iob ?: 0f,
