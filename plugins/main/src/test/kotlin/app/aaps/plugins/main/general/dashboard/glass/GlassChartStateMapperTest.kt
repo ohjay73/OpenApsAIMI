@@ -228,7 +228,9 @@ class GlassChartStateMapperTest {
         val result = buildGlassChartState(
             rangeHours = rangeHours,
             nowEpochMs = nowEpochMs,
-            bgReadings = emptyList(),
+            // A fresh reading is required for predictions to render at all (see the staleness-gating test
+            // below) — predictions are otherwise suppressed as untrustworthy.
+            bgReadings = listOf(bg(nowEpochMs, 120.0)),
             iobPoints = emptyList(),
             boluses = emptyList(),
             carbs = emptyList(),
@@ -302,6 +304,79 @@ class GlassChartStateMapperTest {
         assertThat(atProgressZero).hasSize(1)
         assertThat(atProgressZero.single().value).isEqualTo(145f)
         assertThat(result.predictions).hasSize(2)
+    }
+
+    @Test
+    fun `a fresh but slightly stale last reading gets a connector point closing the gap to now`() {
+        val nowEpochMs = 100_000_000L
+        // 4 minutes old — within the 15-minute freshness window, but not exactly "now", so its own
+        // progress() is less than 1f and would otherwise leave a gap before the history-prediction boundary.
+        val lastReadingTimestamp = nowEpochMs - 4 * 60_000L
+
+        val result = buildGlassChartState(
+            rangeHours = 6,
+            nowEpochMs = nowEpochMs,
+            bgReadings = listOf(bg(lastReadingTimestamp, 145.0)),
+            iobPoints = emptyList(),
+            boluses = emptyList(),
+            carbs = emptyList(),
+            chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
+            mgdlToChartY = identity,
+            pumpStatusText = "",
+            predictions = emptyList(),
+        )
+
+        assertThat(result.bgReadings).hasSize(2)
+        assertThat(result.bgReadings[0].progress).isLessThan(1f)
+        assertThat(result.bgReadings[1].progress).isEqualTo(1f)
+        assertThat(result.bgReadings[1].value).isEqualTo(145f)
+    }
+
+    @Test
+    fun `a stale last reading gets no connector and predictions are suppressed entirely`() {
+        val nowEpochMs = 100_000_000L
+        // 20 minutes old — past the 15-minute freshness window (sensor dropout / stale data).
+        val lastReadingTimestamp = nowEpochMs - 20 * 60_000L
+
+        val result = buildGlassChartState(
+            rangeHours = 6,
+            nowEpochMs = nowEpochMs,
+            bgReadings = listOf(bg(lastReadingTimestamp, 145.0)),
+            iobPoints = emptyList(),
+            boluses = emptyList(),
+            carbs = emptyList(),
+            chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
+            mgdlToChartY = identity,
+            pumpStatusText = "",
+            predictions = listOf(
+                BgDataPoint(timestamp = nowEpochMs + 3_600_000L, value = 100.0, range = BgRange.IN_RANGE, type = BgType.IOB_PREDICTION),
+            ),
+        )
+
+        // No synthetic connector — only the one real, stale reading.
+        assertThat(result.bgReadings).hasSize(1)
+        // Predictions are suppressed entirely rather than rendered from an untrustworthy anchor.
+        assertThat(result.predictions).isEmpty()
+    }
+
+    @Test
+    fun `a reading exactly at now gets no redundant duplicate connector point`() {
+        val nowEpochMs = 100_000_000L
+
+        val result = buildGlassChartState(
+            rangeHours = 6,
+            nowEpochMs = nowEpochMs,
+            bgReadings = listOf(bg(nowEpochMs, 145.0)),
+            iobPoints = emptyList(),
+            boluses = emptyList(),
+            carbs = emptyList(),
+            chartConfig = ChartConfig(highMark = 180.0, lowMark = 70.0),
+            mgdlToChartY = identity,
+            pumpStatusText = "",
+            predictions = emptyList(),
+        )
+
+        assertThat(result.bgReadings).hasSize(1)
     }
 
     @Test

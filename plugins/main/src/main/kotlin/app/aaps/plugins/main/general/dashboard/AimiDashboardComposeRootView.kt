@@ -113,15 +113,6 @@ class AimiDashboardComposeRootView @JvmOverloads constructor(
                         }
                     }
                     when (dashboardHomeVariant) {
-                        DashboardHomeVariant.DASHBOARD_V2 -> DashboardV2ComposeEmbedded(
-                            shellPostRoot = this@AimiDashboardComposeRootView,
-                            embeddedState = embeddedComposeState,
-                            viewModel = viewModel,
-                            graphViewModel = graphViewModel,
-                            config = deps.config,
-                            onShellBindingReady = onShellBindingReady,
-                        )
-
                         DashboardHomeVariant.GLASS -> {
                             val auditorHost = remember { FrameLayout(context) }
                             LaunchedEffect(Unit) {

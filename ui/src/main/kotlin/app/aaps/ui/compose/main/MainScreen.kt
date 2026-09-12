@@ -158,8 +158,6 @@ fun MainScreen(
     useRingHeroHome: Boolean = false,
     /** When non-null, replaces [OverviewScreen] with an embedded dashboard supplied by the app module. */
     dashboardOverview: (@Composable (PaddingValues, Dp) -> Unit)? = null,
-    /** Optional DASHBOARD_V2 Tools content. Its presence also enables the fixed five-tab navigation. */
-    dashboardTools: (@Composable (PaddingValues, Dp) -> Unit)? = null,
     /** True only for the GLASS dashboard skin — swaps in [GlassNavigationBar] instead of the default
      *  [MainNavigationBar]. Does not affect OVERVIEW/DASHBOARD_V1, which keep using MainNavigationBar. */
     isGlassSkin: Boolean = false,
@@ -171,7 +169,6 @@ fun MainScreen(
     var showTreatmentSheet by remember { mutableStateOf(false) }
     var showAutomationSheet by remember { mutableStateOf(false) }
     var showLoopActionSheet by remember { mutableStateOf(false) }
-    var dashboardV2SelectedTab by rememberSaveable { mutableStateOf(DashboardV2NavigationTab.MAIN) }
     val automationState by scenesViewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val isDashboardEmbedded = dashboardOverview != null
@@ -273,11 +270,7 @@ fun MainScreen(
                     Box(modifier = Modifier.fillMaxSize()) {
                         val fabBottomOffset = if (hasToolbar && showChrome) 56.dp else 0.dp
 
-                        // DASHBOARD_V2 keeps Main and Tools inside the same shell so all overlays,
-                        // padding and quick-launch behavior remain shared.
-                        if (dashboardTools != null && dashboardV2SelectedTab == DashboardV2NavigationTab.TOOLS) {
-                            dashboardTools(contentPadding, fabBottomOffset)
-                        } else if (dashboardOverview != null) {
+                        if (dashboardOverview != null) {
                             dashboardOverview(contentPadding, fabBottomOffset)
                         } else {
                             OverviewScreen(
@@ -437,29 +430,7 @@ fun MainScreen(
                                 .padding(bottom = scaffoldPadding.calculateBottomPadding())
                         ) {
                             val loopActionState = loopActionViewModel.uiState.collectAsStateWithLifecycle().value
-                            if (dashboardTools != null) {
-                                DashboardV2NavigationBar(
-                                    selectedTab = dashboardV2SelectedTab,
-                                    masterOrPairedClient = masterOrPairedClient,
-                                    onTabClick = { tab ->
-                                        when (tab) {
-                                            DashboardV2NavigationTab.MAIN,
-                                            DashboardV2NavigationTab.TOOLS -> dashboardV2SelectedTab = tab
-
-                                            DashboardV2NavigationTab.BOLUS,
-                                            DashboardV2NavigationTab.CONFIGURATION,
-                                            DashboardV2NavigationTab.PREFERENCES -> {
-                                                tab.elementType?.let { type ->
-                                                    onNavigate(NavigationRequest.Element(type))
-                                                }
-                                            }
-                                        }
-                                    },
-                                    modifier = Modifier.onSizeChanged {
-                                        if (it.height > 0 && it.height != bottomBarHeightPx) bottomBarHeightPx = it.height
-                                    },
-                                )
-                            } else if (isGlassSkin) {
+                            if (isGlassSkin) {
                                 GlassNavigationBar(
                                     masterOrPairedClient = masterOrPairedClient,
                                     onTreatmentClick = {

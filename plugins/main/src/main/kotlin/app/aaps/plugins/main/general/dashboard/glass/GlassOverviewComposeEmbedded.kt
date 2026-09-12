@@ -285,6 +285,11 @@ internal fun GlassOverviewComposeEmbedded(
     }
 }
 
+/** A BG reading older than this is treated as stale for chart-boundary/prediction purposes — see
+ *  [buildGlassChartState]. 15 minutes is 3x a normal ~5-minute CGM cadence, room for one missed reading
+ *  without flagging normal jitter as a dropout. */
+private const val FRESH_READING_WINDOW_MS = 15 * 60_000L
+
 internal fun buildGlassChartState(
     rangeHours: Int,
     nowEpochMs: Long,
@@ -332,21 +337,34 @@ internal fun buildGlassChartState(
             type = type,
         )
     }
-    // Anchor each prediction path to the last real BG reading at progress=0, so the dashed prediction
-    // line starts exactly where the solid history line ends. Without this, predictions (timestamped from
-    // the last loop run, not from "now", and missing their own index-0 anchor point in the underlying
-    // AdvancedPredictionCurves/predictionsAsGv data) can visibly jump from the freshest CGM reading.
+    // The history/prediction boundary (historyX(1f) == predictionX(0f), see GlassChartComponents.kt) is
+    // fixed at "now" (nowEpochMs). But the last real BG reading is almost always a few minutes OLDER than
+    // wall-clock "now" — the CGM only reports every ~5 minutes — so its own progress() is < 1f, and it
+    // renders slightly to the LEFT of the boundary. Predictions, in contrast, always start exactly AT the
+    // boundary. Left alone, that mismatch draws a visible horizontal gap with nothing in it: this is the
+    // real root cause of the "misaligned" jump between the solid and dashed lines (a prior fix only
+    // anchored the prediction's Y value, which did not close this X-axis gap).
+    //
+    // Fix: when the last reading is fresh enough to trust (within FRESH_READING_WINDOW_MS), extend the
+    // history line with one more point pinned exactly at the boundary (progress=1f, same Y as the last
+    // reading) — a short flat connector that closes the gap. If the last reading is older than that (sensor
+    // dropout / stale data), do NOT synthesize a connector, and suppress predictions entirely: a forward
+    // projection computed from stale data would be actively misleading, especially in a closed loop.
+    val lastReading = windowedBg.lastOrNull()
+    val lastReadingAgeMs = lastReading?.let { nowEpochMs - it.timestamp }
+    val lastReadingIsFresh = lastReadingAgeMs != null && lastReadingAgeMs <= FRESH_READING_WINDOW_MS
+    val lastReadingY = lastReading?.let { mgdlToChartY(it.value).toFloat() }
+
     // A real prediction point can itself land at progress=0 (its timestamp equals nowEpochMs) — drop those
     // before prepending the synthetic anchor so a type never ends up with two progress=0 points (which would
     // just move the discontinuity instead of removing it, since the two values are not guaranteed equal).
-    val lastReadingY = windowedBg.lastOrNull()?.let { mgdlToChartY(it.value).toFloat() }
-    val predictionPoints = if (lastReadingY != null) {
+    val predictionPoints = if (lastReadingIsFresh && lastReadingY != null) {
         val anchors = predictionPointsRaw.map { it.type }.distinct().map { type ->
             PredictionPoint(progress = 0f, value = lastReadingY, type = type)
         }
         anchors + predictionPointsRaw.filter { it.progress > 0f }
     } else {
-        predictionPointsRaw
+        emptyList()
     }
 
     val historyFraction = rangeHours.toFloat() / (rangeHours + predictionHorizonHours).toFloat()
@@ -355,8 +373,15 @@ internal fun buildGlassChartState(
     // unit (UnitDoubleKey preferences are unit-aware). Convert the readings to display-unit space via
     // mgdlToChartY so everything drawn (curve, low/high band, current value) agrees with what
     // formatValue() will show — do not mix mg/dL and display-unit values in the same chart.
+    val lastReadingProgress = lastReading?.let { progress(it.timestamp) }
     val bgReadingPoints = windowedBg.map {
         BgReadingPoint(progress = progress(it.timestamp), value = mgdlToChartY(it.value).toFloat())
+    } + if (lastReadingIsFresh && lastReadingY != null && lastReadingProgress != null && lastReadingProgress < 1f) {
+        // Only add the connector when there is an actual gap to close — a reading already at progress=1f
+        // (its timestamp is nowEpochMs itself) would otherwise get a redundant duplicate point.
+        listOf(BgReadingPoint(progress = 1f, value = lastReadingY))
+    } else {
+        emptyList()
     }
     val iobReadingPoints = windowedIob.map {
         IobReadingPoint(progress = progress(it.timestamp), iob = it.value.toFloat())

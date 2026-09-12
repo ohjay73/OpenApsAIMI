@@ -151,7 +151,6 @@ import app.aaps.plugins.configuration.setupwizard.SWDefinition
 import app.aaps.plugins.main.general.manual.UserManualActivity
 import app.aaps.plugins.main.general.dashboard.DashboardV2ToolAction
 import app.aaps.plugins.main.general.dashboard.DashboardV2ToolDestination
-import app.aaps.plugins.main.general.dashboard.DashboardV2ToolsScreen
 import app.aaps.plugins.main.general.dashboard.glass.GlassLoopDashboardViewModel
 import app.aaps.plugins.main.general.dashboard.viewmodel.OverviewViewModel
 import app.aaps.plugins.main.skins.DashboardHomeVariant
@@ -690,15 +689,6 @@ class ComposeMainActivity : AppCompatActivity() {
                 val calcProgress by mainViewModel.calcProgressFlow.collectAsStateWithLifecycle()
                 val notifications by notificationManager.notifications.collectAsStateWithLifecycle()
                 val quickLaunchItems by mainViewModel.quickLaunchItems.collectAsStateWithLifecycle()
-                val dashboardV2PluginClassNames = if (dashboardHomeVariant == DashboardHomeVariant.DASHBOARD_V2) {
-                    activePlugin.getPluginsList()
-                        .asSequence()
-                        .filter(PluginBase::hasComposeContent)
-                        .map { it.javaClass.simpleName }
-                        .toSet()
-                } else {
-                    emptySet()
-                }
                 val availablePluginClassNames = activePlugin.getPluginsList()
                     .asSequence()
                     .filter(PluginBase::hasComposeContent)
@@ -881,33 +871,6 @@ class ComposeMainActivity : AppCompatActivity() {
                                 dashboardHomeVariant = dashboardHomeVariant,
                                 availablePluginClassNames = availablePluginClassNames,
                                 onToolAction = { action ->
-                                    when (val destination = action.destination) {
-                                        DashboardV2ToolDestination.Actions -> manageSheetState.show()
-                                        is DashboardV2ToolDestination.Element -> handleNavigationRequest(
-                                            NavigationRequest.Element(destination.type),
-                                            navController,
-                                        )
-
-                                        is DashboardV2ToolDestination.Plugin -> handleNavigationRequest(
-                                            NavigationRequest.Plugin(destination.className),
-                                            navController,
-                                        )
-
-                                        is DashboardV2ToolDestination.AimiActivity -> launchDashboardV2Aimi(action)
-                                    }
-                                },
-                            )
-                        }
-                    } else {
-                        null
-                    },
-                    dashboardTools = if (dashboardHomeVariant == DashboardHomeVariant.DASHBOARD_V2) {
-                        { pad, fab ->
-                            DashboardV2ToolsScreen(
-                                paddingValues = pad,
-                                fabBottomOffset = fab,
-                                availablePluginClassNames = dashboardV2PluginClassNames,
-                                onAction = { action ->
                                     when (val destination = action.destination) {
                                         DashboardV2ToolDestination.Actions -> manageSheetState.show()
                                         is DashboardV2ToolDestination.Element -> handleNavigationRequest(
@@ -1373,6 +1336,7 @@ class ComposeMainActivity : AppCompatActivity() {
             }
 
             ElementType.PUMP                    -> handlePluginClick(activePlugin.activePumpInternal as PluginBase)
+            ElementType.BGSOURCE                -> handlePluginClick(activePlugin.activeBgSource as PluginBase)
 
             // Non-searchable types — listed explicitly so the compiler catches new enum values
             ElementType.QUICK_WIZARD,

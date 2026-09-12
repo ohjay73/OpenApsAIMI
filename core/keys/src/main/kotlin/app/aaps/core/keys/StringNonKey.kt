@@ -49,12 +49,12 @@ enum class StringNonKey(
         exportable = false
     ),
 
-    // Default lists all 13 DashboardV2ToolAction entries (all tiles are visible today). plugins:main's
+    // Default lists all 14 DashboardV2ToolAction entries (all tiles are visible today). plugins:main's
     // DashboardV2ToolAction is the source of truth; keep this literal list in sync with it by hand
     // (core:keys cannot depend on plugins:main).
     GlassSelectedTools(
         key = "glass_selected_tools",
-        defaultValue = "ACTIONS,RAPID_ACTING,PROFILE,AUTOMATION,NSCLIENT,TIDEPOOL,XDRIP,MAINTENANCE,XDRIP_BG,ADVISOR,MEAL_ADVISOR,AIMI_CONTEXT,AUDITOR_REPORT",
+        defaultValue = "ACTIONS,RAPID_ACTING,PROFILE,AUTOMATION,NSCLIENT,TIDEPOOL,XDRIP,MAINTENANCE,XDRIP_BG,SENSOR,ADVISOR,MEAL_ADVISOR,AIMI_CONTEXT,AUDITOR_REPORT",
         exportable = false
     ),
 

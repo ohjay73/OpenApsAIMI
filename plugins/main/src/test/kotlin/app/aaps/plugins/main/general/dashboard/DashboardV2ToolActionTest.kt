@@ -8,8 +8,8 @@ import org.junit.jupiter.api.Test
 class DashboardV2ToolActionTest {
 
     @Test
-    fun `catalog contains nine general and four AIMI actions in display order`() {
-        assertThat(DashboardV2ToolAction.entries).hasSize(13)
+    fun `catalog contains ten general and four AIMI actions in display order`() {
+        assertThat(DashboardV2ToolAction.entries).hasSize(14)
         assertThat(DashboardV2ToolAction.general).containsExactly(
             DashboardV2ToolAction.ACTIONS,
             DashboardV2ToolAction.RAPID_ACTING,
@@ -20,6 +20,7 @@ class DashboardV2ToolActionTest {
             DashboardV2ToolAction.XDRIP,
             DashboardV2ToolAction.MAINTENANCE,
             DashboardV2ToolAction.XDRIP_BG,
+            DashboardV2ToolAction.SENSOR,
         ).inOrder()
         assertThat(DashboardV2ToolAction.aimi).containsExactly(
             DashboardV2ToolAction.ADVISOR,
@@ -49,6 +50,8 @@ class DashboardV2ToolActionTest {
             .isEqualTo(DashboardV2ToolDestination.Plugin("XdripPlugin"))
         assertThat(DashboardV2ToolAction.XDRIP_BG.destination)
             .isEqualTo(DashboardV2ToolDestination.Plugin("XdripSourcePlugin"))
+        assertThat(DashboardV2ToolAction.SENSOR.destination)
+            .isEqualTo(DashboardV2ToolDestination.Element(ElementType.BGSOURCE))
     }
 
     @Test
@@ -71,6 +74,7 @@ class DashboardV2ToolActionTest {
         assertThat(DashboardV2ToolAction.XDRIP_BG.isAvailable(setOf("XdripSourcePlugin"))).isTrue()
         assertThat(DashboardV2ToolAction.ACTIONS.isAvailable(emptySet())).isTrue()
         assertThat(DashboardV2ToolAction.ADVISOR.isAvailable(emptySet())).isTrue()
+        assertThat(DashboardV2ToolAction.SENSOR.isAvailable(emptySet())).isTrue()
     }
 
     private fun DashboardV2ToolAction.aimiProtection(): ProtectionCheck.Protection =

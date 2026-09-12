@@ -41,10 +41,9 @@ enum class GlassNavigationTab {
     }
 }
 
-// Same rule MainNavigationBar applies to Treatments/Scenes, and DashboardV2NavigationBar applies to its own
-// Bolus tab (ElementType.BOLUS_WIZARD is MASTER_OR_PAIRED_CLIENT-visible; a non-paired client has no channel
-// to actually deliver a dose, so the calculator must not be reachable). Hoisted so it isn't rebuilt every
-// recomposition.
+// Same rule MainNavigationBar applies to its own Treatments/Scenes buttons (ElementType.BOLUS_WIZARD is
+// MASTER_OR_PAIRED_CLIENT-visible; a non-paired client has no channel to actually deliver a dose, so the
+// calculator must not be reachable). Hoisted so it isn't rebuilt every recomposition.
 internal val MASTER_ONLY_TABS = setOf(GlassNavigationTab.TREATMENTS, GlassNavigationTab.SCENARIOS, GlassNavigationTab.BOLUS)
 
 // Smaller than NavigationBarItem's 24dp default — 6 fixed tabs (7 when the loop-accept item shows) is above

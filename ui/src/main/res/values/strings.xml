@@ -354,12 +354,8 @@
     <string name="eversense_calibration_dialog_reconnect_hint">Not connected to the transmitter. AAPS will connect first, so this may take up to 30 seconds.</string>
     <string name="eversense_calibration_send_failed">Could not send the calibration. Check that the transmitter is nearby and try again.</string>
 
-    <!-- DASHBOARD_V2 fixed navigation -->
-    <string name="dashboard_v2_nav_main">Main</string>
-    <string name="dashboard_v2_nav_tools">Tools</string>
+    <!-- Shared by GlassNavigationBar's Bolus tab -->
     <string name="dashboard_v2_nav_bolus">Bolus</string>
-    <string name="dashboard_v2_nav_configuration">Config</string>
-    <string name="dashboard_v2_nav_preferences">Preferences</string>
 
     <!-- GLASS fixed navigation -->
     <string name="dashboard_glass_nav_profiles">Profiles</string>

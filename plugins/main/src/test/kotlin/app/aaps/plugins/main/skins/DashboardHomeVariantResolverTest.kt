@@ -12,8 +12,8 @@ class DashboardHomeVariantResolverTest {
 
         val result = DashboardHomeVariantResolver.resolve(
             storedSkinName = overview.javaClass.name,
-            availableSkins = listOf(SkinMinimal(), SkinDashboardV2(), overview),
-            fallbackSkin = SkinDashboardV2(),
+            availableSkins = listOf(SkinMinimal(), SkinGlass(), overview),
+            fallbackSkin = SkinGlass(),
         )
 
         assertThat(result).isEqualTo(DashboardHomeVariant.OVERVIEW)
@@ -25,7 +25,7 @@ class DashboardHomeVariantResolverTest {
 
         val result = DashboardHomeVariantResolver.resolve(
             storedSkinName = dashboardV1.javaClass.simpleName,
-            availableSkins = listOf(OverviewTestSkin(), dashboardV1, SkinDashboardV2()),
+            availableSkins = listOf(OverviewTestSkin(), dashboardV1, SkinGlass()),
             fallbackSkin = OverviewTestSkin(),
         )
 
@@ -33,22 +33,22 @@ class DashboardHomeVariantResolverTest {
     }
 
     @Test
-    fun `dashboard v2 skin advertises and resolves dashboard v2`() {
-        val dashboardV2 = SkinDashboardV2()
+    fun `glass skin advertises and resolves glass`() {
+        val glass = SkinGlass()
 
         val result = DashboardHomeVariantResolver.resolve(
-            storedSkinName = dashboardV2.javaClass.name,
-            availableSkins = listOf(OverviewTestSkin(), SkinMinimal(), dashboardV2),
+            storedSkinName = glass.javaClass.name,
+            availableSkins = listOf(OverviewTestSkin(), SkinMinimal(), glass),
             fallbackSkin = OverviewTestSkin(),
         )
 
-        assertThat(dashboardV2.dashboardHomeVariant).isEqualTo(DashboardHomeVariant.DASHBOARD_V2)
-        assertThat(result).isEqualTo(DashboardHomeVariant.DASHBOARD_V2)
+        assertThat(glass.dashboardHomeVariant).isEqualTo(DashboardHomeVariant.GLASS)
+        assertThat(result).isEqualTo(DashboardHomeVariant.GLASS)
     }
 
     @Test
     fun `unknown skin uses active skin fallback`() {
-        val fallback = SkinDashboardV2()
+        val fallback = SkinGlass()
 
         val result = DashboardHomeVariantResolver.resolve(
             storedSkinName = "missing.skin.Name",
@@ -56,7 +56,7 @@ class DashboardHomeVariantResolverTest {
             fallbackSkin = fallback,
         )
 
-        assertThat(result).isEqualTo(DashboardHomeVariant.DASHBOARD_V2)
+        assertThat(result).isEqualTo(DashboardHomeVariant.GLASS)
     }
 
     private class OverviewTestSkin : SkinInterface {

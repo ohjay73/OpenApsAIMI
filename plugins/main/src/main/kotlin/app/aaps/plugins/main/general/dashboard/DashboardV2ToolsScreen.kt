@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.aaps.core.interfaces.navigation.ElementType
 import app.aaps.core.interfaces.protection.ProtectionCheck
+import app.aaps.core.ui.compose.icons.IcGenericCgm
 import app.aaps.plugins.main.R
 
 enum class DashboardV2ToolSection {
@@ -112,6 +113,10 @@ enum class DashboardV2ToolAction(
     XDRIP_BG(
         DashboardV2ToolSection.GENERAL,
         DashboardV2ToolDestination.Plugin("XdripSourcePlugin"),
+    ),
+    SENSOR(
+        DashboardV2ToolSection.GENERAL,
+        DashboardV2ToolDestination.Element(ElementType.BGSOURCE),
     ),
     ADVISOR(
         DashboardV2ToolSection.AIMI,
@@ -276,6 +281,7 @@ internal fun DashboardV2ToolAction.icon(): ImageVector =
         DashboardV2ToolAction.XDRIP -> Icons.Default.WaterDrop
         DashboardV2ToolAction.MAINTENANCE -> Icons.Default.Build
         DashboardV2ToolAction.XDRIP_BG -> Icons.Default.Storage
+        DashboardV2ToolAction.SENSOR -> IcGenericCgm
         DashboardV2ToolAction.ADVISOR -> Icons.Default.Settings
         DashboardV2ToolAction.MEAL_ADVISOR -> Icons.Default.Restaurant
         DashboardV2ToolAction.AIMI_CONTEXT -> Icons.Default.Favorite
@@ -294,6 +300,7 @@ internal fun DashboardV2ToolAction.labelRes(): Int =
         DashboardV2ToolAction.XDRIP -> R.string.dashboard_v2_tool_xdrip
         DashboardV2ToolAction.MAINTENANCE -> R.string.dashboard_v2_tool_maintenance
         DashboardV2ToolAction.XDRIP_BG -> R.string.dashboard_v2_tool_xdrip_bg
+        DashboardV2ToolAction.SENSOR -> R.string.dashboard_v2_tool_sensor
         DashboardV2ToolAction.ADVISOR -> R.string.dashboard_v2_tool_advisor
         DashboardV2ToolAction.MEAL_ADVISOR -> R.string.dashboard_v2_tool_meal_advisor
         DashboardV2ToolAction.AIMI_CONTEXT -> R.string.dashboard_v2_tool_aimi_context
