@@ -579,6 +579,7 @@ class OverviewViewModel(
             temporaryHigh = activeTemporaryTarget?.highTarget,
             profileLow = profile?.getTargetLowMgdl(now),
             profileHigh = profile?.getTargetHighMgdl(now),
+            aimiTargetBg = loop.lastRun?.request?.targetBG,
         )
         val targetText = targetRange?.let { range ->
             profileUtil.toTargetRangeString(
@@ -1024,7 +1025,11 @@ class OverviewViewModel(
             // Populate new fields
             peakTime = loop.lastRun?.request?.oapsProfileAimi?.peakTime,
             dia = loop.lastRun?.request?.oapsProfileAimi?.dia,
-            targetBg = loop.lastRun?.request?.oapsProfileAimi?.target_bg,
+            // The actual AIMI-adjusted target (RT.targetBG), not oapsProfileAimi.target_bg — that field is
+            // the raw INPUT profile target AIMI started its computation from, not what it ended up
+            // targeting after its own PKPD adjustments (same bug as the Glass dashboard's Target pill).
+            // targetBG defaults to 0.0 when a loop ran but never set it — not a real target, show "--" instead.
+            targetBg = loop.lastRun?.request?.targetBG?.takeIf { it > 0.0 },
             smb = loop.lastRun?.request?.smb,
             basal = loop.lastRun?.request?.rate,
             detailedReason = loop.lastRun?.request?.reason,

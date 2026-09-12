@@ -42,6 +42,56 @@ class DashboardV2StatusValueResolverTest {
     }
 
     @Test
+    fun `AIMI-adjusted target is used over the raw profile target when no temporary target is active`() {
+        val result = DashboardV2StatusValueResolver.resolveTargetRangeMgdl(
+            temporaryLow = null,
+            temporaryHigh = null,
+            profileLow = 90.0,
+            profileHigh = 100.0,
+            aimiTargetBg = 84.0,
+        )
+
+        // A single point, not a range: low == high, matching what toTargetRangeString collapses to one number.
+        assertThat(result).isEqualTo(DashboardV2StatusValueResolver.TargetRangeMgdl(84.0, 84.0))
+    }
+
+    @Test
+    fun `an active temporary target still wins over the AIMI-adjusted target`() {
+        val result = DashboardV2StatusValueResolver.resolveTargetRangeMgdl(
+            temporaryLow = 140.0,
+            temporaryHigh = 160.0,
+            profileLow = 90.0,
+            profileHigh = 100.0,
+            aimiTargetBg = 84.0,
+        )
+
+        assertThat(result).isEqualTo(DashboardV2StatusValueResolver.TargetRangeMgdl(140.0, 160.0))
+    }
+
+    @Test
+    fun `a zero or missing AIMI target falls back to the profile range`() {
+        val neverRun = DashboardV2StatusValueResolver.resolveTargetRangeMgdl(
+            temporaryLow = null,
+            temporaryHigh = null,
+            profileLow = 90.0,
+            profileHigh = 100.0,
+            aimiTargetBg = null,
+        )
+        assertThat(neverRun).isEqualTo(DashboardV2StatusValueResolver.TargetRangeMgdl(90.0, 100.0))
+
+        // RT.targetBG defaults to 0.0 when never computed (APSResult.targetBG's non-null fallback) — not a
+        // real target, must not be displayed as one.
+        val zeroTarget = DashboardV2StatusValueResolver.resolveTargetRangeMgdl(
+            temporaryLow = null,
+            temporaryHigh = null,
+            profileLow = 90.0,
+            profileHigh = 100.0,
+            aimiTargetBg = 0.0,
+        )
+        assertThat(zeroTarget).isEqualTo(DashboardV2StatusValueResolver.TargetRangeMgdl(90.0, 100.0))
+    }
+
+    @Test
     fun `incomplete available targets return no range`() {
         val result = DashboardV2StatusValueResolver.resolveTargetRangeMgdl(
             temporaryLow = 110.0,
