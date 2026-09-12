@@ -182,7 +182,13 @@ class BasalMlTrainingCoordinator @Inject constructor(
 
         val totalRows = parsed.rowCount.toLong()
         val newRows = totalRows - rowsAtLastTrain.get()
-        if (newRows < MIN_NEW_ROWS) {
+        // Bootstrap must not be blocked by this gate: rowsAtLastTrain is only meaningful relative to a
+        // previous attempt on the same row-counting rule. If the row-filtering rule changes (for example a
+        // stricter causal-contamination check), the same CSV can suddenly parse into fewer kept rows, making
+        // newRows negative against a stale rowsAtLastTrain — and this gate returns before markAttemptCompleted,
+        // so nothing here ever resets the counter. Without the bootstrap bypass a coordinator that has no
+        // published model yet could wait indefinitely for that gap to close on its own.
+        if (!bootstrapNeeded && newRows < MIN_NEW_ROWS) {
             log.debug(LTag.APS, "$TAG: only $newRows new rows (need $MIN_NEW_ROWS) — skip")
             return TrainingOutcome.SKIPPED
         }

@@ -2170,6 +2170,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val gov = basalNeuralLearner.getGovernanceSnapshot()
         put("governance_action", gov.action.name)
         put("governance_basal_floor", gov.activeBasalFloor ?: JSONObject.NULL)
+        // Exported so a stuck HOLD_CONSERVATIVE severe tier is visible directly in the trace, instead of
+        // only in the coordinator's own info-level log line.
+        put("governance_severe_hypo_count", gov.severeHypoCount)
     }
 
     /**

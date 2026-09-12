@@ -209,12 +209,37 @@ class BasalMlTrainingCoordinatorTest {
 
     @Test
     fun `skips when fewer than min new rows since last train`() = runBlocking {
+        // A weights file already exists: this is the steady-state gate, not bootstrap, so MIN_NEW_ROWS
+        // must still apply.
+        File(tempDir, "basal_adaptive_weights.json").writeText("{}")
         val stateFile = File(tempDir, "basal_ml_training_state.json")
         stateFile.writeText("""{"lastTrainMs":0,"rowsAtLastTrain":110}""")
 
         val freshCoordinator = BasalMlTrainingCoordinator(storage, learner, mockk(relaxed = true))
         val outcome = freshCoordinator.runScheduledTraining()
         assertThat(outcome).isEqualTo(BasalMlTrainingCoordinator.TrainingOutcome.SKIPPED)
+    }
+
+    @Test
+    fun `bootstrap is not blocked by min new rows when no weights exist yet`() = runBlocking {
+        // No basal_adaptive_weights.json here (bootstrapNeeded = true). rowsAtLastTrain is set high enough
+        // that newRows would be far below MIN_NEW_ROWS under the steady-state gate, simulating a persisted
+        // counter left over from before a row-filtering rule change. The bootstrap path must still reach
+        // training instead of waiting forever for newRows to climb back above the threshold.
+        //
+        // The eventual publish is stochastic (unseeded net, no incumbent to compare against), so this only
+        // asserts on the one thing the fix changed: the MIN_NEW_ROWS gate must not be the reason for a skip.
+        // (AimiNeuralModelStore.load is not usable here to prove "training reached", unlike the "decoupled
+        // from usage" test above: it is only called when an incumbent exists, which bootstrap by definition
+        // does not have.)
+        val logMock = mockk<AAPSLogger>(relaxed = true)
+        val stateFile = File(tempDir, "basal_ml_training_state.json")
+        stateFile.writeText("""{"lastTrainMs":0,"rowsAtLastTrain":100000}""")
+
+        val freshCoordinator = BasalMlTrainingCoordinator(storage, learner, logMock)
+        freshCoordinator.runScheduledTraining()
+
+        verify(exactly = 0) { logMock.debug(any(), match<String> { it.contains("new rows (need") }) }
     }
 
     // ---------------------------------------------------------------- the two windows must not drift apart
