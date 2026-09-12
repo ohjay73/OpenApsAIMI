@@ -1225,8 +1225,6 @@ class ComposeMainActivity : AppCompatActivity() {
             is NavigationRequest.PluginPreferences -> withProtection(ElementType.SETTINGS.protection) {
                 navController.navigate(AppRoute.PluginPreferences.createRoute(request.pluginKey))
             }
-
-            is NavigationRequest.Route              -> navController.navigate(request.route)
         }
     }
 

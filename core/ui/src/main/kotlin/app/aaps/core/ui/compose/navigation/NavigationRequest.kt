@@ -8,10 +8,6 @@ sealed class NavigationRequest {
     data class QuickWizard(val guid: String) : NavigationRequest()
     data class Plugin(val className: String) : NavigationRequest()
     data class PluginPreferences(val pluginKey: String) : NavigationRequest()
-
-    /** Navigates to a raw compose-nav route string, unprotected. Used by routes that have no
-     *  [ElementType] of their own — e.g. Glass's `"glass_pump_detail"`. */
-    data class Route(val route: String) : NavigationRequest()
 }
 
 /**

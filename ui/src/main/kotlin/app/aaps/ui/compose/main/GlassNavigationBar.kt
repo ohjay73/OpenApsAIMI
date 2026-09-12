@@ -47,12 +47,10 @@ enum class GlassNavigationTab {
 // recomposition.
 internal val MASTER_ONLY_TABS = setOf(GlassNavigationTab.TREATMENTS, GlassNavigationTab.SCENARIOS, GlassNavigationTab.BOLUS)
 
-// glass_pump_detail has no ElementType of its own (it's a Glass-only read-only status screen, not a shared
-// destination), so it's reached via NavigationRequest.Route, which — unlike NavigationRequest.Element — is
-// NOT run through navigateProtected/ProtectionCheck. Only ever point this at a read-only screen with no
-// therapy-affecting action; never repurpose it for a route that an ElementType's protection level would
-// normally gate (bolus, settings, pump commands, etc.).
-private const val GLASS_PUMP_DETAIL_ROUTE = "glass_pump_detail"
+// Smaller than NavigationBarItem's 24dp default — 6 fixed tabs (7 when the loop-accept item shows) is above
+// Material's recommended max of 5, so a slightly smaller icon (paired with labelSmall text below) keeps the
+// bar from feeling cramped.
+private val NAV_ICON_SIZE = 20.dp
 
 @Composable
 fun GlassNavigationBar(
@@ -96,16 +94,19 @@ fun GlassNavigationBar(
                         GlassNavigationTab.MANAGEMENT  -> onManagementClick()
                         GlassNavigationTab.PROFILES    -> onNavigate(NavigationRequest.Element(ElementType.PROFILE_MANAGEMENT))
                         GlassNavigationTab.BOLUS        -> onNavigate(NavigationRequest.Element(ElementType.BOLUS_WIZARD))
-                        GlassNavigationTab.PUMP         -> onNavigate(NavigationRequest.Route(GLASS_PUMP_DETAIL_ROUTE))
+                        // Opens the active pump plugin's own status screen (same path as the Manage sheet's
+                        // Pump entry) — not GlassPumpDetailScreen's reservoir/battery summary.
+                        GlassNavigationTab.PUMP         -> onNavigate(NavigationRequest.Element(ElementType.PUMP))
                     }
                 },
                 icon = {
                     Icon(
                         imageVector = tab.icon(),
                         contentDescription = stringResource(tab.labelRes()),
+                        modifier = Modifier.size(NAV_ICON_SIZE),
                     )
                 },
-                label = { Text(text = stringResource(tab.labelRes())) },
+                label = { Text(text = stringResource(tab.labelRes()), style = MaterialTheme.typography.labelSmall) },
                 colors = colors,
             )
         }
@@ -128,11 +129,11 @@ fun GlassNavigationBar(
                         Icon(
                             imageVector = Icons.Default.PlayCircle,
                             contentDescription = stringResource(R.string.loop_accept_nav_label),
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(NAV_ICON_SIZE)
                         )
                     }
                 },
-                label = { Text(text = stringResource(R.string.loop_accept_nav_label)) },
+                label = { Text(text = stringResource(R.string.loop_accept_nav_label), style = MaterialTheme.typography.labelSmall) },
                 colors = colors,
             )
         }

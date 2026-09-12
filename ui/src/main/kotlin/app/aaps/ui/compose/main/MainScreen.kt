@@ -249,7 +249,9 @@ fun MainScreen(
                 Scaffold(
                     snackbarHost = { SnackbarHost(snackbarHostState) },
                 ) { scaffoldPadding ->
-                    val hasToolbar = quickLaunchItems.isNotEmpty()
+                    // Glass has its own quick-shortcut pills and its own bottom nav — the general-purpose
+                    // Quick Launch toolbar would just float on top of them, redundant with Glass's design.
+                    val hasToolbar = quickLaunchItems.isNotEmpty() && !isGlassSkin
 
                     // Content padding: in preview mode use only system bars;
                     // in normal mode add measured bar heights
