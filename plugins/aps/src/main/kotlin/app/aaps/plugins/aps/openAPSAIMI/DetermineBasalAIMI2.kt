@@ -775,6 +775,10 @@ internal data class AimiDecisionContext(
         var physiological_patterns: org.json.JSONObject? = null,
         /** Unified meal absorption belief + phase (IOB / HTR / SMB priority) */
         var meal_absorption_phase: MealAbsorptionPhaseExport? = null,
+        /** Meals the person declared with a mode note (FCL, lunch, …): active modes and last declaration. */
+        var declared_meal: org.json.JSONObject? = null,
+        /** Which tick the meal blocks come from: this one, or the previous one on an early exit. */
+        var meal_blocks_origin: org.json.JSONObject? = null,
         /** PKPD vs scenario eventual-BG divergence audit (PredictionDivergenceAuditor) */
         var pred_divergence: org.json.JSONObject? = null,
         /** Recursive Belief Tree — full JSON object for AIMI_Decisions.jsonl */
@@ -1277,6 +1281,8 @@ internal data class AimiDecisionContext(
                 mJson.put("physio_score", m.physio_score)
                 adj.put("meal_absorption_phase", mJson)
             }
+            adjustments.declared_meal?.let { adj.put("declared_meal", it) }
+            adjustments.meal_blocks_origin?.let { adj.put("meal_blocks_origin", it) }
             adjustments.pred_divergence?.let { pd ->
                 adj.put("pred_divergence", pd)
             }
@@ -2427,6 +2433,19 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         lastPhysiologicalPhaseOutput = null
         lastPhysiologicalPatternSnapshot = null
         AimiCascadeArbitrationArtifacts.clear()
+        // Keep the previous tick's meal state for the export only. A tick that leaves early (the prebolus
+        // tick of a meal mode returns before the meal state is computed) would otherwise export no meal
+        // block at all, on exactly the ticks where the meal starts.
+        if (lastMealAbsorptionOutput != null || lastPhysioLatentState != null ||
+            lastUamHypothesisState != null || lastPatientState != null
+        ) {
+            prevTickMealAbsorptionOutput = lastMealAbsorptionOutput
+            prevTickPhysioLatentState = lastPhysioLatentState
+            prevTickUamHypothesisState = lastUamHypothesisState
+            prevTickPatientState = lastPatientState
+            prevTickMealBlocksAtMs = lastTickStartMs
+        }
+        lastTickStartMs = ctx.currentTime
         lastMealAbsorptionOutput = null
         lastPhysioLatentState = null
         lastEffortAssessment = null // per-tick computed; memory (lastEffortMemory) persists across ticks
@@ -3849,8 +3868,35 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         )
     }
 
-    private fun mealAbsorptionPhaseExport(): AimiDecisionContext.MealAbsorptionPhaseExport? {
-        val out = lastMealAbsorptionOutput ?: return null
+    /**
+     * The meal modes the person declared, as the loop sees them this tick. Export only.
+     *
+     * Before this block the JSONL had no trace of lunch, dinner, bfast, highcarb, snack, meal or anticip,
+     * and FCL only in the narrative text, so no study could use the most reliable meal signal there is.
+     */
+    private fun declaredMealExport(profile: OapsProfileAimi): org.json.JSONObject = org.json.JSONObject().apply {
+        val active = org.json.JSONArray()
+        if (fclTime) active.put("fcl")
+        if (mealTime) active.put("meal")
+        if (bfastTime) active.put("bfast")
+        if (lunchTime) active.put("lunch")
+        if (dinnerTime) active.put("dinner")
+        if (highCarbTime) active.put("highcarb")
+        if (snackTime) active.put("snack")
+        if (anticipTime) active.put("anticip")
+        put("active_modes", active)
+        put("fcl_declared", fclDeclaredThisTick(profile))
+        lastDeclaredMeal?.let { meal ->
+            put("last_keyword", meal.keyword)
+            put("minutes_since_declaration", meal.ageMin)
+            put("high_carb", meal.highCarb)
+        }
+    }
+
+    private fun mealAbsorptionPhaseExport(
+        out: MealAbsorptionPhaseEngine.Output? = lastMealAbsorptionOutput,
+    ): AimiDecisionContext.MealAbsorptionPhaseExport? {
+        if (out == null) return null
         return AimiDecisionContext.MealAbsorptionPhaseExport(
             phase = out.phase.name,
             belief = out.belief,
@@ -10100,7 +10146,17 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 decisionCtx.adjustments.physiological_patterns = it
             }
         }
-        decisionCtx.adjustments.meal_absorption_phase = mealAbsorptionPhaseExport()
+        // On an early exit this tick has no meal state yet; export the previous tick's, and say so.
+        val mealBlocksFromThisTick = lastMealAbsorptionOutput != null || lastPhysioLatentState != null
+        val usePreviousMealBlocks = !mealBlocksFromThisTick && prevTickMealBlocksAtMs > 0L
+        decisionCtx.adjustments.meal_absorption_phase = mealAbsorptionPhaseExport(
+            lastMealAbsorptionOutput ?: prevTickMealAbsorptionOutput.takeIf { usePreviousMealBlocks },
+        )
+        decisionCtx.adjustments.meal_blocks_origin = org.json.JSONObject().apply {
+            put("source", if (mealBlocksFromThisTick) "this_tick" else if (usePreviousMealBlocks) "previous_tick" else "none")
+            if (usePreviousMealBlocks) put("age_min", (ctx.currentTime - prevTickMealBlocksAtMs) / 60_000L)
+        }
+        decisionCtx.adjustments.declared_meal = declaredMealExport(profile)
         decisionCtx.adjustments.pred_divergence = lastPredDivergenceExport
         val rbtPrefs = RecursiveBeliefPreferences.from(preferences)
         var harmoniaSmbAuthorityJson: org.json.JSONObject? = null
@@ -10144,9 +10200,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             harmoniaSmbAuthority = harmoniaSmbAuthorityJson,
         )
         decisionCtx.adjustments.recursive_authority_gate = lastRecursiveAuthorityGateDecision?.toJsonObject()
-        decisionCtx.adjustments.physio_latent_state = lastPhysioLatentState?.toJsonObject()
-        decisionCtx.adjustments.uam_hypotheses = lastUamHypothesisState?.toJsonObject()
-        decisionCtx.adjustments.patient_state = lastPatientState?.toJsonObject()
+        decisionCtx.adjustments.physio_latent_state =
+            (lastPhysioLatentState ?: prevTickPhysioLatentState.takeIf { usePreviousMealBlocks })?.toJsonObject()
+        decisionCtx.adjustments.uam_hypotheses =
+            (lastUamHypothesisState ?: prevTickUamHypothesisState.takeIf { usePreviousMealBlocks })?.toJsonObject()
+        decisionCtx.adjustments.patient_state =
+            (lastPatientState ?: prevTickPatientState.takeIf { usePreviousMealBlocks })?.toJsonObject()
         decisionCtx.adjustments.patient_mode = lastPatientModeDecision?.toJsonObject()
         decisionCtx.adjustments.endocrine_belief = lastWCycleBelief?.toJsonObject()
         // Refresh cycle phase after WCycle resolve (early physio_context often ran with null wCycle).
@@ -12104,6 +12163,14 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
     /** Last declared meal note within 5 h, for the PK/PD learning gate. Refreshed with the runtimes above. */
     private var lastDeclaredMeal: Therapy.DeclaredMeal? = null
+
+    // Previous tick's meal state, export only (see `buildDecisionContextInitRtSosAndFlatShadow`).
+    private var prevTickMealAbsorptionOutput: MealAbsorptionPhaseEngine.Output? = null
+    private var prevTickPhysioLatentState: PhysioLatentState? = null
+    private var prevTickUamHypothesisState: UamHypothesisState? = null
+    private var prevTickPatientState: PatientStateSnapshot? = null
+    private var prevTickMealBlocksAtMs: Long = 0L
+    private var lastTickStartMs: Long = 0L
     private var intervalsmb = 1
     private var peakintermediaire = 0.0
     private var latestAdjustedDia: Double = 0.0 // Captured for logging
