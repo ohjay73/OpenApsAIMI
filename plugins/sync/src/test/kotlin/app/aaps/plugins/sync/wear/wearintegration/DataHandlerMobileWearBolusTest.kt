@@ -95,9 +95,9 @@ class DataHandlerMobileWearBolusTest : TestBaseWithProfile() {
             aapsSchedulers, context, rxBus, aapsLogger, rh, preferences, config,
             iobCobCalculator, processedTbrEbData, smbGlucoseStatusProvider, profileFunction, profileUtil,
             loop, processedDeviceStatusData, receiverStatusStore, quickWizard, trendCalculator, dateUtil,
-            constraintsChecker, activePlugin, commandQueue, fabricPrivacy, uiInteraction,
+            constraintsChecker, activePlugin, mock(), commandQueue, fabricPrivacy, uiInteraction,
             persistenceLayer, importExportPrefs, decimalFormatter, pumpStatusProvider,
-            ch, runningModeGuard, wizardBolusExecutor, batchExecutor, wizardExecutor
+            ch, runningModeGuard, wizardBolusExecutor, batchExecutor, wizardExecutor, mock()
         )
         sut.automation = automation
         // Confirm-title + error-title + client-reject string all go through the single-arg gs().

@@ -15,6 +15,7 @@ import app.aaps.core.data.model.TrendArrow
 import app.aaps.core.data.ue.Action
 import app.aaps.core.data.ue.Sources
 import app.aaps.core.data.ue.ValueWithUnit
+import app.aaps.core.interfaces.aps.AutosensDataStore
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.bolus.WizardBolusExecutor
@@ -282,11 +283,14 @@ class LoopHubTest : TestBase() {
         )
         whenever(persistenceLayer.getBgReadingsDataFromTime(1001_000, false))
             .thenReturn(glucoseValues)
+        // No smoothed/calibrated overlay: the stored values come back as they are.
+        whenever(iobCobCalculator.ads).thenReturn(mock<AutosensDataStore>())
         assertArrayEquals(
             glucoseValues.toTypedArray(),
             loopHub.getGlucoseValues(Instant.ofEpochMilli(1001_000), false).toTypedArray()
         )
         verify(persistenceLayer).getBgReadingsDataFromTime(1001_000, false)
+        verify(iobCobCalculator).ads
     }
 
     @Test

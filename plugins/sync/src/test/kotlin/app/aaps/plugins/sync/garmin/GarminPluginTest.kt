@@ -428,6 +428,9 @@ class GarminPluginTest : TestBaseWithProfile() {
             params["steps180"] as Int,
             params["device"] as String,
         )
+        verify(loopHub).getGlucoseValues(from, true)
+        verify(loopHub).glucoseUnit
+        verify(loopHub).isConnected
     }
 
     @Test
@@ -570,6 +573,10 @@ class GarminPluginTest : TestBaseWithProfile() {
         )
         verify(loopHub).getGlucoseValues(clock.instant().minusSeconds(25L * 300L), false)
         verify(loopHub).glucoseUnit
+        // onSgv also reads the target, the active mode and the TBR minutes left (target/mode/tbrMins fields).
+        verify(loopHub, atLeastOnce()).currentTargetMgdl
+        verify(loopHub, atLeastOnce()).activeTherapyMode
+        verify(loopHub, atLeastOnce()).temporaryBasalRemainingMinutes
     }
 
     @Test
@@ -615,6 +622,10 @@ class GarminPluginTest : TestBaseWithProfile() {
         )
 
         verify(loopHub, atLeastOnce()).glucoseUnit
+        // onSgv also reads the target, the active mode and the TBR minutes left (target/mode/tbrMins fields).
+        verify(loopHub, atLeastOnce()).currentTargetMgdl
+        verify(loopHub, atLeastOnce()).activeTherapyMode
+        verify(loopHub, atLeastOnce()).temporaryBasalRemainingMinutes
     }
 
     @Test
@@ -640,6 +651,12 @@ class GarminPluginTest : TestBaseWithProfile() {
                 json.contains("\"tbrMins\":27"),
             "missing target/mode/tbrMins in: $json"
         )
+        verify(loopHub).getGlucoseValues(any(), eq(false))
+        verify(loopHub, atLeastOnce()).glucoseUnit
+        // onSgv also reads the target, the active mode and the TBR minutes left (target/mode/tbrMins fields).
+        verify(loopHub, atLeastOnce()).currentTargetMgdl
+        verify(loopHub, atLeastOnce()).activeTherapyMode
+        verify(loopHub, atLeastOnce()).temporaryBasalRemainingMinutes
     }
 
 }

@@ -1,5 +1,6 @@
 package app.aaps.plugins.sync.wear.wearintegration
 
+import org.mockito.kotlin.mock
 import app.aaps.core.data.model.RM
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.automation.Automation
@@ -74,9 +75,9 @@ class DataHandlerMobileUserActionTest : TestBaseWithProfile() {
             aapsSchedulers, context, rxBus, aapsLogger, rh, preferences, config,
             iobCobCalculator, processedTbrEbData, smbGlucoseStatusProvider, profileFunction, profileUtil,
             loop, processedDeviceStatusData, receiverStatusStore, quickWizard, trendCalculator, dateUtil,
-            constraintsChecker, activePlugin, commandQueue, fabricPrivacy, uiInteraction,
+            constraintsChecker, activePlugin, mock(), commandQueue, fabricPrivacy, uiInteraction,
             persistenceLayer, importExportPrefs, decimalFormatter, pumpStatusProvider,
-            ch, runningModeGuard, wizardBolusExecutor, batchExecutor, wizardExecutor
+            ch, runningModeGuard, wizardBolusExecutor, batchExecutor, wizardExecutor, mock()
         )
         // @Inject lateinit field — Dagger is not running, set manually.
         sut.automation = automation
