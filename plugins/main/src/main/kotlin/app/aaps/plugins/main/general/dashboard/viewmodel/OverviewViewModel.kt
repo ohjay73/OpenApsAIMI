@@ -889,6 +889,7 @@ class OverviewViewModel(
             loopIsRunning = !loopRunningMode.pausesLoopExecution(),
             timeAgo = timeAgo,
             timeAgoDescription = timeAgoLong,
+            glucoseTimestampMs = displayTs,
             isGlucoseActual = DashboardCoherentGlucose.isDisplayActual(
                 lastBg,
                 gs,
@@ -1628,6 +1629,8 @@ data class StatusCardState(
      * there is no fresh glucose to show — never references any specific CGM vendor.
      */
     val warmup: CgmWarmupStatus? = null,
+    /** Time of the glucose shown in the header (the one "time ago" is computed from). */
+    val glucoseTimestampMs: Long? = null,
 
     /**
      * Production sensor lifecycle (early/end of life) of the active source, or null when the source

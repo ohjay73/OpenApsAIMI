@@ -1,5 +1,6 @@
 package app.aaps.plugins.main.general.dashboard.glass
 
+import app.aaps.core.interfaces.source.CgmWarmupStatus
 import app.aaps.core.ui.compose.StatusLevel
 
 /** UI state for the ported Glass StatusAgoraCard — trimmed to only the fields it renders. */
@@ -34,6 +35,12 @@ data class GlassUiState(
     val lastCarbsText: String = "--",
     /** Today's time in range since midnight; null early in the day or without data (ring shows an empty track). */
     val tir: GlassTir? = null,
+    /** CGM link state of the active source (connecting, reconnecting, warm-up); null when it reports none. */
+    val warmup: CgmWarmupStatus? = null,
+    /** False when the shown glucose is older than 9 min (from the view model). */
+    val isGlucoseActual: Boolean = true,
+    /** Time of the shown glucose, to keep "last value N min ago" moving between refreshes. */
+    val glucoseTimestampMs: Long? = null,
 )
 
 /**

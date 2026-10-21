@@ -514,6 +514,9 @@ internal fun buildGlassUiState(
         lastBolusText = treatmentData.boluses.filter { it.isValid && it.timestamp <= System.currentTimeMillis() }.maxByOrNull { it.timestamp }?.label ?: "--",
         lastCarbsText = treatmentData.carbs.filter { it.isValid && it.timestamp <= System.currentTimeMillis() }.maxByOrNull { it.timestamp }?.label ?: "--",
         tir = buildGlassTir(status),
+        warmup = status.warmup,
+        isGlucoseActual = status.isGlucoseActual,
+        glucoseTimestampMs = status.glucoseTimestampMs,
     )
 }
 

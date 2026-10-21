@@ -26,7 +26,11 @@ import androidx.compose.animation.core.tween
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,17 +39,22 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.aaps.core.interfaces.source.CgmWarmupStatus
 import app.aaps.core.ui.compose.StatusLevel
 import app.aaps.core.ui.compose.glass.GlassColors
 import app.aaps.core.ui.compose.statusLevelToColor
 import app.aaps.plugins.main.R
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 import app.aaps.core.ui.R as CoreUiR
 
 // Only ever called for GlassPillLocation.BOTTOM_ROW entries (see the bottom-row filter below), but the
@@ -78,6 +87,18 @@ internal fun StatusAgoraCard(
     onOpenTools: () -> Unit,
     selectedPills: List<GlassPillId>,
 ) {
+    // Minute clock: keeps "last value N min ago" and the stale grey moving between view-model refreshes.
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000L)
+            nowMs = System.currentTimeMillis()
+        }
+    }
+    val glucoseStale = GlassCgmLinkStatus.isStale(state.isGlucoseActual, state.glucoseTimestampMs, nowMs)
+    val linkBanner = GlassCgmLinkStatus.banner(state.warmup, state.isGlucoseActual, state.glucoseTimestampMs, nowMs)
+    val neutralColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
+
     GlassContainer(isDark = isDark, modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(14.dp),
@@ -180,11 +201,13 @@ internal fun StatusAgoraCard(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Top
                     ) {
+                        // An old value stays visible, greyed and struck through, like the classic overview.
                         Text(
                             text = state.currentBg,
                             fontSize = 34.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            color = Color(state.glucoseColor),
+                            color = if (glucoseStale) neutralColor else Color(state.glucoseColor),
+                            textDecoration = if (glucoseStale) TextDecoration.LineThrough else null,
                             letterSpacing = (-1.2).sp,
                             lineHeight = 34.sp,
                             modifier = Modifier.clickable { onOpenLoop() }
@@ -328,6 +351,11 @@ internal fun StatusAgoraCard(
                 }
             }
 
+            linkBanner?.let { banner ->
+                Spacer(modifier = Modifier.height(8.dp))
+                CgmLinkBannerText(banner)
+            }
+
             val bottomRowPills = GLASS_PILL_CATALOG.filter { it.location == GlassPillLocation.BOTTOM_ROW && it.id in selectedPills }
             if (bottomRowPills.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))
@@ -442,3 +470,25 @@ private val TIR_RING_LIFT = (-6).dp
 private val TIR_RING_STROKE = 5.dp
 private const val TIR_RING_GAP_DEG = 3f
 private const val TIR_RING_MIN_PART_DEG = 2f
+
+/** "Reconnecting… · last value 14 min ago", in the attention colour of the other dashboard skins. */
+@Composable
+private fun CgmLinkBannerText(banner: GlassCgmLinkStatus.Banner) {
+    val phase = stringResource(
+        when (banner.phase) {
+            CgmWarmupStatus.Phase.CONNECTING -> R.string.dashboard_warmup_phase_connecting
+            CgmWarmupStatus.Phase.RECONNECTING -> R.string.dashboard_warmup_phase_reconnecting
+            CgmWarmupStatus.Phase.PAIRING -> R.string.dashboard_warmup_phase_pairing
+            CgmWarmupStatus.Phase.WARMING,
+            CgmWarmupStatus.Phase.OTHER -> R.string.dashboard_warmup_label
+        }
+    )
+    Text(
+        text = banner.minutesSinceLastValue?.let { stringResource(R.string.dashboard_glass_cgm_link_banner, phase, it.toInt()) } ?: phase,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Bold,
+        color = colorResource(R.color.dashboard_metric_attention),
+        textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth()
+    )
+}

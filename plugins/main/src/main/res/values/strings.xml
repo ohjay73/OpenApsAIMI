@@ -388,6 +388,7 @@
     <string name="dashboard_warmup_phase_connecting">Connecting…</string>
     <string name="dashboard_warmup_phase_reconnecting">Reconnecting…</string>
     <string name="dashboard_warmup_phase_pairing">Pairing…</string>
+    <string name="dashboard_glass_cgm_link_banner" comment="Sensor link line on the GLASS home screen. %1$s=link phase, e.g. Reconnecting…; %2$d=minutes since the last glucose value. Example: Reconnecting… · last value 14 min ago">%1$s · last value %2$d min ago</string>
     <string name="dashboard_warmup_ends_at" comment="%1$s = local end-of-warm-up time, e.g. 14:05. Shown under the countdown.">Ends %1$s</string>
     <string name="dashboard_warmup_a11y">Sensor warm-up in progress</string>
     <!-- CGM sensor beginning-of-life / end-of-life subtext under the normal glucose hero. -->

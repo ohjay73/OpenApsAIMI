@@ -1,6 +1,7 @@
 package app.aaps.plugins.main.general.dashboard.glass
 
 import app.aaps.core.interfaces.overview.graph.BolusGraphPoint
+import app.aaps.core.interfaces.source.CgmWarmupStatus
 import app.aaps.core.interfaces.overview.graph.BolusType
 import app.aaps.core.interfaces.overview.graph.CarbsGraphPoint
 import app.aaps.core.interfaces.overview.graph.TreatmentGraphData
@@ -54,5 +55,16 @@ class GlassUiStateBuilderTest {
         val state = buildGlassUiState(status = minimalStatus(), lights = null, treatmentData = treatmentData())
         assertThat(state.lastBolusText).isEqualTo("--")
         assertThat(state.lastCarbsText).isEqualTo("--")
+    }
+
+    /** GLASS used to drop the CGM link state, so a reconnect showed nothing at all. */
+    @Test
+    fun `cgm link state and glucose time reach the glass state`() {
+        val warmup = CgmWarmupStatus(active = true, phase = CgmWarmupStatus.Phase.RECONNECTING, remainingMs = null, endsAtEpochMs = null, message = null)
+        val status = minimalStatus().copy(warmup = warmup, isGlucoseActual = false, glucoseTimestampMs = 123_000L)
+        val state = buildGlassUiState(status = status, lights = null, treatmentData = treatmentData())
+        assertThat(state.warmup).isEqualTo(warmup)
+        assertThat(state.isGlucoseActual).isFalse()
+        assertThat(state.glucoseTimestampMs).isEqualTo(123_000L)
     }
 }
