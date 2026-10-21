@@ -83,7 +83,8 @@ class GarminPlugin @Inject constructor(
 
         /** Keywords accepted from Garmin /mode (must match therapy.kt detection). */
         private val ALLOWED_THERAPY_MODES = setOf(
-            "bfast", "lunch", "dinner", "highcarb", "fcl", "sport", "stop", "meal", "snack"
+            "bfast", "lunch", "dinner", "highcarb", "coffee", "cafe", "fcl", "sport",
+            "stop", "meal", "snack"
         )
 
         private val DEFAULT_MODE_DURATIONS_MIN = mapOf(
@@ -91,6 +92,9 @@ class GarminPlugin @Inject constructor(
             "lunch" to 60,
             "dinner" to 60,
             "highcarb" to 90,
+            // CoffeeRiseMode.DEFAULT_WINDOW_MIN
+            "coffee" to 90,
+            "cafe" to 90,
             "fcl" to 30,
             "sport" to 120,
             "meal" to 60,

@@ -184,9 +184,25 @@ class LoopHubImpl @Inject constructor(
                     note.contains("breakfast", ignoreCase = true)) &&
                     now <= (event.timestamp + event.duration)
             }
+        fun activeCoffee(): Boolean =
+            events.any { event ->
+                val note = event.note ?: return@any false
+                // Same keywords as CoffeeRiseMode (coffee / cafe / café)
+                val isCoffee = note.contains("coffee", ignoreCase = true) ||
+                    note.contains("cafe", ignoreCase = true) ||
+                    note.contains("café", ignoreCase = true)
+                if (!isCoffee) return@any false
+                // Default 90 min when NOTE has no duration (CoffeeRiseMode.windowMin)
+                val windowMs = when {
+                    event.duration <= 0L -> COFFEE_DEFAULT_WINDOW_MS
+                    else -> minOf(event.duration, COFFEE_MAX_WINDOW_MS)
+                }
+                now <= (event.timestamp + windowMs)
+            }
         return when {
             active("sport") -> "SPORT"
             active("fcl", FCL_MIN_WINDOW_MS) -> "FCL"
+            activeCoffee() -> "COFFEE"
             active("dinner") -> "DINNER"
             active("lunch") -> "LUNCH"
             activeBfast() -> "BFAST"
@@ -202,6 +218,9 @@ class LoopHubImpl @Inject constructor(
     companion object {
         /** Same floor as Therapy.FCL_MIN_WINDOW_MS — FCL notes often ship with duration 0. */
         private const val FCL_MIN_WINDOW_MS = 60 * 60_000L
+        /** CoffeeRiseMode.DEFAULT_WINDOW_MIN / MAX_WINDOW_MIN */
+        private const val COFFEE_DEFAULT_WINDOW_MS = 90 * 60_000L
+        private const val COFFEE_MAX_WINDOW_MS = 150 * 60_000L
     }
 
     /** Tells the loop algorithm that the pump is physically connected. */

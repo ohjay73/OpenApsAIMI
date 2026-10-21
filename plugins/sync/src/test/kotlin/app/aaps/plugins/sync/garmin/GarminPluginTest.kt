@@ -499,6 +499,15 @@ class GarminPluginTest : TestBaseWithProfile() {
         verify(loopHub, times(0)).postTempTarget(any(), any())
     }
 
+    /** "coffee": the loop meets the rise with a bounded basal, not with SMBs (CoffeeRiseMode). No temp target. */
+    @Test
+    fun testOnPostMode_CoffeeDefaultDuration() {
+        val uri = createUri(mapOf("mode" to "Coffee"))
+        assertEquals("""{"ok":true,"mode":"coffee","duration":90}""", gp.onPostMode(uri))
+        verify(loopHub).postTherapyMode("coffee", 90)
+        verify(loopHub, times(0)).postTempTarget(any(), any())
+    }
+
     @Test
     fun testOnPostMode_InvalidRejected() {
         val uri = createUri(mapOf("mode" to "hack"))

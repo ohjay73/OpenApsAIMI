@@ -9,6 +9,7 @@ import app.aaps.core.data.model.SC
 import app.aaps.core.data.model.ICfg
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.SourceSensor
+import app.aaps.core.data.model.TE
 import app.aaps.core.data.model.TB
 import app.aaps.core.data.model.TrendArrow
 import app.aaps.core.data.ue.Action
@@ -353,5 +354,27 @@ class LoopHubTest : TestBase() {
         )
         delay(100)
         verify(persistenceLayer).insertOrUpdateStepsCount(sc)
+    }
+
+    private fun note(text: String, atMs: Long, durationMin: Long) =
+        TE(timestamp = atMs, type = TE.Type.NOTE, glucoseUnit = GlucoseUnit.MGDL, note = text, duration = durationMin * 60_000L)
+
+    /** Same window as the loop: the note's duration, 90 min without one, never more than 150 min. */
+    @Test
+    fun testDetectActiveTherapyMode_Coffee() {
+        val t0 = 1_700_000_000_000L
+        val min = 60_000L
+        assertEquals("COFFEE", loopHub.detectActiveTherapyMode(listOf(note("coffee", t0, 0)), t0 + 89 * min))
+        assertEquals(null, loopHub.detectActiveTherapyMode(listOf(note("coffee", t0, 0)), t0 + 91 * min))
+        assertEquals("COFFEE", loopHub.detectActiveTherapyMode(listOf(note("café", t0, 120)), t0 + 119 * min))
+        assertEquals(null, loopHub.detectActiveTherapyMode(listOf(note("coffee", t0, 300)), t0 + 151 * min))
+    }
+
+    /** A declared meal wins over coffee, as in the loop. */
+    @Test
+    fun testDetectActiveTherapyMode_MealWinsOverCoffee() {
+        val t0 = 1_700_000_000_000L
+        val events = listOf(note("coffee", t0, 90), note("bfast", t0, 60))
+        assertEquals("BFAST", loopHub.detectActiveTherapyMode(events, t0 + 10 * 60_000L))
     }
 }
