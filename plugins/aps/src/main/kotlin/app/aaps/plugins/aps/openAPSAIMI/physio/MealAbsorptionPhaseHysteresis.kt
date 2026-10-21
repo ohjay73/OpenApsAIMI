@@ -20,6 +20,10 @@ object MealAbsorptionPhaseHysteresis {
     }
 
     fun stabilize(raw: MealAbsorptionPhaseEngine.Output): MealAbsorptionPhaseEngine.Output {
+        if (raw.suppressHold) {
+            reset()
+            return raw
+        }
         if (raw.phase == MealAbsorptionPhase.FIRST_WAVE ||
             raw.phase == MealAbsorptionPhase.SECOND_WAVE ||
             raw.phase == MealAbsorptionPhase.PEAK_CORRECTION ||

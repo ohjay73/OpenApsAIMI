@@ -804,7 +804,6 @@ internal object AimiSettingsScreens {
                 BooleanKey.OApsAIMIDynamicBasalStackCap,
                 BooleanKey.OApsAIMIForcedTbrRealPredDelta,
                 BooleanKey.OApsAIMIBasalStackTerminalCap,
-                BooleanKey.OApsAIMIMealAbsorptionOnsetRuntime,
                 BooleanKey.OApsAIMIEngineHyperRateBound,
                 DoubleKey.OApsAIMIAdaptiveBasalMaxScaling,
                 DoubleKey.OApsAIMIGovernanceHypoRateEnter,

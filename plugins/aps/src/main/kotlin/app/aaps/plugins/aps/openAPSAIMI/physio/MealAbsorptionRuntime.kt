@@ -5,34 +5,31 @@ package app.aaps.plugins.aps.openAPSAIMI.physio
  *
  * The overlay used `MealAbsorptionMemory.lastActiveAtMs`, which the same tick has just refreshed, so its
  * runtime was always 0 min and its 0..120 min window never closed ("Meal absorption … (0 m)" on every
- * tick of every package). The episode age is `onsetAtMs`.
- *
- * Using it is behind `BooleanKey.OApsAIMIMealAbsorptionOnsetRuntime`, off by default: the episode itself
- * almost never closes today (median age 42 h on 2026-09-22 → 10-20), so the real age would remove ~96 %
- * of the overlays at once. Both values are exported until the episode is bounded.
+ * tick of every package). The runtime is now the episode age (`onsetAtMs`). That is meaningful because
+ * the episode itself is bounded since 2026-10-21 (see [MealAbsorptionMemory]): it closes without meal
+ * evidence, at a max age, and restarts on a new meal.
  */
 object MealAbsorptionRuntime {
 
     data class Result(
         /** Runtime the overlay uses. */
         val runtimeMin: Int,
-        /** Old value, from `lastActiveAtMs` (or the mode runtimes without an episode). */
+        /** Old value, from `lastActiveAtMs` (or the mode runtimes without an episode). Export only. */
         val legacyMin: Int,
         /** Real episode age, `null` without an episode. */
         val onsetMin: Int?,
         val usedOnset: Boolean,
     )
 
-    fun resolve(nowMs: Long, onsetAtMs: Long, lastActiveAtMs: Long, modeRuntimesMin: List<Long>, useOnset: Boolean): Result {
-        val legacy = lastActiveAtMs.takeIf { it > 0L }?.let { ageMin(nowMs, it) }
-            ?: modeRuntimesMin.maxOrNull()?.toInt() ?: 0
+    fun resolve(nowMs: Long, onsetAtMs: Long, lastActiveAtMs: Long, modeRuntimesMin: List<Long>): Result {
+        val modes = modeRuntimesMin.maxOrNull()?.toInt() ?: 0
+        val legacy = lastActiveAtMs.takeIf { it > 0L }?.let { ageMin(nowMs, it) } ?: modes
         val onset = onsetAtMs.takeIf { it > 0L }?.let { ageMin(nowMs, it) }
-        val usedOnset = useOnset && onset != null
         return Result(
-            runtimeMin = if (usedOnset) onset!! else legacy,
+            runtimeMin = onset ?: modes,
             legacyMin = legacy,
             onsetMin = onset,
-            usedOnset = usedOnset,
+            usedOnset = onset != null,
         )
     }
 

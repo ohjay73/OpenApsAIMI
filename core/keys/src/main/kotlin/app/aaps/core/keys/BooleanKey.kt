@@ -728,13 +728,6 @@ enum class BooleanKey(
         titleResId = R.string.pref_title_aimi_basal_stack_terminal_cap,
         summaryResId = R.string.pref_summary_aimi_basal_stack_terminal_cap,
     ),
-    /** 🍽️ Meal-absorption overlay: count its runtime from the episode start, not from the last tick (always 0).
-     *  OFF by default: the episode rarely closes today, so this alone would remove most overlays. See `MealAbsorptionRuntime`. */
-    OApsAIMIMealAbsorptionOnsetRuntime(
-        "key_aimi_meal_absorption_onset_runtime", false,
-        titleResId = R.string.pref_title_aimi_meal_absorption_onset_runtime,
-        summaryResId = R.string.pref_summary_aimi_meal_absorption_onset_runtime,
-    ),
     /** 🩸 Engine "Slow rise" / "Eventual BG>110": bound to profile × one glucose factor (0.5–5). OFF by default (shadow).
      *  See `EngineHyperRateBound`. */
     OApsAIMIEngineHyperRateBound(

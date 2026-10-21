@@ -45,6 +45,7 @@ import app.aaps.plugins.aps.openAPSAIMI.basal.BasalChannelSafetyGuards
 import app.aaps.plugins.aps.openAPSAIMI.basal.BasalDecisionEngine
 import app.aaps.plugins.aps.openAPSAIMI.basal.BasalHistoryUtils
 import app.aaps.plugins.aps.openAPSAIMI.basal.BasalStackTerminalCap
+import app.aaps.plugins.aps.openAPSAIMI.basal.CoffeeRiseMode
 import app.aaps.plugins.aps.openAPSAIMI.basal.BasalTerminalInvariants
 import app.aaps.plugins.aps.openAPSAIMI.basal.EngineHyperRateBound
 import app.aaps.plugins.aps.openAPSAIMI.basal.TerminalRateGuards
@@ -172,6 +173,7 @@ import app.aaps.plugins.aps.openAPSAIMI.physio.MealAbsorptionMemory
 import app.aaps.plugins.aps.openAPSAIMI.physio.MealAbsorptionPhase
 import app.aaps.plugins.aps.openAPSAIMI.physio.MealAbsorptionPhaseEngine
 import app.aaps.plugins.aps.openAPSAIMI.physio.MealAbsorptionRuntime
+import app.aaps.plugins.aps.openAPSAIMI.safety.SmbRestoreCeiling
 import app.aaps.plugins.aps.openAPSAIMI.physio.PhysiologicalPhaseClassifier
 import app.aaps.plugins.aps.openAPSAIMI.physio.PhysioContextMTR
 import app.aaps.plugins.aps.openAPSAIMI.physio.PhysioLatentState
@@ -790,6 +792,10 @@ internal data class AimiDecisionContext(
         var engine_hyper_bound: org.json.JSONObject? = null,
         /** MealAbsorptionRuntime of the meal-absorption overlay: old runtime vs real episode age. */
         var meal_absorption_runtime: org.json.JSONObject? = null,
+        /** MealAbsorptionMemory episode: onset, last evidence, why the last one closed (F10). */
+        var meal_absorption_episode: org.json.JSONObject? = null,
+        /** CoffeeRiseMode verdict of this tick ("coffee" note). */
+        var coffee_mode: org.json.JSONObject? = null,
         /** PKPD vs scenario eventual-BG divergence audit (PredictionDivergenceAuditor) */
         var pred_divergence: org.json.JSONObject? = null,
         /** Recursive Belief Tree — full JSON object for AIMI_Decisions.jsonl */
@@ -1297,6 +1303,8 @@ internal data class AimiDecisionContext(
             adjustments.dynamic_basal_stack_cap?.let { adj.put("dynamic_basal_stack_cap", it) }
             adjustments.engine_hyper_bound?.let { adj.put("engine_hyper_bound", it) }
             adjustments.meal_absorption_runtime?.let { adj.put("meal_absorption_runtime", it) }
+            adjustments.meal_absorption_episode?.let { adj.put("meal_absorption_episode", it) }
+            adjustments.coffee_mode?.let { adj.put("coffee_mode", it) }
             adjustments.pred_divergence?.let { pd ->
                 adj.put("pred_divergence", pd)
             }
@@ -2486,6 +2494,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         lastStackTerminalVerdict = null
         lastEngineHyperBound = null
         lastMealAbsorptionRuntime = null
+        lastCoffeeVerdict = null
+        lastCoffeeSmbCutFromU = null
+        lastCoffeeBasalChange = null
         lastPostHypoSmbBeforeCapU = null
         lastPostHypoSmbAfterCapU = null
         // Cross-tick hysteresis (InsulinSlope / Endogenous) must NOT reset here — that zeroed
@@ -3286,6 +3297,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         this.snackrunTime = therapy.getTimeElapsedSinceLastEvent("snack")
         // The *runtime fields above stop at 60 min; the PK/PD learning gate needs the whole meal.
         this.lastDeclaredMeal = therapy.lastDeclaredMeal(ctx.currentTime)
+        this.coffeeNote = therapy.activeCoffee(ctx.currentTime)
+        this.coffeeProfileBasalUph = profile.current_basal
+        this.coffeeMaxBasalUph = profile.max_basal
         observeCircadianMealProfile(ctx.currentTime)
         this.iscalibration = therapy.calibrationTime
         this.acceleratingUp = if (delta > 2 && delta - longAvgDelta > 2) 1 else 0
@@ -3850,8 +3864,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 heartRateBpm = heartRateBpm,
                 restingHeartRateBpm = restingHeartRateBpm,
                 stepsLast15m = stepsLast15m,
-                uamConfidence = AimiUamHandler.confidenceOrZero(),
-                mealIntent = mealContext.hasMealIntent,
+                // Declared meals only: `hasMealIntent` also counts the loop's own SMBs and this engine's
+                // previous phase, so the belief fed on itself (F10, 2026-10-21).
+                mealIntent = mealContext.declaredMealIntent || fclTime || anticipTime,
                 physiologicalPhase = lastPhysiologicalPhaseOutput?.phase ?: PhysiologicalPhase.OFF,
                 estimatedRa = continuousStateEstimator.getLastRa().takeIf { it.isFinite() && it > 0.0 },
                 hoursSinceBolus = hoursSinceBolus,
@@ -7681,7 +7696,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     }
                     else -> {
                         consoleLog.add("✨ RED CARPET: Restoring meal bolus blocked by minor safety (Proposed=${"%.2f".format(proposedUnits)} vs Gated=${"%.2f".format(gatedUnits)})")
-                        proposedUnits
+                        // Same ceiling as the finalize restore, see SmbRestoreCeiling.
+                        SmbRestoreCeiling.apply(
+                            finalU = proposedUnits.toDouble(),
+                            modelOutputU = lastSmbBindingTraceDraft.modelOutputU,
+                            afterGuardsU = gatedUnits.toDouble(),
+                            exempt = isExplicitAction || anyMealModeForGuard || declaredMealWindowActive(),
+                        ).toFloat()
                     }
                 }
             } else {
@@ -7886,7 +7907,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     onsetAtMs = MealAbsorptionMemory.onsetAtMs,
                     lastActiveAtMs = MealAbsorptionMemory.lastActiveAtMs,
                     modeRuntimesMin = listOf(mealruntime, lunchruntime, dinnerruntime, highCarbrunTime, bfastruntime, snackrunTime),
-                    useOnset = preferences.get(BooleanKey.OApsAIMIMealAbsorptionOnsetRuntime),
                 )
                 lastMealAbsorptionRuntime = runtime
                 val runTime: Int = runtime.runtimeMin
@@ -10253,15 +10273,42 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 put("rate_out_uph", v.rateOutUph)
             }
         }
+        decisionCtx.adjustments.meal_absorption_episode = org.json.JSONObject().apply {
+            val now = ctx.currentTime
+            put("active", MealAbsorptionMemory.isActive(now))
+            put("onset_at_ms", MealAbsorptionMemory.onsetAtMs)
+            put("last_evidence_at_ms", MealAbsorptionMemory.lastEvidenceAtMs)
+            put("age_min", MealAbsorptionMemory.onsetAgeMin(now) ?: org.json.JSONObject.NULL)
+            put("last_closed_by", MealAbsorptionMemory.lastClosedBy?.name ?: org.json.JSONObject.NULL)
+            put("last_closed_at_ms", MealAbsorptionMemory.lastClosedAtMs)
+            lastMealAbsorptionOutput?.evidence?.let { e ->
+                put("evidence_first_wave", e.firstWave)
+                put("evidence_late_fat", e.lateFat)
+                put("evidence_declared_meal", e.declaredMeal)
+                put("evidence_cob", e.cob)
+            }
+        }
+        decisionCtx.adjustments.coffee_mode = (lastCoffeeVerdict ?: coffeeVerdict()).let { v ->
+            org.json.JSONObject().apply {
+                put("note_live", coffeeNote != null)
+                put("active", v.active)
+                put("meal_suspected", v.mealSuspected)
+                put("age_min", v.ageMin ?: org.json.JSONObject.NULL)
+                put("window_min", v.windowMin)
+                put("basal_floor_uph", v.basalFloorUph ?: org.json.JSONObject.NULL)
+                put("basal_ceiling_uph", v.basalCeilingUph ?: org.json.JSONObject.NULL)
+                put("basal_change", lastCoffeeBasalChange ?: org.json.JSONObject.NULL)
+                put("smb_cut_from_u", lastCoffeeSmbCutFromU ?: org.json.JSONObject.NULL)
+            }
+        }
         decisionCtx.adjustments.meal_absorption_runtime = lastMealAbsorptionRuntime?.let { r ->
             org.json.JSONObject().apply {
-                put("armed", preferences.get(BooleanKey.OApsAIMIMealAbsorptionOnsetRuntime))
                 put("runtime_used_min", r.runtimeMin)
                 put("runtime_legacy_min", r.legacyMin)
                 put("runtime_onset_min", r.onsetMin ?: org.json.JSONObject.NULL)
                 put("used_onset", r.usedOnset)
-                // The overlay window is 0..120 min: with the real age it would already be closed.
-                put("overlay_would_close", (r.onsetMin ?: 0) > 120)
+                // The overlay window is 0..120 min of the episode.
+                put("overlay_closed", r.runtimeMin > 120)
             }
         }
         decisionCtx.adjustments.pred_divergence = lastPredDivergenceExport
@@ -12278,6 +12325,32 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private var lastStackTerminalVerdict: BasalStackTerminalCap.Verdict? = null
     private var lastEngineHyperBound: EngineHyperRateBound.Verdict? = null
     private var lastMealAbsorptionRuntime: MealAbsorptionRuntime.Result? = null
+
+    // "coffee" note of this tick (see CoffeeRiseMode) and the profile values its basal band needs.
+    private var coffeeNote: Therapy.CoffeeNote? = null
+    private var coffeeProfileBasalUph: Double = 0.0
+    private var coffeeMaxBasalUph: Double = 0.0
+    private var lastCoffeeVerdict: CoffeeRiseMode.Verdict? = null
+    private var lastCoffeeSmbCutFromU: Double? = null
+    private var lastCoffeeBasalChange: String? = null
+
+    /** CoffeeRiseMode verdict for the current glucose, kept for the export. */
+    private fun coffeeVerdict(): CoffeeRiseMode.Verdict {
+        val note = coffeeNote
+        return CoffeeRiseMode.evaluate(
+            noteAgeMin = note?.ageMin,
+            windowMin = note?.windowMin ?: CoffeeRiseMode.DEFAULT_WINDOW_MIN,
+            declaredMealActive = declaredMealWindowActive(),
+            bgMgdl = bg,
+            targetBgMgdl = targetBg.toDouble(),
+            highBgMgdl = preferences.get(DoubleKey.OApsAIMIHighBg),
+            deltaMgdl5m = delta.toDouble(),
+            iobU = iob.toDouble(),
+            isfMgdlPerU = stackCapIsf(),
+            profileBasalUph = coffeeProfileBasalUph,
+            maxBasalUph = coffeeMaxBasalUph,
+        ).also { lastCoffeeVerdict = it }
+    }
 
     /** A meal is declared now: a meal mode is active, or a meal note is younger than 3 h (4 h high-carb). */
     private fun declaredMealWindowActive(): Boolean = DynamicBasalStackCap.declaredMealActive(
@@ -14375,6 +14448,17 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             }
         }
 
+        // ☕ "coffee" note: the rise is met with a small basal paid from a budget, not with SMBs. The
+        // floor is set before the terminal invariants so they still bound it; the ceiling comes last.
+        val coffee = coffeeVerdict()
+        coffee.basalFloorUph?.let { floorUph ->
+            if (rate < floorUph) {
+                lastCoffeeBasalChange = "floor ${"%.2f".format(rate)}→${"%.2f".format(floorUph)}"
+                consoleLog.add("☕ COFFEE_BASAL_FLOOR ${"%.2f".format(rate)}→${"%.2f".format(floorUph)}U/h")
+                rate = floorUph
+            }
+        }
+
         // 🔒 Lot 2 — invariants terminaux : dernier point où le taux peut encore être borné. Tout ce qui
         // précède (DynamicBasalController ×[0..10], AdaptiveBasal, ampli endocrine) a déjà été appliqué,
         // donc un plafond posé ici ne peut plus être écrasé. Réduction seule.
@@ -14440,6 +14524,14 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             )
             rT.reason.append(" [STACK_CAP_TERMINAL ${"%.2f".format(stackTerminal.rateInUph)}→${"%.2f".format(stackTerminal.rateOutUph)}U/h]")
             rate = stackTerminal.rateOutUph
+        }
+        coffee.basalCeilingUph?.let { ceilingUph ->
+            if (rate > ceilingUph) {
+                lastCoffeeBasalChange = "ceiling ${"%.2f".format(rate)}→${"%.2f".format(ceilingUph)}"
+                consoleLog.add("☕ COFFEE_BASAL_CEILING ${"%.2f".format(rate)}→${"%.2f".format(ceilingUph)}U/h")
+                rT.reason.append(" [COFFEE ${"%.2f".format(rate)}→${"%.2f".format(ceilingUph)}U/h]")
+                rate = ceilingUph
+            }
         }
 
         rT.reason.append(context.getString(R.string.temp_basal_pose, "%.2f".format(rate), duration))
@@ -15312,7 +15404,14 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             phase = "FINALIZE",
             kind = if (afterRedCarpet > safeCap + SmbBindingTrace.REDUCTION_TOLERANCE_U) "RESTORE" else "PASS",
         )
-        if (hyperReleaseFloorU > 0.0 && !isRedCarpetSituation) {
+        // The RBT/HTR finalize floor is a restore like Red Carpet, so it obeys the same vetoes: a zero
+        // set by a vital safety and an active IOB surveillance cannot be undone. On 2026-10-21 07:35 it
+        // put back 0.48 U over "BG below target stable without COB", and the trace showed it as the
+        // TERMINAL_PROTECTIONS guard because it wrote no stage of its own.
+        val beforeFinalizeFloor = finalUnits
+        if (hyperReleaseFloorU > 0.0 && !isRedCarpetSituation &&
+            !criticalSafetyZeroedThisTick && !iobSurveillanceSuppressRedCarpet
+        ) {
             val iobSpace = (this.maxIob - this.iob).toDouble().coerceAtLeast(0.0)
             val floorCap = minOf(hyperReleaseFloorU, iobSpace, baseLimit)
             if (finalUnits + 0.02 < floorCap) {
@@ -15323,6 +15422,57 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 finalUnits = floorCap
             }
         }
+        if (finalUnits > beforeFinalizeFloor + SmbBindingTrace.REDUCTION_TOLERANCE_U) {
+            lastSmbBindingTraceDraft = lastSmbBindingTraceDraft.appendStage(
+                "RBT_FINALIZE_FLOOR",
+                beforeFinalizeFloor,
+                finalUnits,
+                hyperReleaseFloorU,
+                phase = "FINALIZE",
+                kind = "RESTORE",
+            )
+        }
+
+        // One ceiling for every restore (Red Carpet, finalize floor): no more than the model asked for
+        // or the guards let through. Not on a declared meal or a manual action. See SmbRestoreCeiling.
+        val beforeRestoreCeiling = finalUnits
+        finalUnits = SmbRestoreCeiling.apply(
+            finalU = finalUnits,
+            modelOutputU = lastSmbBindingTraceDraft.modelOutputU,
+            afterGuardsU = safeCap.toDouble(),
+            exempt = isExplicitUserAction || isMealModeCondition() || declaredMealWindowActive(),
+        )
+        if (finalUnits < beforeRestoreCeiling - SmbBindingTrace.REDUCTION_TOLERANCE_U) {
+            consoleLog.add(
+                "🧯 SMB_RESTORE_CEILING ${"%.2f".format(beforeRestoreCeiling)}→${"%.2f".format(finalUnits)}U " +
+                    "(model=${"%.2f".format(lastSmbBindingTraceDraft.modelOutputU ?: 0.0)} guards=${"%.2f".format(safeCap)})",
+            )
+            lastSmbBindingTraceDraft = lastSmbBindingTraceDraft.appendStage(
+                "RESTORE_CEILING",
+                beforeRestoreCeiling,
+                finalUnits,
+                safeCap.toDouble(),
+                phase = "FINALIZE",
+                kind = "CAP",
+            )
+        }
+
+        // "coffee" note: no SMB under the high BG, and above it only what the model asked for.
+        CoffeeRiseMode.smbCeilingU(coffeeVerdict(), lastSmbBindingTraceDraft.modelOutputU)?.let { cap ->
+            if (finalUnits > cap + SmbBindingTrace.REDUCTION_TOLERANCE_U) {
+                consoleLog.add("☕ COFFEE_SMB_CAP ${"%.2f".format(finalUnits)}→${"%.2f".format(cap)}U")
+                lastCoffeeSmbCutFromU = finalUnits
+                lastSmbBindingTraceDraft = lastSmbBindingTraceDraft.appendStage(
+                    "COFFEE_SMB_CAP",
+                    finalUnits,
+                    cap,
+                    phase = "FINALIZE",
+                    kind = "CAP",
+                )
+                finalUnits = cap
+            }
+        }
+        val afterRestoreGuards = finalUnits
 
         // 🎯 Context protective SMB caps (declared HypoRecovery = off, SlowCarbMeal early ceiling).
         // Enforced at the universal SMB exit so no upstream maxSMB reset (advisor one-shot, drift, physio
@@ -15451,7 +15601,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         chainFinal = finalUnits
         lastSmbBindingTraceDraft = lastSmbBindingTraceDraft.appendStage(
             "TERMINAL_PROTECTIONS",
-            afterRedCarpet,
+            afterRestoreGuards,
             finalUnits,
             phase = "FINALIZE",
             kind = "GUARD",
