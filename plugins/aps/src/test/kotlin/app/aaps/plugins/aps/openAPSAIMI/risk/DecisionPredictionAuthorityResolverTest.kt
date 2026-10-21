@@ -230,6 +230,52 @@ class DecisionPredictionAuthorityResolverTest {
         assertEquals(108.0, authority.eventualTerminalMgdl, 0.001)
     }
 
+    private fun mcerResolve(phase: MealAbsorptionPhase) = DecisionPredictionAuthorityResolver.resolve(
+        bgMgdl = 160.0,
+        pkpdEventualMgdl = 112.0,
+        scenarioProjection = scenario(floorTerminal = 104.0, bestTerminal = 200.0),
+        mealAbsorptionOutput = mealOutput(phase, priority = true),
+        hypothesisState = null,
+        latentState = PhysioLatentState(),
+        causalStatePosterior = null,
+        trajectoryAnalysis = trajectory(TrajectoryType.OPEN_DIVERGING),
+        physioPolicy = null,
+        uamConfidence = 0.5,
+        mealConfirmedEarlyReleaseEnabled = true,
+        combinedDeltaMgdl5m = 3.0,
+        targetBgMgdl = 100.0,
+        iobU = 2.0,
+        maxIobU = 10.0,
+    )
+
+    /** The MCER gate is exported term by term, so a field package shows which breaker held it off. */
+    @Test
+    fun mcerDiagnosticsShowEveryTerm() {
+        val armed = mcerResolve(MealAbsorptionPhase.FIRST_WAVE).mcerDiagnostics!!
+        assertTrue(armed.armed)
+        assertTrue(armed.rising)
+        assertTrue(armed.strongMealConfirmed)
+        assertFalse(armed.tailByPhase)
+        assertEquals(3.0, armed.combinedDeltaMgdl5m, 1e-9)
+
+        val peak = mcerResolve(MealAbsorptionPhase.PEAK_CORRECTION).mcerDiagnostics!!
+        assertFalse(peak.armed)
+        assertTrue(peak.tailByPhase)
+        assertFalse(peak.tailByFall)
+    }
+
+    @Test
+    fun mcerDiagnosticsAbsentWhenTheReleaseIsOff() {
+        val authority = DecisionPredictionAuthorityResolver.resolve(
+            bgMgdl = 160.0, pkpdEventualMgdl = 112.0,
+            scenarioProjection = scenario(floorTerminal = 104.0, bestTerminal = 200.0),
+            mealAbsorptionOutput = mealOutput(MealAbsorptionPhase.FIRST_WAVE, priority = true),
+            hypothesisState = null, latentState = PhysioLatentState(), causalStatePosterior = null,
+            trajectoryAnalysis = trajectory(TrajectoryType.OPEN_DIVERGING), physioPolicy = null, uamConfidence = 0.5,
+        )
+        assertEquals(null, authority.mcerDiagnostics)
+    }
+
     private fun scenario(
         floorTerminal: Double,
         bestTerminal: Double,

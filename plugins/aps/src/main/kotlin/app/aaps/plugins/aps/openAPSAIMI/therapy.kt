@@ -87,7 +87,12 @@ class Therapy(private val persistenceLayer: PersistenceLayer) {
     private suspend fun buildSnapshot(): TherapySnapshot {
         val now = System.currentTimeMillis()
         val fromTime = now - TimeUnit.DAYS.toMillis(1)
+        // Context intents are stored as notes too ("AIMI_CONTEXT:<id>:{json}"). Their JSON holds words
+        // like "Meal" or "SPORT_INTENSE", so every keyword below would read them as a mode the person
+        // set: on 2026-08-02 a SlowCarbMeal intent fired the meal-mode prebolus and 7 U/h. Drop them once
+        // here; every matcher, the runtimes, lastDeclaredMeal and activeCoffee read only what is left.
         val events = persistenceLayer.getTherapyEventDataFromTime(fromTime, ascending = true)
+            .filterNot { it.isAimiContextNote() }
         val noteEvents = events.filter { it.type == TE.Type.NOTE }
         val stop = findActivestopEvents(events, now)
         if (!stop) {

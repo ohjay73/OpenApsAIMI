@@ -150,6 +150,7 @@ import app.aaps.plugins.aps.openAPSAIMI.risk.AimiRiskEnvelope
 import app.aaps.plugins.aps.openAPSAIMI.risk.AimiRiskEnvelopeBuilder
 import app.aaps.plugins.aps.openAPSAIMI.risk.DecisionPredictionAuthority
 import app.aaps.plugins.aps.openAPSAIMI.risk.DecisionPredictionAuthorityResolver
+import app.aaps.plugins.aps.openAPSAIMI.risk.McerDiagnostics
 import app.aaps.plugins.aps.openAPSAIMI.risk.MealConfirmedEarlyReleaseLatch
 import app.aaps.plugins.aps.openAPSAIMI.risk.IobConsensus
 import app.aaps.plugins.aps.openAPSAIMI.risk.IobDecisionSource
@@ -796,6 +797,8 @@ internal data class AimiDecisionContext(
         var meal_absorption_episode: org.json.JSONObject? = null,
         /** CoffeeRiseMode verdict of this tick ("coffee" note). */
         var coffee_mode: org.json.JSONObject? = null,
+        /** Meal-confirmed early release gate, term by term (McerDiagnostics). */
+        var mcer: org.json.JSONObject? = null,
         /** PKPD vs scenario eventual-BG divergence audit (PredictionDivergenceAuditor) */
         var pred_divergence: org.json.JSONObject? = null,
         /** Recursive Belief Tree — full JSON object for AIMI_Decisions.jsonl */
@@ -904,6 +907,17 @@ internal data class AimiDecisionContext(
         val kinetic_score: Double,
         val trajectory_score: Double,
         val physio_score: Double,
+        /** Belief in parts (base + bonuses actually added) and the phase before the hysteresis. */
+        val belief_base: Double? = null,
+        val bonus_intent: Double? = null,
+        val bonus_cob: Double? = null,
+        val bonus_physio_meal: Double? = null,
+        val bonus_ra: Double? = null,
+        val fast_rise: Boolean? = null,
+        val moderate_rise: Boolean? = null,
+        val raw_phase: String? = null,
+        /** What made the meal intent true: DECLARED (mode, advisor, trigger), FCL, ANTICIP or NONE. */
+        val meal_intent_source: String? = null,
     )
 
     data class PhysiologicalPhaseExport(
@@ -1296,6 +1310,15 @@ internal data class AimiDecisionContext(
                 mJson.put("kinetic_score", m.kinetic_score)
                 mJson.put("trajectory_score", m.trajectory_score)
                 mJson.put("physio_score", m.physio_score)
+                m.belief_base?.let { mJson.put("belief_base", it) }
+                m.bonus_intent?.let { mJson.put("bonus_intent", it) }
+                m.bonus_cob?.let { mJson.put("bonus_cob", it) }
+                m.bonus_physio_meal?.let { mJson.put("bonus_physio_meal", it) }
+                m.bonus_ra?.let { mJson.put("bonus_ra", it) }
+                m.fast_rise?.let { mJson.put("fast_rise", it) }
+                m.moderate_rise?.let { mJson.put("moderate_rise", it) }
+                m.raw_phase?.let { mJson.put("raw_phase", it) }
+                m.meal_intent_source?.let { mJson.put("meal_intent_source", it) }
                 adj.put("meal_absorption_phase", mJson)
             }
             adjustments.declared_meal?.let { adj.put("declared_meal", it) }
@@ -1305,6 +1328,7 @@ internal data class AimiDecisionContext(
             adjustments.meal_absorption_runtime?.let { adj.put("meal_absorption_runtime", it) }
             adjustments.meal_absorption_episode?.let { adj.put("meal_absorption_episode", it) }
             adjustments.coffee_mode?.let { adj.put("coffee_mode", it) }
+            adjustments.mcer?.let { adj.put("mcer", it) }
             adjustments.pred_divergence?.let { pd ->
                 adj.put("pred_divergence", pd)
             }
@@ -2495,6 +2519,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         lastEngineHyperBound = null
         lastMealAbsorptionRuntime = null
         lastCoffeeVerdict = null
+        lastMcerDiagnostics = null
+        lastMealIntentSource = null
         lastCoffeeSmbCutFromU = null
         lastCoffeeBasalChange = null
         lastPostHypoSmbBeforeCapU = null
@@ -3866,7 +3892,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 stepsLast15m = stepsLast15m,
                 // Declared meals only: `hasMealIntent` also counts the loop's own SMBs and this engine's
                 // previous phase, so the belief fed on itself (F10, 2026-10-21).
-                mealIntent = mealContext.declaredMealIntent || fclTime || anticipTime,
+                mealIntent = (when {
+                    mealContext.declaredMealIntent -> "DECLARED"
+                    fclTime -> "FCL"
+                    anticipTime -> "ANTICIP"
+                    else -> "NONE"
+                }).also { lastMealIntentSource = it } != "NONE",
                 physiologicalPhase = lastPhysiologicalPhaseOutput?.phase ?: PhysiologicalPhase.OFF,
                 estimatedRa = continuousStateEstimator.getLastRa().takeIf { it.isFinite() && it > 0.0 },
                 hoursSinceBolus = hoursSinceBolus,
@@ -3963,6 +3994,15 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             kinetic_score = out.kineticScore,
             trajectory_score = out.trajectoryScore,
             physio_score = out.physioScore,
+            belief_base = out.beliefParts?.base,
+            bonus_intent = out.beliefParts?.intent,
+            bonus_cob = out.beliefParts?.cob,
+            bonus_physio_meal = out.beliefParts?.physioMeal,
+            bonus_ra = out.beliefParts?.ra,
+            fast_rise = out.beliefParts?.fastRise,
+            moderate_rise = out.beliefParts?.moderateRise,
+            raw_phase = out.rawPhase,
+            meal_intent_source = lastMealIntentSource,
         )
     }
 
@@ -9838,21 +9878,24 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 val smb30min = calculateSmbLast30Min()
                 val predictionAvailable = (finalResult.predBGs?.IOB?.size ?: 0) > 0
                 val therapy = Therapy(persistenceLayer).also { it.updateStatesBasedOnTherapyEvents() }
+                // getTimeElapsedSinceLastEvent already returns minutes (-1 = none in the last 60 min).
+                // These lines divided it by 60000 again, so the runtime was always 0 and every meal mode
+                // looked "in the prebolus window" to the auditor for its whole duration.
                 val inPrebolusWindow = when {
                     therapy.bfastTime -> {
-                        val runtimeMin = therapy.getTimeElapsedSinceLastEvent("bfast") / 60000
+                        val runtimeMin = therapy.getTimeElapsedSinceLastEvent("bfast")
                         runtimeMin in 0..30
                     }
                     therapy.lunchTime -> {
-                        val runtimeMin = therapy.getTimeElapsedSinceLastEvent("lunch") / 60000
+                        val runtimeMin = therapy.getTimeElapsedSinceLastEvent("lunch")
                         runtimeMin in 0..30
                     }
                     therapy.dinnerTime -> {
-                        val runtimeMin = therapy.getTimeElapsedSinceLastEvent("dinner") / 60000
+                        val runtimeMin = therapy.getTimeElapsedSinceLastEvent("dinner")
                         runtimeMin in 0..30
                     }
                     therapy.highCarbTime -> {
-                        val runtimeMin = therapy.getTimeElapsedSinceLastEvent("highcarb") / 60000
+                        val runtimeMin = therapy.getTimeElapsedSinceLastEvent("highcarb")
                         runtimeMin in 0..30
                     }
                     else -> false
@@ -9867,14 +9910,14 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     else -> null
                 }
                 val modeRuntimeMin = when {
-                    therapy.bfastTime -> (therapy.getTimeElapsedSinceLastEvent("bfast") / 60000).toInt()
-                    therapy.lunchTime -> (therapy.getTimeElapsedSinceLastEvent("lunch") / 60000).toInt()
-                    therapy.dinnerTime -> (therapy.getTimeElapsedSinceLastEvent("dinner") / 60000).toInt()
-                    therapy.highCarbTime -> (therapy.getTimeElapsedSinceLastEvent("highcarb") / 60000).toInt()
-                    therapy.snackTime -> (therapy.getTimeElapsedSinceLastEvent("snack") / 60000).toInt()
-                    therapy.mealTime -> (therapy.getTimeElapsedSinceLastEvent("meal") / 60000).toInt()
+                    therapy.bfastTime -> therapy.getTimeElapsedSinceLastEvent("bfast").toInt()
+                    therapy.lunchTime -> therapy.getTimeElapsedSinceLastEvent("lunch").toInt()
+                    therapy.dinnerTime -> therapy.getTimeElapsedSinceLastEvent("dinner").toInt()
+                    therapy.highCarbTime -> therapy.getTimeElapsedSinceLastEvent("highcarb").toInt()
+                    therapy.snackTime -> therapy.getTimeElapsedSinceLastEvent("snack").toInt()
+                    therapy.mealTime -> therapy.getTimeElapsedSinceLastEvent("meal").toInt()
                     else -> null
-                }
+                }?.takeIf { it >= 0 }
                 val autodriveState = lastAutodriveState.toString()
                 val wcyclePhase = wCycleFacade.getPhase()?.name
                 val wcycleFactor = wCycleFacade.getIcMultiplier()
@@ -10286,6 +10329,23 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 put("evidence_late_fat", e.lateFat)
                 put("evidence_declared_meal", e.declaredMeal)
                 put("evidence_cob", e.cob)
+            }
+        }
+        decisionCtx.adjustments.mcer = lastMcerDiagnostics?.let { d ->
+            org.json.JSONObject().apply {
+                put("armed", d.armed)
+                put("rising", d.rising)
+                put("combined_delta_mgdl_5m", d.combinedDeltaMgdl5m)
+                put("above_target", d.aboveTarget)
+                put("strong_meal_confirmed", d.strongMealConfirmed)
+                put("tree_meal_evidence", d.treeMealEvidence)
+                put("meal_delivery_priority", d.mealDeliveryPriority)
+                put("meal_prob_confirmed", d.mealProbConfirmed)
+                put("tail_by_phase", d.tailByPhase)
+                put("tail_by_iob", d.tailByIob)
+                put("tail_by_fall", d.tailByFall)
+                put("tail_latched", d.tailLatched)
+                put("sovereign_hypo_block", d.sovereignHypoBlock)
             }
         }
         decisionCtx.adjustments.coffee_mode = (lastCoffeeVerdict ?: coffeeVerdict()).let { v ->
@@ -11978,6 +12038,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             mcerTailLatched = mcerTailLatch.latched,
             declaredMeal = anticipTime && preferences.get(BooleanKey.OApsAIMIAnticipMealEvidence),
         )
+        decisionPrediction.mcerDiagnostics?.let { lastMcerDiagnostics = it }
         // Carry the latch to the next tick. Done after the call because the resolver is stateless and
         // reports the trip; it can only keep an opt-in escalation off, never raise a dose.
         mcerTailLatch = MealConfirmedEarlyReleaseLatch.next(
@@ -12331,6 +12392,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private var coffeeProfileBasalUph: Double = 0.0
     private var coffeeMaxBasalUph: Double = 0.0
     private var lastCoffeeVerdict: CoffeeRiseMode.Verdict? = null
+
+    /** MCER gate of this tick, term by term (last resolve of the tick). Export only. */
+    private var lastMcerDiagnostics: McerDiagnostics? = null
+
+    /** Source of the meal intent given to the meal-absorption engine this tick. Export only. */
+    private var lastMealIntentSource: String? = null
     private var lastCoffeeSmbCutFromU: Double? = null
     private var lastCoffeeBasalChange: String? = null
 

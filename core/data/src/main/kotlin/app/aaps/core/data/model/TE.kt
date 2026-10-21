@@ -23,6 +23,12 @@ data class TE(
     var arrow: Arrow? = null
 ) : HasIDs, TimeStamped {
 
+    /**
+     * A note written by the AIMI context feature (`AIMI_CONTEXT:<id>:{json}`), not by the person.
+     * Its JSON holds words such as "Meal" or "SPORT_INTENSE": keyword matchers must skip it.
+     */
+    fun isAimiContextNote(): Boolean = type == Type.NOTE && note?.startsWith(AIMI_CONTEXT_NOTE_PREFIX) == true
+
     fun contentEqualsTo(other: TE): Boolean =
         isValid == other.isValid &&
             timestamp == other.timestamp &&
@@ -172,5 +178,9 @@ data class TE(
         }
     }
 
-    companion object
+    companion object {
+
+        /** Prefix of the notes written by the AIMI context feature. */
+        const val AIMI_CONTEXT_NOTE_PREFIX = "AIMI_CONTEXT:"
+    }
 }

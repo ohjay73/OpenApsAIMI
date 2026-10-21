@@ -162,7 +162,9 @@ class LoopHubImpl @Inject constructor(
      * creating a sync→aps dependency. First match in priority order wins.
      */
     @VisibleForTesting
-    internal fun detectActiveTherapyMode(events: List<TE>, now: Long): String? {
+    internal fun detectActiveTherapyMode(allEvents: List<TE>, now: Long): String? {
+        // Context intents ("AIMI_CONTEXT:<id>:{json}") are not modes the person set, see Therapy.
+        val events = allEvents.filterNot { it.isAimiContextNote() }
         fun active(keyword: String, minWindowMs: Long = 0L): Boolean =
             events.any { event ->
                 val note = event.note ?: return@any false
@@ -202,7 +204,6 @@ class LoopHubImpl @Inject constructor(
         return when {
             active("sport") -> "SPORT"
             active("fcl", FCL_MIN_WINDOW_MS) -> "FCL"
-            activeCoffee() -> "COFFEE"
             active("dinner") -> "DINNER"
             active("lunch") -> "LUNCH"
             activeBfast() -> "BFAST"
@@ -211,6 +212,9 @@ class LoopHubImpl @Inject constructor(
             active("fasting") -> "FASTING"
             active("lowcarb") -> "LOWCARB"
             active("anticip") -> "ANTICIP"
+            // After every meal mode: in the loop a declared meal switches the coffee mode off
+            // (CoffeeRiseMode), so the watch must show the meal, not COFFEE.
+            activeCoffee() -> "COFFEE"
             else -> null
         }
     }
