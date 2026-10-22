@@ -2,6 +2,7 @@ package app.aaps.plugins.sync.garmin
 
 import androidx.annotation.VisibleForTesting
 import app.aaps.core.data.iob.InMemoryGlucoseValue
+import app.aaps.core.data.model.BS
 import app.aaps.core.data.model.GV
 import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.data.model.HR
@@ -146,6 +147,48 @@ class LoopHubImpl @Inject constructor(
             val notes = persistenceLayer.getTherapyEventDataFromTime(from, TE.Type.NOTE, ascending = false)
             detectActiveTherapyMode(notes, now)
         }
+
+    /**
+     * Sample TBR (incl. converted EB) every 5 minutes over [windowMs], collapse unchanged percent.
+     * ⚠️ ASYNC IMPACT: runBlocking on processedTbrEbData + profile.
+     */
+    override fun temporaryBasalHistory(windowMs: Long): List<BasalHistoryStep> = runBlocking {
+        val now = clock.millis()
+        val from = now - windowMs.coerceAtLeast(TimeUnit.MINUTES.toMillis(5))
+        val profile = currentProfile
+        val stepMs = TimeUnit.MINUTES.toMillis(5)
+        val out = ArrayList<BasalHistoryStep>()
+        var t = from
+        var lastPct = Int.MIN_VALUE
+        while (t <= now) {
+            val pct = if (profile == null) {
+                100
+            } else {
+                val tb = processedTbrEbData.getTempBasalIncludingConvertedExtended(t)
+                tb?.convertedToPercent(t, profile) ?: 100
+            }
+            if (pct != lastPct) {
+                out.add(BasalHistoryStep(t = t, p = pct.coerceIn(0, 500)))
+                lastPct = pct
+            }
+            t += stepMs
+        }
+        if (out.isEmpty()) out.add(BasalHistoryStep(t = from, p = 100))
+        out
+    }
+
+    /**
+     * SMB bolus timestamps in [windowMs].
+     * ⚠️ ASYNC IMPACT: runBlocking on persistenceLayer.getBolusesFromTime.
+     */
+    override fun smbHistoryTimestamps(windowMs: Long): List<Long> = runBlocking {
+        val from = clock.millis() - windowMs.coerceAtLeast(0L)
+        persistenceLayer.getBolusesFromTime(from, ascending = true)
+            .asSequence()
+            .filter { it.isValid && it.type == BS.Type.SMB }
+            .map { it.timestamp }
+            .toList()
+    }
 
     override val lowGlucoseMark
         get() = profileUtil.convertToMgdl(

@@ -560,6 +560,8 @@ class GarminPluginTest : TestBaseWithProfile() {
         whenever(loopHub.carbsOnboard).thenReturn(10.7)
         whenever(loopHub.lowGlucoseMark).thenReturn(70.0)
         whenever(loopHub.highGlucoseMark).thenReturn(180.0)
+        whenever(loopHub.temporaryBasalHistory(any())).thenReturn(emptyList())
+        whenever(loopHub.smbHistoryTimestamps(any())).thenReturn(emptyList())
         whenever(loopHub.getGlucoseValues(any(), eq(false))).thenReturn(
             listOf(
                 createGlucoseValue(
@@ -568,7 +570,7 @@ class GarminPluginTest : TestBaseWithProfile() {
             )
         )
         assertEquals(
-            """[{"_id":"-900000","device":"RANDOM","deviceString":"1969-12-31T23:58:30Z","sysTime":"1969-12-31T23:58:30Z","unfiltered":90.0,"date":-90000,"sgv":99,"direction":"Flat","noise":4.5,"units_hint":"mmol","iob":5.2,"tbr":"0.0/80","cob":10.7,"tir":100}]""",
+            """[{"_id":"-900000","device":"RANDOM","deviceString":"1969-12-31T23:58:30Z","sysTime":"1969-12-31T23:58:30Z","unfiltered":90.0,"date":-90000,"sgv":99,"direction":"Flat","noise":4.5,"units_hint":"mmol","iob":5.2,"tbr":"0.0/80","cob":10.7,"tir":100,"basalHistory":[],"smbHistory":[]}]""",
             gp.onSgv(createUri(mapOf()))
         )
         verify(loopHub).getGlucoseValues(clock.instant().minusSeconds(25L * 300L), false)
@@ -577,6 +579,8 @@ class GarminPluginTest : TestBaseWithProfile() {
         verify(loopHub, atLeastOnce()).currentTargetMgdl
         verify(loopHub, atLeastOnce()).activeTherapyMode
         verify(loopHub, atLeastOnce()).temporaryBasalRemainingMinutes
+        verify(loopHub, atLeastOnce()).temporaryBasalHistory(any())
+        verify(loopHub, atLeastOnce()).smbHistoryTimestamps(any())
     }
 
     @Test
@@ -588,6 +592,8 @@ class GarminPluginTest : TestBaseWithProfile() {
         whenever(loopHub.carbsOnboard).thenReturn(10.7)
         whenever(loopHub.lowGlucoseMark).thenReturn(70.0)
         whenever(loopHub.highGlucoseMark).thenReturn(180.0)
+        whenever(loopHub.temporaryBasalHistory(any())).thenReturn(emptyList())
+        whenever(loopHub.smbHistoryTimestamps(any())).thenReturn(emptyList())
         whenever(loopHub.getGlucoseValues(any(), eq(false))).thenAnswer { i ->
             val from = i.getArgument<Instant>(0)
             fromClosedRange(from.toEpochMilli(), clock.instant().toEpochMilli(), 300_000L)
@@ -595,7 +601,7 @@ class GarminPluginTest : TestBaseWithProfile() {
                 .mapIndexed { idx, ts -> createGlucoseValue(ts, 100.0 + (10 * idx)) }.reversed()
         }
         assertEquals(
-            """[{"_id":"100000","device":"RANDOM","deviceString":"1970-01-01T00:00:10Z","sysTime":"1970-01-01T00:00:10Z","unfiltered":90.0,"date":10000,"sgv":120,"delta":10,"direction":"Flat","noise":4.5,"units_hint":"mmol","iob":5.2,"tbr":"0.0/80","cob":10.7,"tir":100}]""",
+            """[{"_id":"100000","device":"RANDOM","deviceString":"1970-01-01T00:00:10Z","sysTime":"1970-01-01T00:00:10Z","unfiltered":90.0,"date":10000,"sgv":120,"delta":10,"direction":"Flat","noise":4.5,"units_hint":"mmol","iob":5.2,"tbr":"0.0/80","cob":10.7,"tir":100,"basalHistory":[],"smbHistory":[]}]""",
             gp.onSgv(createUri(mapOf("count" to "1")))
         )
         verify(loopHub).getGlucoseValues(
@@ -604,7 +610,7 @@ class GarminPluginTest : TestBaseWithProfile() {
 
 
         assertEquals(
-            """[{"_id":"100000","device":"RANDOM","deviceString":"1970-01-01T00:00:10Z","sysTime":"1970-01-01T00:00:10Z","unfiltered":90.0,"date":10000,"sgv":130,"delta":10,"direction":"Flat","noise":4.5,"units_hint":"mmol","iob":5.2,"tbr":"0.0/80","cob":10.7,"tir":100},""" +
+            """[{"_id":"100000","device":"RANDOM","deviceString":"1970-01-01T00:00:10Z","sysTime":"1970-01-01T00:00:10Z","unfiltered":90.0,"date":10000,"sgv":130,"delta":10,"direction":"Flat","noise":4.5,"units_hint":"mmol","iob":5.2,"tbr":"0.0/80","cob":10.7,"tir":100,"basalHistory":[],"smbHistory":[]},""" +
                 """{"_id":"-2900000","device":"RANDOM","deviceString":"1969-12-31T23:55:10Z","sysTime":"1969-12-31T23:55:10Z","unfiltered":90.0,"date":-290000,"sgv":120,"delta":10,"direction":"Flat","noise":4.5}]""",
             gp.onSgv(createUri(mapOf("count" to "2")))
         )
@@ -613,7 +619,7 @@ class GarminPluginTest : TestBaseWithProfile() {
         )
 
         assertEquals(
-            """[{"date":10000,"sgv":130,"delta":10,"direction":"Flat","noise":4.5,"units_hint":"mmol","iob":5.2,"tbr":"0.0/80","cob":10.7,"tir":100},""" +
+            """[{"date":10000,"sgv":130,"delta":10,"direction":"Flat","noise":4.5,"units_hint":"mmol","iob":5.2,"tbr":"0.0/80","cob":10.7,"tir":100,"basalHistory":[],"smbHistory":[]},""" +
                 """{"date":-290000,"sgv":120,"delta":10,"direction":"Flat","noise":4.5}]""",
             gp.onSgv(createUri(mapOf("count" to "2", "brief_mode" to "true")))
         )
@@ -641,6 +647,10 @@ class GarminPluginTest : TestBaseWithProfile() {
         whenever(loopHub.activeTherapyMode).thenReturn("FCL")
         whenever(loopHub.temporaryBasalRemainingMinutes).thenReturn(27)
         whenever(loopHub.currentProfile).thenReturn(null)
+        whenever(loopHub.temporaryBasalHistory(any())).thenReturn(
+            listOf(BasalHistoryStep(t = 1000L, p = 100), BasalHistoryStep(t = 2000L, p = 130))
+        )
+        whenever(loopHub.smbHistoryTimestamps(any())).thenReturn(listOf(1500L, 2500L))
         whenever(loopHub.getGlucoseValues(any(), eq(false))).thenReturn(
             listOf(createGlucoseValue(clock.instant(), 110.0))
         )
@@ -648,8 +658,10 @@ class GarminPluginTest : TestBaseWithProfile() {
         org.junit.jupiter.api.Assertions.assertTrue(
             json.contains("\"target\":100") &&
                 json.contains("\"mode\":\"FCL\"") &&
-                json.contains("\"tbrMins\":27"),
-            "missing target/mode/tbrMins in: $json"
+                json.contains("\"tbrMins\":27") &&
+                json.contains("\"basalHistory\":[{\"t\":1000,\"p\":100},{\"t\":2000,\"p\":130}]") &&
+                json.contains("\"smbHistory\":[1500,2500]"),
+            "missing target/mode/tbrMins/basalHistory/smbHistory in: $json"
         )
         verify(loopHub).getGlucoseValues(any(), eq(false))
         verify(loopHub, atLeastOnce()).glucoseUnit
@@ -657,6 +669,8 @@ class GarminPluginTest : TestBaseWithProfile() {
         verify(loopHub, atLeastOnce()).currentTargetMgdl
         verify(loopHub, atLeastOnce()).activeTherapyMode
         verify(loopHub, atLeastOnce()).temporaryBasalRemainingMinutes
+        verify(loopHub, atLeastOnce()).temporaryBasalHistory(any())
+        verify(loopHub, atLeastOnce()).smbHistoryTimestamps(any())
     }
 
 }

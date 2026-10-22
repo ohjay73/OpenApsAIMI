@@ -5,6 +5,9 @@ import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.interfaces.profile.Profile
 import java.time.Instant
 
+/** One plateau of temporary basal for Millimétré staircase (`t` = start ms, `p` = percent). */
+data class BasalHistoryStep(val t: Long, val p: Int)
+
 /** Abstraction from all the functionality we need from the AAPS app. */
 interface LoopHub {
 
@@ -53,6 +56,19 @@ interface LoopHub {
      * or null when none is armed. Detected from Careportal NOTE keywords (same rules as [Therapy]).
      */
     val activeTherapyMode: String?
+
+    /**
+     * Temporary basal staircase for Millimétré (`basalHistory`): consecutive
+     * (startMs, percent) steps over [windowMs], collapsed when percent is unchanged.
+     * Percent 100 = profile basal. ⚠️ ASYNC IMPACT: runBlocking + DB/TBR lookup.
+     */
+    fun temporaryBasalHistory(windowMs: Long = 3L * 60L * 60L * 1000L): List<BasalHistoryStep>
+
+    /**
+     * SMB bolus timestamps (epoch ms) in the last [windowMs] for Millimétré (`smbHistory`).
+     * ⚠️ ASYNC IMPACT: runBlocking + bolus DB query.
+     */
+    fun smbHistoryTimestamps(windowMs: Long = 3L * 60L * 60L * 1000L): List<Long>
 
     /** Returns the lower bound of the target glucose range. */
     val lowGlucoseMark: Double
