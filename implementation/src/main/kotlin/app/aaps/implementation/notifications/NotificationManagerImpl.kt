@@ -27,6 +27,7 @@ import app.aaps.core.interfaces.notifications.NotificationManager
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.ui.IconsProvider
 import app.aaps.core.keys.BooleanKey
+import app.aaps.implementation.androidNotification.AlarmAudioPolicy
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.implementation.androidNotification.AlarmNotificationManager
 import kotlinx.coroutines.CoroutineScope
@@ -172,7 +173,11 @@ class NotificationManagerImpl @Inject constructor(
         // ramping MediaPlayer loop defers past the channel one-shot instead of double-ringing.
         val overrideDnd = preferences.get(BooleanKey.AlertOverrideDoNotDisturb)
         val urgentSound = level == NotificationLevel.URGENT && soundRes != null && soundRes != 0
-        val postedAt = if (urgentSound && overrideDnd) SystemClock.elapsedRealtime() else 0L
+        // Player owns the sound (ramp, or a chosen soft melody): the bypass-DND channel is silent
+        // (vibration only), so the player must not wait for a channel clip. Otherwise (no ramp, no
+        // melody, or Do Not Disturb blocking alarms) the OS plays the clip and the player waits for it.
+        val rampMode = urgentSound && alarmNotificationManager.playerOwnsSound(AlarmAudioPolicy.categoryOf(id))
+        val postedAt = if (urgentSound && overrideDnd && !rampMode) SystemClock.elapsedRealtime() else 0L
 
         val notification = AapsNotification(
             id = id,
@@ -203,7 +208,7 @@ class NotificationManagerImpl @Inject constructor(
             if (overrideDnd) {
                 alarmNotificationManager.postSoundAlarmNotification(
                     notificationKey = instanceKey, title = title, body = text, soundId = soundRes, urgent = true,
-                    alarmAction = id.alarmAction
+                    alarmAction = id.alarmAction, rampMode = rampMode
                 )
             } else {
                 alarmNotificationManager.postSilentAlarmNotification(
@@ -352,7 +357,10 @@ class NotificationManagerImpl @Inject constructor(
                 soundingKey = top.instanceKey
                 // postedAtElapsedRealtime > 0 (DND-override path) → defer the loop past the channel
                 // one-shot to avoid double-audio; 0 → play immediately (existing behaviour).
-                alarmSoundPlayer.play(top.soundRes!!, AlarmSoundPlayer.OWNER_INTERNAL, top.postedAtElapsedRealtime)
+                alarmSoundPlayer.play(
+                    top.soundRes!!, AlarmSoundPlayer.OWNER_INTERNAL, top.postedAtElapsedRealtime,
+                    AlarmAudioPolicy.categoryOf(top.id),
+                )
             }
             // else: already playing the top alarm — leave the ramp running.
         }

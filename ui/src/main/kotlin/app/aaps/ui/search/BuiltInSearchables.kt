@@ -201,6 +201,8 @@ class BuiltInSearchables @Inject constructor(
             BooleanKey.AlertUrgentAsAndroidNotification,
             BooleanKey.AlertIncreaseVolume,
             BooleanKey.AlertOverrideDoNotDisturb,
+            StringKey.AlertSoundLowGlucose,
+            StringKey.AlertSoundOtherAlarms,
             BooleanKey.AlertHypo,
             UnitDoubleKey.AlertHypoThreshold,
             BooleanKey.AlertHyper,

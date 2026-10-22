@@ -31,8 +31,14 @@ interface AlarmSoundPlayer {
      *   the start is deferred until that one-shot finishes (avoids brief double-audio on full-screen
      *   auto-launch). Pass 0 (the default) when there is no accompanying channel sound — the
      *   duration probe is then skipped entirely.
+     * @param category which user sound choice applies (a soft melody may replace [soundRes]).
      */
-    fun play(@RawRes soundRes: Int, ownerTag: String, postedAtElapsedRealtime: Long = 0L)
+    fun play(
+        @RawRes soundRes: Int,
+        ownerTag: String,
+        postedAtElapsedRealtime: Long = 0L,
+        category: AlarmSoundCategory = AlarmSoundCategory.OTHER,
+    )
 
     /** Stop and release playback **only if** [ownerTag] is the current owner. No-op otherwise. */
     fun stop(ownerTag: String)

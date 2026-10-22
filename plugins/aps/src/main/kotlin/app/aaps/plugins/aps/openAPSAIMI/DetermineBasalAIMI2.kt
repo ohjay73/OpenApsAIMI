@@ -175,6 +175,7 @@ import app.aaps.plugins.aps.openAPSAIMI.physio.MealAbsorptionPhase
 import app.aaps.plugins.aps.openAPSAIMI.physio.MealAbsorptionPhaseEngine
 import app.aaps.plugins.aps.openAPSAIMI.physio.MealAbsorptionRuntime
 import app.aaps.plugins.aps.openAPSAIMI.safety.SmbRestoreCeiling
+import app.aaps.plugins.aps.openAPSAIMI.safety.SmbSwitchGate
 import app.aaps.plugins.aps.openAPSAIMI.physio.PhysiologicalPhaseClassifier
 import app.aaps.plugins.aps.openAPSAIMI.physio.PhysioContextMTR
 import app.aaps.plugins.aps.openAPSAIMI.physio.PhysioLatentState
@@ -5684,6 +5685,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
      */
     private fun applySmbUnits(rT: RT, requestedU: Double, owner: String) {
         val requested = if (requestedU.isFinite()) requestedU.coerceAtLeast(0.0) else 0.0
+        if (requested > 0.0 && !SmbSwitchGate.allows(smbSwitchOnThisTick, owner)) {
+            consoleLog.add("⛔ SMB_DISABLED[$owner]: ${"%.2f".format(requested)} U refused (Enable SMB is off)")
+            rT.units = 0.0
+            return
+        }
         val current = rT.units ?: 0.0
         if (!smbTerminalSealed || requested <= current + 1e-9) {
             rT.units = requested
@@ -12393,6 +12399,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private var coffeeMaxBasalUph: Double = 0.0
     private var lastCoffeeVerdict: CoffeeRiseMode.Verdict? = null
 
+    /** "Enable SMB" for this tick (`microBolusAllowed`), read by every SMB writer through SmbSwitchGate. */
+    private var smbSwitchOnThisTick: Boolean = true
+
     /** MCER gate of this tick, term by term (last resolve of the tick). Export only. */
     private var lastMcerDiagnostics: McerDiagnostics? = null
 
@@ -14949,6 +14958,16 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         hyperReleaseFloorU: Double = 0.0,
         bypassSmbRefractory: Boolean = false,
     ) {
+        // "Enable SMB" off: no automatic SMB from any path (Autodrive V3, DriftTerminator, GlobalAIMI).
+        if (!isExplicitUserAction && !SmbSwitchGate.allows(smbSwitchOnThisTick, decisionSource)) {
+            if (proposedUnits > 0.0) {
+                consoleLog.add("⛔ SMB_DISABLED[$decisionSource]: ${"%.2f".format(proposedUnits)} U refused (Enable SMB is off)")
+            }
+            rT.units = 0.0
+            sealSmbTerminal()
+            recordSmbActionType("none")
+            return
+        }
         val postHypo = lastPostHypoDeliveryAuthority
         if (postHypo.active && postHypo.suppressMealDelivery && !isExplicitUserAction) {
             consoleLog.add(PostHypoDeliveryAuthority.formatLogLine(postHypo))
@@ -19876,7 +19895,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             profile = profile,
             autosensData = autosens_data,
             mealData = mealData,
-            microBolusAllowed = microBolusAllowed,
+            microBolusAllowed = microBolusAllowed.also { smbSwitchOnThisTick = it },
             currentTime = currentTime,
             flatBGsDetected = flatBGsDetected,
             dynIsfMode = dynIsfMode,
