@@ -3,6 +3,7 @@ package app.aaps.plugins.aps.openAPSAIMI.patient
 import app.aaps.plugins.aps.openAPSAIMI.physio.pattern.PatternCapKind
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 import kotlin.math.max
 import kotlin.math.min
 
@@ -151,7 +152,7 @@ object HarmoniaSmbArbiter {
             reasons += "MPC_ABOVE_SOFT_CAP"
             reasons += "LIFT_WITHIN_ENVELOPE"
             if (barrierBound != null && wanted > barrierBound + 1e-6) {
-                reasons += "LIFT_BARRIER_BOUND_${"%.2f".format(barrierBound)}"
+                reasons += "LIFT_BARRIER_BOUND_${"%.2f".format(Locale.US, barrierBound)}"
             }
             catalogProposedCapU?.let { reasons += "CATALOG_SOFT_${"%.2f".format(it)}" }
             reasons += "ENVELOPE_${"%.2f".format(envelope)}"

@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.openAPSAIMI.safety
 
+import app.aaps.plugins.aps.openAPSAIMI.autodrive.safety.RiseConfirmation
 import app.aaps.plugins.aps.openAPSAIMI.physio.MealAbsorptionPhase
 import kotlin.math.max
 import kotlin.math.min
@@ -136,6 +137,7 @@ object InsulinStackingStance {
         endogenousCounterRegulatory: Boolean = false,
         mealAbsorptionPhase: MealAbsorptionPhase = MealAbsorptionPhase.NONE,
         mealModeActive: Boolean = false,
+        riseLevel: RiseConfirmation.Level? = null,
     ): Evaluation {
         fun active(reason: String?) = Evaluation(
             kind = Kind.CORRECTION_ACTIVE,
@@ -149,10 +151,18 @@ object InsulinStackingStance {
         if (!enabled || isExplicitUserAction || !bg.isFinite() || !targetBg.isFinite()) {
             return active("disabled_explicit_or_invalid_input")
         }
-        if (!endogenousCounterRegulatory && mealAbsorptionPhase.bypassesIobSurveillance) {
+        // Without a declared meal, a rise that the glucose history does not confirm cannot switch the
+        // surveillance off: neither a phase taken from the memory, nor a one-tick delta.
+        val unconfirmedUndeclared = !mealModeActive && riseLevel == RiseConfirmation.Level.NONE
+        val memoryPhase = mealAbsorptionPhase == MealAbsorptionPhase.INTER_WAVE ||
+            mealAbsorptionPhase == MealAbsorptionPhase.SECOND_WAVE
+        if (!endogenousCounterRegulatory && mealAbsorptionPhase.bypassesIobSurveillance &&
+            !(unconfirmedUndeclared && memoryPhase)
+        ) {
             return active("meal_absorption_${mealAbsorptionPhase.name.lowercase()}")
         }
         if (mealPriorityContext &&
+            !unconfirmedUndeclared &&
             !endogenousCounterRegulatory &&
             (
                 delta >= MEAL_RISE_DELTA_BYPASS ||
